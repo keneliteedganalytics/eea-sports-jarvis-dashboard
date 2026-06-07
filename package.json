@@ -1,5 +1,5 @@
 {
-  "name": "rest-express",
+  "name": "sports-jarvis-dashboard",
   "version": "1.0.0",
   "license": "MIT",
   "type": "module",
@@ -8,6 +8,7 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "test": "tsx server/sports/mlb/engine.test.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
