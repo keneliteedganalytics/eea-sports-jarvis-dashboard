@@ -1,0 +1,189 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Sports Jarvis — DARK MODE ONLY. No light theme.
+ * Brand tokens locked per build spec §3. Gold/navy desk aesthetic.
+ * :root and .dark are identical so the app is always dark.
+ */
+:root,
+.dark {
+  --button-outline: rgba(255, 255, 255, 0.1);
+  --badge-outline: rgba(255, 255, 255, 0.05);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(255, 255, 255, 0.04);
+  --elevate-2: rgba(255, 255, 255, 0.09);
+
+  /* Brand palette (locked) — raw hex for direct use */
+  --bg: #020810;
+  --card-bg: #0a1628;
+  --gold: #c9a227;
+  --gold-light: #e8c14a;
+  --trap: #ff8a47;
+  --poly: #5bc0eb;
+  --text-primary: #e8eef7;
+  --text-muted: #8892a0;
+
+  /* shadcn semantic tokens mapped onto the brand palette (H S% L%) */
+  --background: 213 78% 4%;       /* #020810 */
+  --foreground: 213 47% 94%;      /* #E8EEF7 */
+  --border: 214 40% 16%;
+  --card: 214 52% 10%;            /* #0A1628 */
+  --card-foreground: 213 47% 94%;
+  --card-border: 214 40% 18%;
+  --sidebar: 214 56% 7%;
+  --sidebar-foreground: 213 47% 94%;
+  --sidebar-border: 214 40% 16%;
+  --sidebar-primary: 45 67% 47%;  /* gold */
+  --sidebar-primary-foreground: 213 78% 4%;
+  --sidebar-accent: 214 40% 16%;
+  --sidebar-accent-foreground: 213 47% 94%;
+  --sidebar-ring: 45 67% 47%;
+  --popover: 214 52% 9%;
+  --popover-foreground: 213 47% 94%;
+  --popover-border: 214 40% 18%;
+  --primary: 45 67% 47%;          /* #C9A227 gold */
+  --primary-foreground: 213 78% 4%;
+  --secondary: 214 40% 16%;
+  --secondary-foreground: 213 47% 94%;
+  --muted: 214 30% 18%;
+  --muted-foreground: 213 12% 60%; /* #8892A0 */
+  --accent: 214 40% 18%;
+  --accent-foreground: 213 47% 94%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --input: 214 35% 22%;
+  --ring: 45 67% 47%;
+  --chart-1: 45 67% 47%;
+  --chart-2: 197 76% 64%;         /* poly blue */
+  --chart-3: 142 69% 58%;         /* green */
+  --chart-4: 22 100% 64%;         /* trap orange */
+  --chart-5: 234 89% 74%;         /* value indigo */
+  --font-sans: "DM Sans", "Inter", system-ui, sans-serif;
+  --font-serif: "Lora", Georgia, serif;
+  --font-mono: "IBM Plex Mono", "Geist Mono", Menlo, monospace;
+  --radius: 0.625rem;
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 20% -10%, rgba(201, 162, 39, 0.06), transparent),
+      radial-gradient(ellipse 70% 50% at 90% 110%, rgba(91, 192, 235, 0.05), transparent);
+    background-attachment: fixed;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-sans font-bold tracking-tight;
+  }
+}
+
+@layer utilities {
+  .gold-gradient-text {
+    background: linear-gradient(135deg, var(--gold-light), var(--gold));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Audio waveform animation for the Jarvis brief player */
+  @keyframes wave-bounce {
+    0%, 100% { transform: scaleY(0.35); }
+    50% { transform: scaleY(1); }
+  }
+  .wave-bar.playing {
+    animation: wave-bounce 0.9s ease-in-out infinite;
+  }
+
+  @keyframes scope-pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+  .scope-pulse {
+    animation: scope-pulse 2s ease-in-out infinite;
+  }
+
+  input[type='search']::-webkit-search-cancel-button {
+    @apply hidden;
+  }
+
+  .toggle-elevate::before,
+  .toggle-elevate-2::before {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    border-radius: inherit;
+    z-index: -1;
+  }
+
+  .toggle-elevate.toggle-elevated::before {
+    background-color: var(--elevate-2);
+  }
+
+  .border.toggle-elevate::before {
+    inset: -1px;
+  }
+
+  .hover-elevate:not(.no-default-hover-elevate),
+  .active-elevate:not(.no-default-active-elevate),
+  .hover-elevate-2:not(.no-default-hover-elevate),
+  .active-elevate-2:not(.no-default-active-elevate) {
+    position: relative;
+    z-index: 0;
+  }
+
+  .hover-elevate:not(.no-default-hover-elevate)::after,
+  .active-elevate:not(.no-default-active-elevate)::after,
+  .hover-elevate-2:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:not(.no-default-active-elevate)::after {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    border-radius: inherit;
+    z-index: 999;
+  }
+
+  .hover-elevate:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate:active:not(.no-default-active-elevate)::after {
+    background-color: var(--elevate-1);
+  }
+
+  .hover-elevate-2:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:active:not(.no-default-active-elevate)::after {
+    background-color: var(--elevate-2);
+  }
+
+  .border.hover-elevate::after,
+  .border.active-elevate::after,
+  .border.hover-elevate-2::after,
+  .border.active-elevate-2::after {
+    inset: -1px;
+  }
+}
