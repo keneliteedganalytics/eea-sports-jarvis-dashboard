@@ -1,0 +1,55 @@
+// Sharp Desk Analyst brief generator. Tone: calm, institutional, quantitative,
+// never hype (§12). Uses Claude Opus with extended thinking when a key is set;
+// otherwise produces a deterministic template brief from the pick numbers so
+// the audio path works end-to-end without credentials.
+
+import { generate } from "../llm/claude";
+import type { BuiltPick } from "../sports/mlb/picksEngine";
+
+const SYSTEM = `You are the Sharp Desk Analyst for an institutional sports-betting desk.
+Voice: calm, quantitative, precise. Never use the words "lock", "smash", "hammer", or any emoji.
+Always cite the edge in percentage points, the recommended Kelly units, the stake as a percent of bankroll, and a CLV target.
+Write 3-5 sentences of flowing prose suitable for a spoken brief. No lists, no headers.`;
+
+function pct(p: number | null): string {
+  return p === null ? "n/a" : `${(p * 100).toFixed(1)}%`;
+}
+
+function fmtLine(ml: number | null): string {
+  if (ml === null) return "n/a";
+  return ml > 0 ? `+${ml}` : `${ml}`;
+}
+
+// Deterministic fallback brief built purely from pick fields.
+export function templateBrief(pick: BuiltPick, bankroll: number): string {
+  const edge = pick.edgePp !== null ? `${pick.edgePp.toFixed(1)}` : "n/a";
+  const stakePct = bankroll > 0 ? ((pick.kellyStakeDollars / bankroll) * 100).toFixed(1) : "0";
+  const clvTarget = fmtLine(pick.fairMl);
+  const sentences = [
+    `${pick.awayTeamFull} at ${pick.homeTeamFull}, ${pick.gameTimeEt}.`,
+    `The model has ${pick.pickTeamFull} at ${pct(pick.pickWinProb)} against a market-implied ${pct(pick.pickImpliedProb)}, a ${edge} percentage point edge.`,
+    `Recommending ${pick.units} units on ${pick.pickTeam} money line at ${fmtLine(pick.pickMl)} — quarter Kelly, ${stakePct} percent of bankroll.`,
+    `CLV target: ${clvTarget}.`,
+  ];
+  return sentences.join(" ");
+}
+
+// Build the analyst brief. Tries Claude first, falls back to the template.
+export async function generateBrief(pick: BuiltPick, bankroll: number): Promise<string> {
+  const facts = [
+    `Matchup: ${pick.matchup}`,
+    `First pitch: ${pick.gameTimeEt}`,
+    `Pick: ${pick.pickTeamFull} money line at ${fmtLine(pick.pickMl)} (${pick.pickBook ?? "best book"})`,
+    `Model win prob: ${pct(pick.pickWinProb)}`,
+    `Market-implied prob: ${pct(pick.pickImpliedProb)}`,
+    `Edge: ${pick.edgePp ?? "n/a"} pp`,
+    `EV per $100: ${pick.evPer100}`,
+    `Recommended units: ${pick.units} (stake $${pick.kellyStakeDollars})`,
+    `Tier: ${pick.verdictTier}, confidence ${pick.confidence}`,
+    `Fair line / CLV target: ${fmtLine(pick.fairMl)}`,
+    `Projected score: ${pick.pickTeam} side total ${pick.expectedTotal} runs`,
+  ].join("\n");
+
+  const text = await generate(SYSTEM, `Write the spoken brief for this pick:\n${facts}`);
+  return text ?? templateBrief(pick, bankroll);
+}
