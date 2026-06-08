@@ -38,6 +38,16 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
           </span>
         )}
         <span className="flex-1" />
+        {pick.subSampleWarning && (
+          <span
+            className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+            style={{ color: "#0A1628", backgroundColor: "#F4D77A" }}
+            data-testid="sub25-badge"
+            title={pick.subSampleDetails ?? "Sub-25 IP starter — judgment call"}
+          >
+            Sub-25 IP
+          </span>
+        )}
         {pick.phantomEdge && (
           <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: "#0A1628", backgroundColor: "#F4D77A" }} data-testid="data-gap-badge">
             Data Gap
@@ -92,6 +102,7 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
       <div className="text-[11px] tabular-nums text-muted-foreground">
         Edge {pick.edgePp ?? "—"}pp · EV {pick.evPer100 >= 0 ? "+" : ""}
         {pick.evPer100.toFixed(2)}/$100 · win {fmtPct(pick.pickWinProb, 0)} · conf {pick.confidence}
+        {pick.alignmentSignalRaw !== null && ` · align ${pick.alignmentSignalRaw}pp`}
       </div>
 
       {/* 7. Line-movement chip */}
