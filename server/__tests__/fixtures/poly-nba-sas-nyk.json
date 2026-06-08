@@ -1,0 +1,67 @@
+[
+  {
+    "id": "550197",
+    "ticker": "nba-sas-nyk-2026-06-08",
+    "slug": "nba-sas-nyk-2026-06-08",
+    "title": "Spurs vs. Knicks",
+    "endDate": "2026-06-09T00:30:00Z",
+    "active": true,
+    "closed": false,
+    "markets": [
+      {
+        "question": "Spurs vs. Knicks",
+        "slug": "nba-sas-nyk-2026-06-08",
+        "outcomes": "[\"Spurs\", \"Knicks\"]",
+        "outcomePrices": "[\"0.465\", \"0.535\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-09T00:30:00Z"
+      },
+      {
+        "question": "Spurs vs. Knicks: Team to Score First",
+        "slug": "nba-sas-nyk-2026-06-08-team-to-score-first",
+        "outcomes": "[\"Spurs\", \"Knicks\"]",
+        "outcomePrices": "[\"0.475\", \"0.525\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-09T00:30:00Z"
+      },
+      {
+        "question": "Spurs vs. Knicks: Odd/Even Score",
+        "slug": "nba-sas-nyk-2026-06-08-odd-even",
+        "outcomes": "[\"Odd\", \"Even\"]",
+        "outcomePrices": "[\"0.505\", \"0.495\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-09T00:30:00Z"
+      },
+      {
+        "question": "Spread: Knicks (-2.5)",
+        "slug": "nba-sas-nyk-2026-06-08-spread-home-2pt5",
+        "outcomes": "[\"Knicks\", \"Spurs\"]",
+        "outcomePrices": "[\"0.475\", \"0.525\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-09T00:30:00Z"
+      },
+      {
+        "question": "Spurs vs. Knicks: O/U 215.5",
+        "slug": "nba-sas-nyk-2026-06-08-total-215pt5",
+        "outcomes": "[\"Over\", \"Under\"]",
+        "outcomePrices": "[\"0.505\", \"0.495\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-09T00:30:00Z"
+      },
+      {
+        "question": "Spread: Knicks (-20.5)",
+        "slug": "nba-sas-nyk-2026-06-08-spread-home-20pt5",
+        "outcomes": "[\"Knicks\", \"Spurs\"]",
+        "outcomePrices": "[\"0.08\", \"0.92\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-09T00:30:00Z"
+      }
+    ]
+  }
+]

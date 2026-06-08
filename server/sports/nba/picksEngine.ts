@@ -7,10 +7,10 @@ import { convictionUnits, applyJuicePenalty, unitsToStake } from "../../core/siz
 import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
 import { buildTwoWayMarket } from "../../core/markets";
 import { emptyMarket, type Market, type MarketSet, type Side, type Verdict } from "../../core/types";
-import type { BuiltPick } from "../mlb/picksEngine";
+import type { BuiltPick, PolymarketData } from "../mlb/picksEngine";
 import type { NbaModelResult, TeamHoopStats } from "./model";
 
-export const BANKROLL_USD = 35800;
+export const BANKROLL_USD = 25000;
 export const MAX_PICKS_PER_DAY = 6;
 const SPREAD_MARGIN_SCALE = 6.5; // points-diff → cover prob scale
 const TOTAL_SCALE = 9.0;
@@ -44,9 +44,19 @@ export interface NbaGameInput {
   _awayStats?: TeamHoopStats | Record<string, never>;
   _publicPct?: number | null;
   _sharpPct?: number | null;
+  _polymarketData?: PolymarketData;
+  _homeRestDays?: number | null;
+  _awayRestDays?: number | null;
+  _homeInjuryPts?: number | null;
+  _awayInjuryPts?: number | null;
+  _homeInjuries?: string[];
+  _awayInjuries?: string[];
 }
 
-// Possession-model confidence: base 30, edge magnitude, data completeness, alignment.
+// Possession-model confidence: base 30, edge magnitude, data completeness,
+// alignment, and the deepened context signals (rest/back-to-back & injuries).
+// A context note that helps our side adds a small confirming bump; one that
+// hurts our side trims confidence so the number reflects situational risk.
 function computeConfidence(edgePp: number | null, model: NbaModelResult, pickSide: Side): number {
   let score = 30;
   score += Math.min(25, Math.abs(edgePp ?? 0) * 5);
@@ -59,6 +69,18 @@ function computeConfidence(edgePp: number | null, model: NbaModelResult, pickSid
   const ourOrtg = pickSide === "home" ? model.homeOrtg : model.awayOrtg;
   const oppOrtg = pickSide === "home" ? model.awayOrtg : model.homeOrtg;
   if (ourOrtg !== null && oppOrtg !== null && ourOrtg > oppOrtg) score += 5;
+
+  // Situational context (rest / back-to-back / injuries). The model emits these
+  // as notes; a note hitting the opponent confirms our edge, one hitting us is a
+  // caution flag.
+  const opp = pickSide === "home" ? "away" : "home";
+  const us = pickSide;
+  for (const note of model.modelNotes) {
+    if (/back-to-back|injuries|rest edge/.test(note)) {
+      if (note.includes(opp)) score += 3;
+      else if (note.includes(us)) score -= 3;
+    }
+  }
   return Math.min(99, Math.max(0, Math.round(score)));
 }
 
@@ -101,12 +123,20 @@ export function buildPick(game: NbaGameInput, model: NbaModelResult, bankroll = 
   const pickBook = pickSide === "home" ? game.mlHomeBook ?? null : game.mlAwayBook ?? null;
   const pickFair = pickSide === "home" ? homeFair : awayFair;
 
+  // Re-orient Polymarket (home-keyed from the adapter) to the pick side.
+  const rawPoly = game._polymarketData ?? { found: false, pct: null };
+  let orientedPoly: PolymarketData = rawPoly;
+  if (rawPoly.found && rawPoly.pct != null && pickSide === "away") {
+    orientedPoly = { ...rawPoly, pct: Math.round((100 - rawPoly.pct) * 10) / 10 };
+  }
+  const polyPct = orientedPoly.found ? (orientedPoly.pct ?? null) : null;
+
   const confidence = computeConfidence(pickEdge, model, pickSide);
 
   const tier: Verdict = assignTier({
     edgePp: pickEdge,
     confidence,
-    polyPct: null,
+    polyPct,
     hardPass,
     oddsAmerican: pickMl,
     winProb: pickWp,
@@ -201,7 +231,7 @@ export function buildPick(game: NbaGameInput, model: NbaModelResult, bankroll = 
     awayWinProb: model.awayWinProb,
     homeSp: {},
     awaySp: {},
-    polymarket: { found: false, pct: null },
+    polymarket: orientedPoly,
     publicPct: (() => {
       const raw = game._publicPct ?? null;
       return pickSide === "away" && raw !== null ? Math.round((100 - raw) * 10) / 10 : raw;

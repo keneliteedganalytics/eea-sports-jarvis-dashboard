@@ -29,6 +29,10 @@ function runEngine(games: NbaGameInput[], bankroll = BANKROLL_USD): BuiltPick[] 
       awayStats: g._awayStats ?? {},
       homeFairProb: g.homeFairProb,
       awayFairProb: g.awayFairProb,
+      homeRestDays: g._homeRestDays ?? null,
+      awayRestDays: g._awayRestDays ?? null,
+      homeInjuryPts: g._homeInjuryPts ?? null,
+      awayInjuryPts: g._awayInjuryPts ?? null,
     });
     return buildPick(g, model, bankroll);
   });

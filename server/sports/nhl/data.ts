@@ -6,6 +6,7 @@ import { fetchOddsForSport, type OddsEvent, type BookPrice } from "../../adapter
 import { consensusSnhl, bestPrice, type Bookmaker } from "../../core/odds";
 import { computePublicSharp, type RawBookmaker } from "../../core/consensus";
 import { fetchHockeyTeamStats, fetchHockeyGoalies, type HockeyTeamStats, type GoalieAvail } from "../../adapters/apiSportsHockey";
+import { fetchPolymarketForGame, type PolymarketResult } from "../../adapters/polymarket";
 import { nameToAbbr } from "./teams";
 import type { NhlGameInput } from "./picksEngine";
 import type { GoalieStats, TeamHockeyStats } from "./model";
@@ -80,9 +81,11 @@ export async function buildNhlSlate(now: Date = new Date()): Promise<NhlSlateBui
       ev.awayTeamFull,
     );
 
-    const [homeStats, awayStats] = await Promise.all([
+    const [homeStats, awayStats, polyResult] = await Promise.all([
       fetchHockeyTeamStats(ev.homeTeamFull, NHL_SEASON).catch(() => emptyTeamStats()),
       fetchHockeyTeamStats(ev.awayTeamFull, NHL_SEASON).catch(() => emptyTeamStats()),
+      fetchPolymarketForGame(ev.homeTeamFull, ev.awayTeamFull, opDay, "home", "nhl")
+        .catch((): PolymarketResult => ({ found: false, pct: null, reason: "lookup error" })),
     ]);
 
     const homeG = goalieByTeam.get(ev.homeTeam);
@@ -123,6 +126,9 @@ export async function buildNhlSlate(now: Date = new Date()): Promise<NhlSlateBui
       _awayGoalie: awayG ? { available: awayG.available, goalie: awayG.goalie, svPct: awayG.svPct ?? null, gaa: awayG.gaa ?? null, gp: awayG.gp ?? null } : null,
       _publicPct: publicPct,
       _sharpPct: sharpPct,
+      _polymarketData: polyResult.found
+        ? { found: true, pct: polyResult.pct }
+        : { found: false, pct: null, reason: polyResult.reason },
     } as NhlGameInput);
   }
 

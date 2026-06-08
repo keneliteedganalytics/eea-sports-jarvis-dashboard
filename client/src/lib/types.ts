@@ -167,3 +167,52 @@ export interface BriefResponse {
   available: boolean;
   cached?: boolean;
 }
+
+export interface AnalyticsKpis {
+  totalBets: number;
+  winRatePct: number;
+  roiPct: number;
+  netUnits: number;
+  clvPct: number;
+  maxDrawdownUnits: number;
+}
+
+export interface TierWinRate {
+  tier: string;
+  pct: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  netUnits: number;
+}
+
+export interface SportRoi {
+  sport: string;
+  roiPct: number;
+  netUnits: number;
+  bets: number;
+}
+
+export interface AnalyticsTrendPoint {
+  date: string;
+  clv: number;
+  cumUnits: number;
+  drawdownUnits: number;
+}
+
+export interface AnalyticsHeatCell {
+  tier: string;
+  windowDays: number;
+  pct: number;
+  decided: number;
+}
+
+export interface AnalyticsPayload {
+  filters: { sport: string; tier: string; since: string | null };
+  available: { sports: string[]; tiers: string[] };
+  kpis: AnalyticsKpis;
+  winRateByTier: TierWinRate[];
+  roiBySport: SportRoi[];
+  trend: AnalyticsTrendPoint[];
+  heatmap: AnalyticsHeatCell[];
+}

@@ -80,11 +80,41 @@ function decimalToWords(raw: string): string {
   return `${intWords} point ${decWords}`;
 }
 
+// Speak a clock time "7:05 PM" → "seven oh five PM", "1:35" → "one thirty-five",
+// "10:00" → "ten o'clock". Keeps any trailing AM/PM token.
+function speakClock(h: number, m: number): string {
+  const hourWord = intToWords(h);
+  if (m === 0) return `${hourWord} o'clock`;
+  if (m < 10) return `${hourWord} oh ${ONES[m]}`;
+  const t = Math.floor(m / 10);
+  const o = m % 10;
+  const minWord = o === 0 ? TENS[t] : `${TENS[t]}-${ONES[o]}`;
+  return `${hourWord} ${minWord}`;
+}
+
+// Speak a percent "23.5%" → "twenty-three and a half percent", "60%" → "sixty percent".
+function speakPercent(intPart: string, half: boolean): string {
+  const base = intToWords(Number(intPart));
+  return half ? `${base} and a half percent` : `${base} percent`;
+}
+
 export function sanitizeForTTS(text: string): string {
   let s = text;
 
   // Money first.
   s = s.replace(/\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\$\s?\d+(?:\.\d{1,2})?/g, (m) => speakMoney(m));
+
+  // Clock times BEFORE generic number handling: "7:05 PM", "10:00", "1:35 PM Eastern".
+  s = s.replace(/\b(\d{1,2}):(\d{2})\b/g, (_m, h, mn) => speakClock(Number(h), Number(mn)));
+
+  // Timezone abbreviations → spoken words.
+  s = s.replace(/\bET\b/g, "Eastern");
+  s = s.replace(/\bEST\b/g, "Eastern");
+  s = s.replace(/\bEDT\b/g, "Eastern");
+
+  // Percentages: "23.5%" → "twenty-three and a half percent", "60%" → "sixty percent".
+  s = s.replace(/\b(\d{1,3})\.5%/g, (_m, n) => speakPercent(n, true));
+  s = s.replace(/\b(\d{1,3})%/g, (_m, n) => speakPercent(n, false));
 
   // Tri-codes → full team names (before number handling). Word-boundary safe.
   s = s.replace(/\b([A-Z]{2,3})\b/g, (m) => {
@@ -115,8 +145,9 @@ export function sanitizeForTTS(text: string): string {
     return `${word} ${speakLineMagnitude(Number(n))}`;
   });
 
-  // Units: "2.5u" → "two and a half units", "1u" → "one unit".
+  // Units: "2.5u" → "two and a half units", "3.0u" → "three units", "1u" → "one unit".
   s = s.replace(/\b(\d+)\.5u\b/g, (_m, n) => `${intToWords(Number(n))} and a half units`);
+  s = s.replace(/\b(\d+)\.0u\b/g, (_m, n) => (Number(n) === 1 ? "one unit" : `${intToWords(Number(n))} units`));
   s = s.replace(/\b1u\b/g, "one unit");
   s = s.replace(/\b(\d+)u\b/g, (_m, n) => `${intToWords(Number(n))} units`);
 

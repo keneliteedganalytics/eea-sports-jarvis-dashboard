@@ -7,10 +7,10 @@ import { convictionUnits, applyJuicePenalty, unitsToStake } from "../../core/siz
 import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
 import { buildTwoWayMarket } from "../../core/markets";
 import { emptyMarket, type Market, type MarketSet, type Side, type Verdict } from "../../core/types";
-import type { BuiltPick } from "../mlb/picksEngine";
+import type { BuiltPick, PolymarketData } from "../mlb/picksEngine";
 import type { NhlModelResult, GoalieStats, TeamHockeyStats } from "./model";
 
-export const BANKROLL_USD = 35800;
+export const BANKROLL_USD = 25000;
 export const MAX_PICKS_PER_DAY = 6;
 const PUCK_MARGIN_SCALE = 1.9; // goals-diff → cover prob scale
 const TOTAL_SCALE = 2.2;
@@ -50,6 +50,7 @@ export interface NhlGameInput {
   _awayGoalie?: GoalieStats | null;
   _publicPct?: number | null;
   _sharpPct?: number | null;
+  _polymarketData?: PolymarketData;
 }
 
 // Goals-model confidence: base 30, edge magnitude, data completeness, alignment.
@@ -110,12 +111,20 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
   const pickBook = pickSide === "home" ? game.mlHomeBook ?? null : game.mlAwayBook ?? null;
   const pickFair = pickSide === "home" ? homeFair : awayFair;
 
+  // Re-orient Polymarket (home-keyed from the adapter) to the pick side.
+  const rawPoly = game._polymarketData ?? { found: false, pct: null };
+  let orientedPoly: PolymarketData = rawPoly;
+  if (rawPoly.found && rawPoly.pct != null && pickSide === "away") {
+    orientedPoly = { ...rawPoly, pct: Math.round((100 - rawPoly.pct) * 10) / 10 };
+  }
+  const polyPct = orientedPoly.found ? (orientedPoly.pct ?? null) : null;
+
   const confidence = computeConfidence(pickEdge, model, pickSide);
 
   const tier: Verdict = assignTier({
     edgePp: pickEdge,
     confidence,
-    polyPct: null,
+    polyPct,
     hardPass,
     oddsAmerican: pickMl,
     winProb: pickWp,
@@ -246,7 +255,7 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
           gp: game._awayGoalie.gp ?? null,
         }
       : null,
-    polymarket: { found: false, pct: null },
+    polymarket: orientedPoly,
     // Orient public/sharp percentages to the pick side (home-keyed by convention).
     publicPct: pickSide === "away" && game._publicPct != null
       ? Math.round((100 - game._publicPct) * 10) / 10

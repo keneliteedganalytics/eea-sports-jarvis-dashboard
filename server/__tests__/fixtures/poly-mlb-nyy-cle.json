@@ -1,0 +1,67 @@
+[
+  {
+    "id": "551533",
+    "ticker": "mlb-nyy-cle-2026-06-08",
+    "slug": "mlb-nyy-cle-2026-06-08",
+    "title": "New York Yankees vs. Cleveland Guardians",
+    "endDate": "2026-06-15T22:40:00Z",
+    "active": true,
+    "closed": false,
+    "markets": [
+      {
+        "question": "New York Yankees vs. Cleveland Guardians",
+        "slug": "mlb-nyy-cle-2026-06-08",
+        "outcomes": "[\"New York Yankees\", \"Cleveland Guardians\"]",
+        "outcomePrices": "[\"0.455\", \"0.545\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-15T22:40:00Z"
+      },
+      {
+        "question": "Will there be a run scored in the first inning?: New York Yankees vs. Cleveland Guardians",
+        "slug": "mlb-nyy-cle-2026-06-08-nrfi",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "outcomePrices": "[\"0.455\", \"0.545\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-15T22:40:00Z"
+      },
+      {
+        "question": "Spread: New York Yankees (-1.5)",
+        "slug": "mlb-nyy-cle-2026-06-08-spread-away-1pt5",
+        "outcomes": "[\"New York Yankees\", \"Cleveland Guardians\"]",
+        "outcomePrices": "[\"0.335\", \"0.665\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-08T22:40:00Z"
+      },
+      {
+        "question": "New York Yankees vs. Cleveland Guardians: O/U 8.5",
+        "slug": "mlb-nyy-cle-2026-06-08-total-8pt5",
+        "outcomes": "[\"Over\", \"Under\"]",
+        "outcomePrices": "[\"0.445\", \"0.555\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-08T22:40:00Z"
+      },
+      {
+        "question": "Spread: Cleveland Guardians (-3.5)",
+        "slug": "mlb-nyy-cle-2026-06-08-spread-home-3pt5",
+        "outcomes": "[\"Cleveland Guardians\", \"New York Yankees\"]",
+        "outcomePrices": "[\"0.18\", \"0.82\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-08T22:40:00Z"
+      },
+      {
+        "question": "Spread: Cleveland Guardians (-1.5)",
+        "slug": "mlb-nyy-cle-2026-06-08-spread-home-1pt5",
+        "outcomes": "[\"Cleveland Guardians\", \"New York Yankees\"]",
+        "outcomePrices": "[\"0.365\", \"0.635\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-08T22:40:00Z"
+      }
+    ]
+  }
+]

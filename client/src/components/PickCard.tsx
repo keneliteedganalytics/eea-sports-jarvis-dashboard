@@ -8,7 +8,7 @@ import { WhyPanel } from "./WhyPanel";
 import { SpreadRow } from "./SpreadRow";
 import { TotalRow } from "./TotalRow";
 import { PropsPanel } from "./PropsPanel";
-import { fmtLine, fmtMoney, fmtPct, fmtUnits, lineMovement } from "@/lib/format";
+import { fmtGameDate, fmtGameTime, fmtLine, fmtMoney, fmtPct, fmtUnits, lineMovement } from "@/lib/format";
 import type { BuiltPick } from "@/lib/types";
 
 const STEAM_CENTS = 10;
@@ -119,11 +119,14 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
         </span>
       </div>
 
-      {/* 3. Matchup + 4. Pick */}
+      {/* 3. Matchup + date/time + 4. Pick */}
       <div>
         <Link href={`/pick/${pick.gameId}`} className="text-sm font-medium text-foreground hover:text-gold">
-          {pick.awayTeam} @ {pick.homeTeam} · {pick.gameTimeEt}
+          {pick.awayTeam} @ {pick.homeTeam}
         </Link>
+        <div className="mt-0.5 text-[11px] tabular-nums text-muted-foreground" data-testid="card-datetime">
+          {[fmtGameDate(pick.gameDate), fmtGameTime(pick.gameTimeEt)].filter(Boolean).join(" · ") || "Time TBD"}
+        </div>
         {/* MLB-only: starting pitcher row */}
         {showPitcherRow && (
           <div className="mt-0.5 text-xs text-zinc-400" data-testid="pitcher-row">
@@ -158,13 +161,12 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
         </div>
       )}
 
-      {/* 4c. Spread + total markets */}
-      {(pick.markets?.spread?.available || pick.markets?.total?.available) && (
-        <div className="flex flex-col gap-1 rounded-lg border border-card-border bg-background/40 px-2.5 py-2" data-testid="markets-block">
-          <SpreadRow market={pick.markets.spread} label={SPREAD_LABEL[pick.sport] ?? "SPR"} />
-          <TotalRow market={pick.markets.total} />
-        </div>
-      )}
+      {/* 4c. Spread + total markets — always rendered; rows show "No market"
+          when a line isn't posted so the block never silently disappears. */}
+      <div className="flex flex-col gap-1 rounded-lg border border-card-border bg-background/40 px-2.5 py-2" data-testid="markets-block">
+        <SpreadRow market={pick.markets.spread} label={SPREAD_LABEL[pick.sport] ?? "SPR"} />
+        <TotalRow market={pick.markets.total} />
+      </div>
 
       {/* 5. 3-bar */}
       <SignalBars publicPct={publicPct} sharpPct={sharpPct} prismPct={prismPct} prismReason={prismReason} />

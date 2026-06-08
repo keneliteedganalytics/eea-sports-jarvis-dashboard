@@ -1,0 +1,67 @@
+[
+  {
+    "id": "541625",
+    "ticker": "nhl-car-las-2026-06-09",
+    "slug": "nhl-car-las-2026-06-09",
+    "title": "Hurricanes vs. Golden Knights",
+    "endDate": "2026-06-10T00:00:00Z",
+    "active": true,
+    "closed": false,
+    "markets": [
+      {
+        "question": "Hurricanes vs. Golden Knights",
+        "slug": "nhl-car-las-2026-06-09",
+        "outcomes": "[\"Hurricanes\", \"Golden Knights\"]",
+        "outcomePrices": "[\"0.505\", \"0.495\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-10T00:00:00Z"
+      },
+      {
+        "question": "Hurricanes vs. Golden Knights: O/U 4.5",
+        "slug": "nhl-car-las-2026-06-09-total-4pt5",
+        "outcomes": "[\"Over\", \"Under\"]",
+        "outcomePrices": "[\"0.77\", \"0.23\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-10T00:00:00Z"
+      },
+      {
+        "question": "Hurricanes vs. Golden Knights: O/U 5.5",
+        "slug": "nhl-car-las-2026-06-09-total-5pt5",
+        "outcomes": "[\"Over\", \"Under\"]",
+        "outcomePrices": "[\"0.555\", \"0.445\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-10T00:00:00Z"
+      },
+      {
+        "question": "Hurricanes vs. Golden Knights: O/U 6.5",
+        "slug": "nhl-car-las-2026-06-09-total-6pt5",
+        "outcomes": "[\"Over\", \"Under\"]",
+        "outcomePrices": "[\"0.43\", \"0.57\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-10T00:00:00Z"
+      },
+      {
+        "question": "Hurricanes vs. Golden Knights: O/U 7.5",
+        "slug": "nhl-car-las-2026-06-09-total-7pt5",
+        "outcomes": "[\"Over\", \"Under\"]",
+        "outcomePrices": "[\"0.235\", \"0.765\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-10T00:00:00Z"
+      },
+      {
+        "question": "Spread: Hurricanes (-1.5)",
+        "slug": "nhl-car-las-2026-06-09-spread-away-1pt5",
+        "outcomes": "[\"Hurricanes\", \"Golden Knights\"]",
+        "outcomePrices": "[\"0.285\", \"0.715\"]",
+        "active": true,
+        "closed": false,
+        "endDate": "2026-06-10T00:00:00Z"
+      }
+    ]
+  }
+]

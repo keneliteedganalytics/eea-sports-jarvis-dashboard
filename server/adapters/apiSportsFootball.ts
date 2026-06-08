@@ -9,8 +9,28 @@ import type { TeamGoalStats } from "../sports/soccer/model";
 
 const BASE = "https://v3.football.api-sports.io";
 
+// Opt-in debug logging: set SOCCER_STATS_DEBUG=1 to trace resolve/stats misses.
+const DEBUG = process.env.SOCCER_STATS_DEBUG === "1";
+function dbg(...args: unknown[]): void {
+  if (DEBUG) console.log("[apiSportsFootball]", ...args);
+}
+
 export function hasApiSportsKey(): boolean {
   return Boolean(process.env.API_SPORTS_KEY);
+}
+
+// Strip accents, common club suffixes/prefixes (FC, CF, SC, AFC…), and punctuation
+// so an Odds-API name ("Brighton & Hove Albion") still resolves to the API-Sports
+// entry ("Brighton"). Returns a trimmed, collapsed search string.
+function simplifyTeamName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(FC|CF|SC|AFC|AC|SS|US|CD|SE|EC|AS|RC)\b/gi, "")
+    .replace(/&/g, " ")
+    .replace(/[^a-zA-Z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function key(): Record<string, string> {
@@ -72,26 +92,61 @@ interface RawPrediction {
 const _statsCache = new Map<string, TeamGoalStats>();    // teamId:leagueId:season → stats
 const _teamIdCache = new Map<string, number | null>();   // "name:leagueId" → teamId
 
-// Resolve a team ID by searching the football API.
-// Cached by (teamName, leagueId) to avoid repeated lookups.
+// One /teams search attempt. Returns the first team id, or null on miss/error.
+async function searchTeamId(
+  params: Record<string, string | number>,
+): Promise<number | null> {
+  try {
+    const res = await getJson<RawTeamSearch>(`${BASE}/teams`, params, key());
+    if (!res.ok) {
+      dbg("search HTTP fail", params, res.error ?? res.status);
+      return null;
+    }
+    const hits = res.data?.response ?? [];
+    if (hits.length === 0) {
+      dbg("search 0 hits", params);
+      return null;
+    }
+    return hits[0]?.team?.id ?? null;
+  } catch (e) {
+    dbg("search threw", params, e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+// Resolve a team ID by searching the football API. Cached by (teamName, leagueId).
+// Fallback chain: exact name+league → simplified name+league → simplified name
+// without a league filter (API-Sports' search is brittle when the league filter
+// excludes a team that's catalogued under a different competition id).
 async function resolveTeamId(teamName: string, leagueId: number): Promise<number | null> {
   const nameCacheKey = `${teamName}:${leagueId}`;
   const cached = _teamIdCache.get(nameCacheKey);
   if (cached !== undefined) return cached;
-  try {
-    const res = await getJson<RawTeamSearch>(
-      `${BASE}/teams`,
-      { search: teamName, league: leagueId },
-      key(),
-    );
-    const first = res.ok ? res.data?.response?.[0]?.team : undefined;
-    const id = first?.id ?? null;
-    _teamIdCache.set(nameCacheKey, id);
-    return id;
-  } catch {
-    _teamIdCache.set(nameCacheKey, null);
-    return null;
+
+  const simple = simplifyTeamName(teamName);
+  const attempts: Record<string, string | number>[] = [
+    { search: teamName, league: leagueId },
+  ];
+  if (simple && simple.toLowerCase() !== teamName.toLowerCase()) {
+    attempts.push({ search: simple, league: leagueId });
   }
+  // League-free fallbacks (last resort) — broadest match.
+  attempts.push({ search: teamName });
+  if (simple && simple.toLowerCase() !== teamName.toLowerCase()) {
+    attempts.push({ search: simple });
+  }
+
+  let id: number | null = null;
+  for (const params of attempts) {
+    id = await searchTeamId(params);
+    if (id !== null) {
+      dbg("resolved", teamName, "→", id, "via", params);
+      break;
+    }
+  }
+  if (id === null) dbg("UNRESOLVED", teamName, "league", leagueId);
+  _teamIdCache.set(nameCacheKey, id);
+  return id;
 }
 
 // Fetch team statistics by known team ID + league + season (no resolve step).
@@ -110,6 +165,7 @@ export async function fetchTeamStatsByTeamId(
       { team: teamId, league: leagueId, season },
       key(),
     );
+    if (!res.ok) dbg("stats HTTP fail", cacheKey, res.error ?? res.status);
     const g = res.ok ? res.data?.response?.goals : undefined;
     const gpg = g ? num(g.for?.average?.total) : null;
     const gapg = g ? num(g.against?.average?.total) : null;
@@ -118,6 +174,7 @@ export async function fetchTeamStatsByTeamId(
       gpg !== null || gapg !== null
         ? { available: true, gpg, gapg, form: form ? form.slice(-5) : null }
         : { available: false };
+    if (!result.available) dbg("stats empty", cacheKey, "gpg", gpg, "gapg", gapg);
     _statsCache.set(cacheKey, result);
     return result;
   } catch {

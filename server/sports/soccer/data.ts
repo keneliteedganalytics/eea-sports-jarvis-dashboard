@@ -11,6 +11,7 @@ import { devigThreeWay } from "../../core/odds";
 import { computePublicSharp, type RawBookmaker } from "../../core/consensus";
 import { nameToAbbr } from "./teams";
 import { SOCCER_ODDS_KEYS, leagueByOddsKey } from "./leagues";
+import { fetchPolymarketForGame, type PolymarketResult } from "../../adapters/polymarket";
 import type { SoccerGameInput } from "./picksEngine";
 import type { TeamGoalStats } from "./model";
 
@@ -195,6 +196,15 @@ export async function buildSoccerSlate(now: Date = new Date()): Promise<SoccerSl
   // Fetch all team stats in parallel batches of BATCH_SIZE to respect API rate limits.
   const allStats = await batchRun(statsTasks, BATCH_SIZE * 2);
 
+  // Polymarket lookups (home-keyed; re-oriented per pick side in picksEngine).
+  // The event-list is cached, so these N calls share one upstream request.
+  const polyResults = await Promise.all(
+    events.map((ev) =>
+      fetchPolymarketForGame(ev.homeTeamFull, ev.awayTeamFull, opDay, "home", "soccer")
+        .catch((): PolymarketResult => ({ found: false, pct: null, reason: "lookup error" })),
+    ),
+  );
+
   const games: SoccerGameInput[] = [];
 
   for (let i = 0; i < events.length; i++) {
@@ -202,6 +212,7 @@ export async function buildSoccerSlate(now: Date = new Date()): Promise<SoccerSl
     const m = eventMarkets[i];
     const homeStats: TeamGoalStats = allStats[i * 2];
     const awayStats: TeamGoalStats = allStats[i * 2 + 1];
+    const poly = polyResults[i];
 
     games.push({
       gameId: ev.eventId,
@@ -239,6 +250,9 @@ export async function buildSoccerSlate(now: Date = new Date()): Promise<SoccerSl
       openAwayMl: m.bestAwayMl,
       _publicPct: m.publicPct,
       _sharpPct: m.sharpPct,
+      _polymarketData: poly.found
+        ? { found: true, pct: poly.pct }
+        : { found: false, pct: null, reason: poly.reason },
       // Attach stats so slate.ts can forward to model
       _homeStats: homeStats,
       _awayStats: awayStats,

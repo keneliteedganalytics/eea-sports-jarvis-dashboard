@@ -20,9 +20,15 @@ ELEVENLABS_VOICE_ID=onwK4e9ZLuTAKqWW03F9
 ELEVENLABS_MODEL=eleven_turbo_v2_5
 OPENWEATHER_API_KEY=<your-openweather-key>
 BALLDONTLIE_API_KEY=<your-balldontlie-key>
-BANKROLL_USD=35800
+BANKROLL_USD=25000
 NODE_ENV=production
 ```
+
+> **Bankroll (June 2026 reset):** `BANKROLL_USD=25000`. One flat unit is 1.5% of
+> bankroll = **$375**. Conviction stakes: BONUS 3.0u = $1,125 · SNIPER 2.5u = $938
+> · EDGE 2.0u = $750 · RECON 1.5u = $563 · VALUE/LEAN 1.0u = $375. The route reads
+> `process.env.BANKROLL_USD` and falls back to the repo default (also 25000). Update
+> the Railway variable to change it in production — no code change required.
 
 ## Custom domain + Cloudflare Access
 1. Railway → Settings → Networking → Generate Domain (gives e.g. eea-sports-jarvis-production.up.railway.app)

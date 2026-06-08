@@ -8,6 +8,7 @@ import { getNbaSlate } from "./sports/nba/slate";
 import { getDailySlate, getAnyPick } from "./slate/orchestrator";
 import { getProps } from "./props";
 import { hitRatesByTier, trackRecord, seedHitRates } from "./sports/mlb/trackRecord";
+import { buildAnalytics } from "./analytics";
 import { generateBrief } from "./audio/brief";
 import { generateSpeech, getCachedFilePath, hasElevenLabsKey } from "./audio/tts";
 import { getAlerts } from "./pollers/alerts";
@@ -80,6 +81,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Track Record summary + bet log.
   app.get("/api/mlb/track-record", (_req: Request, res: Response) => {
     res.json(trackRecord("MLB"));
+  });
+
+  // Analytics dashboard aggregation. Optional ?sport= ?tier= ?since= filters.
+  app.get("/api/analytics", (req: Request, res: Response) => {
+    const sport = typeof req.query.sport === "string" ? req.query.sport : null;
+    const tier = typeof req.query.tier === "string" ? req.query.tier : null;
+    const since = parseDateParam(req.query.since) ?? null;
+    res.json(buildAnalytics({ sport, tier, since }));
   });
 
   // Player props for a sport+date. Headline markets only; MLB carries a Poisson

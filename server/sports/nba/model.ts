@@ -12,6 +12,8 @@ export const MARGIN_TO_WP_SCALE = 12.0; // points-margin → win-prob logistic s
 export const MODEL_TRUST_WEIGHT = 0.45;
 export const PROB_CLAMP_LO = 0.15;
 export const PROB_CLAMP_HI = 0.85;
+export const NBA_B2B_PTS = 2.2;       // points docked from a team on zero rest (back-to-back)
+export const NBA_REST_EDGE_PTS = 0.6; // extra points per day of rest advantage (capped)
 
 export interface TeamHoopStats {
   available: boolean;
@@ -29,6 +31,12 @@ export interface NbaModelContext {
   awayStats: TeamHoopStats | Record<string, never>;
   homeFairProb?: number | null;
   awayFairProb?: number | null;
+  // Rest days since each team's previous game (0 = back-to-back). Optional.
+  homeRestDays?: number | null;
+  awayRestDays?: number | null;
+  // Net point swing from injuries (positive favors home). A star OUT is ~4-7 pts.
+  homeInjuryPts?: number | null; // points docked from home for its own injuries
+  awayInjuryPts?: number | null; // points docked from away for its own injuries
 }
 
 export interface NbaModelResult {
@@ -86,6 +94,27 @@ export function predictGame(ctx: NbaModelContext): NbaModelResult {
 
   let projHome = (homeEff * pace) / 100 + NBA_HOME_PTS;
   let projAway = (awayEff * pace) / 100;
+
+  // Rest / back-to-back adjustment. A team on zero rest loses NBA_B2B_PTS; a
+  // rest-days edge adds up to ~2 points (capped at 3 days of advantage).
+  const homeRest = sf(ctx.homeRestDays);
+  const awayRest = sf(ctx.awayRestDays);
+  if (homeRest !== null && homeRest <= 0) { projHome -= NBA_B2B_PTS; warnings.push("home on a back-to-back — points docked"); }
+  if (awayRest !== null && awayRest <= 0) { projAway -= NBA_B2B_PTS; warnings.push("away on a back-to-back — points docked"); }
+  if (homeRest !== null && awayRest !== null) {
+    const restDiff = Math.max(-3, Math.min(3, homeRest - awayRest));
+    const restPts = restDiff * NBA_REST_EDGE_PTS;
+    projHome += restPts / 2;
+    projAway -= restPts / 2;
+    if (Math.abs(restDiff) >= 2) warnings.push(`rest edge: ${restDiff > 0 ? "home" : "away"} +${Math.abs(restDiff)} days`);
+  }
+
+  // Injury adjustment — points removed from each side for its own absences.
+  const homeInj = sf(ctx.homeInjuryPts) ?? 0;
+  const awayInj = sf(ctx.awayInjuryPts) ?? 0;
+  if (homeInj > 0) { projHome -= homeInj; warnings.push(`home injuries: -${homeInj} pts`); }
+  if (awayInj > 0) { projAway -= awayInj; warnings.push(`away injuries: -${awayInj} pts`); }
+
   projHome = Math.max(80, projHome);
   projAway = Math.max(80, projAway);
 

@@ -14,7 +14,7 @@ import type { TeamOffense } from "./ratings";
 export const ELITE_FADE_PP = 12.0;
 export const MAX_PICKS_PER_DAY = 6;
 // June reset (EEA operating rules). Overridable via BANKROLL_USD env at the route.
-export const BANKROLL_USD = 35800;
+export const BANKROLL_USD = 25000;
 
 export interface GameInput {
   gameId: string;

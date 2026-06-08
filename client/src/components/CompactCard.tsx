@@ -3,7 +3,7 @@ import { TierPill } from "./TierPill";
 import { SignalBars } from "./SignalBars";
 import { SpreadRow } from "./SpreadRow";
 import { TotalRow } from "./TotalRow";
-import { fmtLine } from "@/lib/format";
+import { fmtGameDate, fmtGameTime, fmtLine } from "@/lib/format";
 import type { BuiltPick } from "@/lib/types";
 
 const SPREAD_LABEL: Record<string, string> = { mlb: "RL", nhl: "PL", nba: "SPR", soccer: "AH" };
@@ -50,15 +50,11 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
   // Projected score
   const showProjScore = pick.projAwayScore != null && pick.projHomeScore != null;
 
-  // Markets
-  const showMarkets = pick.markets?.spread?.available || pick.markets?.total?.available;
-
-  // Signal bars
+  // Signal bars — always rendered (PRISM/public/sharp show "—" when unavailable).
   const publicPct = pick.publicPct;
   const sharpPct = pick.sharpPct;
   const prismPct = pick.polymarket.found ? pick.polymarket.pct ?? null : null;
   const prismReason = !pick.polymarket.found ? (pick.polymarket.reason ?? "No Polymarket market available") : null;
-  const showBars = publicPct !== null || sharpPct !== null || prismPct !== null;
 
   return (
     <article
@@ -75,10 +71,15 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
         </span>
       </div>
 
-      {/* Matchup link */}
-      <Link href={`/pick/${pick.gameId}`} className="text-sm font-medium text-foreground hover:text-gold">
-        {pick.awayTeam} @ {pick.homeTeam} · {pick.gameTimeEt}
-      </Link>
+      {/* Matchup link + date/time */}
+      <div>
+        <Link href={`/pick/${pick.gameId}`} className="text-sm font-medium text-foreground hover:text-gold">
+          {pick.awayTeam} @ {pick.homeTeam}
+        </Link>
+        <div className="mt-0.5 text-[11px] tabular-nums text-muted-foreground" data-testid="card-datetime">
+          {[fmtGameDate(pick.gameDate), fmtGameTime(pick.gameTimeEt)].filter(Boolean).join(" · ") || "Time TBD"}
+        </div>
+      </div>
 
       {/* MLB pitcher row */}
       {showPitcherRow && (
@@ -111,18 +112,14 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
         </div>
       )}
 
-      {/* Spread + total markets */}
-      {showMarkets && (
-        <div className="flex flex-col gap-1 rounded-lg border border-card-border bg-background/40 px-2.5 py-2" data-testid="markets-block">
-          <SpreadRow market={pick.markets.spread} label={SPREAD_LABEL[pick.sport] ?? "SPR"} />
-          <TotalRow market={pick.markets.total} />
-        </div>
-      )}
+      {/* Spread + total markets — always rendered ("No market" when unposted) */}
+      <div className="flex flex-col gap-1 rounded-lg border border-card-border bg-background/40 px-2.5 py-2" data-testid="markets-block">
+        <SpreadRow market={pick.markets.spread} label={SPREAD_LABEL[pick.sport] ?? "SPR"} />
+        <TotalRow market={pick.markets.total} />
+      </div>
 
-      {/* Public / Sharp / PRISM bars */}
-      {showBars && (
-        <SignalBars publicPct={publicPct} sharpPct={sharpPct} prismPct={prismPct} prismReason={prismReason} />
-      )}
+      {/* Public / Sharp / PRISM bars — always rendered */}
+      <SignalBars publicPct={publicPct} sharpPct={sharpPct} prismPct={prismPct} prismReason={prismReason} />
 
       {/* Reason text */}
       {hardPass ? (

@@ -10,7 +10,7 @@ import { emptyMarket, type Market, type MarketSet, type Side, type Verdict } fro
 import type { BuiltPick } from "../mlb/picksEngine";
 import type { SoccerModelResult } from "./model";
 
-export const BANKROLL_USD = 35800;
+export const BANKROLL_USD = 25000;
 export const MAX_PICKS_PER_DAY = 6;
 const GOAL_MARGIN_SCALE = 1.8;
 const TOTAL_SCALE = 2.2;

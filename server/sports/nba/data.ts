@@ -6,6 +6,8 @@ import { fetchOddsForSport, type OddsEvent, type BookPrice } from "../../adapter
 import { consensusSnhl, bestPrice, type Bookmaker } from "../../core/odds";
 import { computePublicSharp, type RawBookmaker } from "../../core/consensus";
 import { fetchHoopTeamStats } from "../../adapters/apiSportsBasketball";
+import { fetchPolymarketForGame, type PolymarketResult } from "../../adapters/polymarket";
+import { fetchNbaInjuries, fetchNbaTeams, type InjuryReport } from "../../adapters/balldontlie";
 import { nameToAbbr } from "./teams";
 import type { NbaGameInput } from "./picksEngine";
 import type { TeamHoopStats } from "./model";
@@ -60,6 +62,18 @@ export async function buildNbaSlate(now: Date = new Date()): Promise<NbaSlateBui
   const oddsEvents = await fetchOddsForSport("basketball_nba", nameToAbbr);
   if (oddsEvents.length === 0) return { operatingDay: opDay, games: [] };
 
+  // Injuries (balldontlie). One fetch per slate; empty map when no key. Build a
+  // full-name → injury-report lookup via the team directory.
+  const [injuriesByTeamId, bdlTeams] = await Promise.all([
+    fetchNbaInjuries().catch(() => new Map<number, InjuryReport>()),
+    fetchNbaTeams().catch(() => []),
+  ]);
+  const injuryByFullName = new Map<string, InjuryReport>();
+  for (const t of bdlTeams) {
+    const rep = injuriesByTeamId.get(t.id);
+    if (rep) injuryByFullName.set(t.full_name, rep);
+  }
+
   const games: NbaGameInput[] = [];
   for (const ev of oddsEvents) {
     const bms = toBookmakers(ev);
@@ -75,9 +89,11 @@ export async function buildNbaSlate(now: Date = new Date()): Promise<NbaSlateBui
       ev.awayTeamFull,
     );
 
-    const [homeStats, awayStats] = await Promise.all([
+    const [homeStats, awayStats, polyResult] = await Promise.all([
       fetchHoopTeamStats(ev.homeTeamFull, NBA_SEASON).catch(() => emptyStats()),
       fetchHoopTeamStats(ev.awayTeamFull, NBA_SEASON).catch(() => emptyStats()),
+      fetchPolymarketForGame(ev.homeTeamFull, ev.awayTeamFull, opDay, "home", "nba")
+        .catch((): PolymarketResult => ({ found: false, pct: null, reason: "lookup error" })),
     ]);
 
     games.push({
@@ -108,6 +124,13 @@ export async function buildNbaSlate(now: Date = new Date()): Promise<NbaSlateBui
       _awayStats: awayStats,
       _publicPct: publicPct,
       _sharpPct: sharpPct,
+      _polymarketData: polyResult.found
+        ? { found: true, pct: polyResult.pct }
+        : { found: false, pct: null, reason: polyResult.reason },
+      _homeInjuryPts: injuryByFullName.get(ev.homeTeamFull)?.outPts ?? null,
+      _awayInjuryPts: injuryByFullName.get(ev.awayTeamFull)?.outPts ?? null,
+      _homeInjuries: injuryByFullName.get(ev.homeTeamFull)?.players ?? [],
+      _awayInjuries: injuryByFullName.get(ev.awayTeamFull)?.players ?? [],
     });
   }
 

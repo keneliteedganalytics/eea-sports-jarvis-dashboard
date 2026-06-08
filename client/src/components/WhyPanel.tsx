@@ -3,9 +3,20 @@ import { ChevronDown } from "lucide-react";
 import { fmtLine, fmtPct } from "@/lib/format";
 import type { BuiltPick } from "@/lib/types";
 
+// Per-sport confidence drivers — the inputs the model weights when scoring this
+// pick. Documents the deepened confidence model so the Why panel is explicit
+// about what moved the number for each sport.
+const CONFIDENCE_DRIVERS: Record<string, string> = {
+  mlb: "Starter FIP/xFIP, lineup splits vs hand, bullpen rest & park factors",
+  nhl: "Line combos, special teams (PP/PK), goalie SV% & rest, xGF%",
+  nba: "ORtg/DRtg (L10), pace, rest & back-to-backs, injury point swings, home court",
+  soccer: "Starting XI, recent form, head-to-head, travel & rest, xG/xGA",
+};
+
 // "Why this pick?" — expandable five-line analysis (FiveLineAnalysis pattern).
 export function WhyPanel({ pick }: { pick: BuiltPick }) {
   const [open, setOpen] = useState(false);
+  const drivers = CONFIDENCE_DRIVERS[pick.sport] ?? null;
 
   const lines: { label: string; value: string }[] = [
     {
@@ -24,6 +35,7 @@ export function WhyPanel({ pick }: { pick: BuiltPick }) {
       label: "Confidence",
       value: `${pick.confidence}/99${pick.isSparseModel ? " · sparse data" : ""}${pick.eliteFadeApplied ? " · elite-fade applied" : ""}`,
     },
+    ...(drivers ? [{ label: "Confidence drivers", value: drivers }] : []),
     {
       label: "Signals",
       value: [
@@ -56,7 +68,11 @@ export function WhyPanel({ pick }: { pick: BuiltPick }) {
             </div>
           ))}
           {pick.modelNotes.length > 0 && (
-            <div className="pt-1 text-[11px] italic text-muted-foreground">{pick.modelNotes[0]}</div>
+            <ul className="space-y-0.5 pt-1" data-testid="why-model-notes">
+              {pick.modelNotes.slice(0, 5).map((n, i) => (
+                <li key={i} className="text-[11px] italic text-muted-foreground">· {n}</li>
+              ))}
+            </ul>
           )}
         </dl>
       )}

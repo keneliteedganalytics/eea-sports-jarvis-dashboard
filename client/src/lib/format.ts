@@ -29,6 +29,28 @@ export function fmtMoney(n: number): string {
   return `$${Math.round(n).toLocaleString("en-US")}`;
 }
 
+// Format a YYYY-MM-DD operating day as "Mon Jun 8" in America/New_York.
+// Parsed as a noon-UTC instant so the calendar date never slips a day under
+// the ET offset. Returns "" for malformed input so the header degrades cleanly.
+export function fmtGameDate(isoDate: string | null | undefined): string {
+  if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return "";
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(d);
+}
+
+// Normalize a server clock string ("8:30 PM ET") to "8:30 PM Eastern" for the
+// card header. Leaves already-normalized or empty strings untouched.
+export function fmtGameTime(timeEt: string | null | undefined): string {
+  if (!timeEt) return "";
+  return timeEt.replace(/\bE[TD]T?\b/, "Eastern").trim();
+}
+
 // Line-movement delta for a side. Returns direction + cents moved.
 export function lineMovement(
   open: number | null,
