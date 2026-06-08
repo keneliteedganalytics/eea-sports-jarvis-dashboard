@@ -40,6 +40,13 @@ export const predictions = sqliteTable("predictions", {
   tier: text("tier").notNull(),
   confidence: integer("confidence").notNull(),
   rawFeaturesJson: text("raw_features_json").notNull().default("{}"),
+  // EEA v2.5 fields (SPEC §12).
+  alignmentSignalRaw: real("alignment_signal_raw"),
+  subSampleWarning: integer("sub_sample_warning", { mode: "boolean" }).notNull().default(false),
+  halfCut: integer("half_cut", { mode: "boolean" }).notNull().default(false),
+  phantomEdge: integer("phantom_edge", { mode: "boolean" }).notNull().default(false),
+  trimmed: integer("trimmed", { mode: "boolean" }).notNull().default(false),
+  topPlay: integer("top_play", { mode: "boolean" }).notNull().default(false),
   ts: text("ts").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
