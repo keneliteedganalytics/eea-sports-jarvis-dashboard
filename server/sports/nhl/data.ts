@@ -111,8 +111,8 @@ export async function buildNhlSlate(now: Date = new Date()): Promise<NhlSlateBui
       // stats carried for the model via the slate runner
       _homeStats: homeStats,
       _awayStats: awayStats,
-      _homeGoalie: homeG ? { available: homeG.available, goalie: homeG.goalie, svPct: homeG.svPct ?? null } : null,
-      _awayGoalie: awayG ? { available: awayG.available, goalie: awayG.goalie, svPct: awayG.svPct ?? null } : null,
+      _homeGoalie: homeG ? { available: homeG.available, goalie: homeG.goalie, svPct: homeG.svPct ?? null, gaa: homeG.gaa ?? null, gp: homeG.gp ?? null } : null,
+      _awayGoalie: awayG ? { available: awayG.available, goalie: awayG.goalie, svPct: awayG.svPct ?? null, gaa: awayG.gaa ?? null, gp: awayG.gp ?? null } : null,
     } as NhlGameInput);
   }
 
