@@ -20,6 +20,7 @@ Never use the words "lock", "smash", "hammer", or any emoji.
 Speak every number as English words, never digits: "fifty-one point two percent", "plus one ten", "one and a half units".
 Never use stat abbreviations — say "fielding independent pitching", not "FIP"; "money line", not "ML".
 Spell times out naturally ("six forty-one PM Eastern"). Lead with when the game is ("Tonight at …", "Tomorrow afternoon at …").
+Say the team names exactly as given in the facts (the article is already correct — don't add or remove "the").
 Cite the edge in percent, the recommended units, and where fair value sits versus the close.
 Write 3-5 sentences of flowing prose for a spoken brief. No lists, no headers.`;
 
@@ -111,18 +112,34 @@ function spokenClock(h: number, min: number): string {
   return `${hourWord} ${spellNumber(min)}`;
 }
 
-// Second-mention team name: drop the city, keep the nickname, prefix "the".
-// "New York Yankees" → "the Yankees"; "Boston Red Sox" → "the Red Sox" (keeps
-// the two-word nickname); single-word names stay whole ("the Athletics").
-function shortTeam(full: string): string {
-  const words = full.trim().split(/\s+/);
-  if (words.length <= 1) return `the ${full.trim()}`;
+// Spoken team label. American-league teams (MLB/NHL/NBA/NFL/NCAAF/NCAAB) read
+// naturally with a definite article — "the New York Yankees", "the Spurs".
+// Soccer teams never take "the": national sides ("Argentina", "Jordan") and
+// clubs ("Manchester United") both sound wrong with it, and a soccer pick can
+// also be "Draw". Names that already start with "the" are left as-is.
+export function teamLabel(name: string, sport: string): string {
+  const trimmed = (name ?? "").trim();
+  if (!trimmed) return trimmed;
+  if (sport === "soccer") return trimmed;
+  if (/^the\s/i.test(trimmed)) return trimmed;
+  return `the ${trimmed}`;
+}
+
+// Second-mention team name: drop the city, keep the nickname, then apply the
+// sport's article rule. "New York Yankees" → "the Yankees"; "Boston Red Sox" →
+// "the Red Sox" (keeps the two-word nickname); soccer names stay whole and
+// article-free ("Manchester United", "Argentina").
+function shortTeam(full: string, sport: string): string {
+  const trimmed = (full ?? "").trim();
+  if (sport === "soccer") return trimmed;
+  const words = trimmed.split(/\s+/);
+  if (words.length <= 1) return teamLabel(trimmed, sport);
   // Common two-word nicknames where the last two words belong together.
   const lastTwo = words.slice(-2).join(" ");
-  if (/^(Red Sox|White Sox|Blue Jays|Maple Leafs|Trail Blazers|Golden Knights)$/i.test(lastTwo)) {
-    return `the ${lastTwo}`;
-  }
-  return `the ${words[words.length - 1]}`;
+  const nickname = /^(Red Sox|White Sox|Blue Jays|Maple Leafs|Trail Blazers|Golden Knights)$/i.test(lastTwo)
+    ? lastTwo
+    : words[words.length - 1];
+  return teamLabel(nickname, sport);
 }
 
 // Closing-line-value phrasing. The fair money line is the price beyond which a
@@ -151,13 +168,17 @@ export function buildBriefScript(pick: BuiltPick, bankroll: number, now: Date = 
   const home = Math.round(pick.projHomeScore * 10) / 10;
   const total = Math.round((away + home) * 10) / 10;
 
-  // First mention uses the full team name; the repeat reference drops the city
-  // and reads as "the Yankees" so the brief doesn't sound like a stat sheet.
-  const pickShort = shortTeam(pick.pickTeamFull);
+  // First mention uses the full team name with the sport's article; the repeat
+  // reference drops the city and reads as "the Yankees" so the brief doesn't
+  // sound like a stat sheet. Soccer names stay article-free throughout.
+  const awayLabel = teamLabel(pick.awayTeamFull, pick.sport);
+  const homeLabel = teamLabel(pick.homeTeamFull, pick.sport);
+  const pickFull = teamLabel(pick.pickTeamFull, pick.sport);
+  const pickShort = shortTeam(pick.pickTeamFull, pick.sport);
 
   const sentences: string[] = [
-    `${when} at ${time}, ${pick.awayTeamFull} at ${pick.homeTeamFull}.`,
-    `We've got ${pick.pickTeamFull} at ${spokenWinPct(pick.pickWinProb)} to win, and the market is only pricing them at ${spokenWinPct(pick.pickImpliedProb)} — that's a ${edgePct} edge, and it is coming from ${v.drivers}.`,
+    `${when} at ${time}, ${awayLabel} at ${homeLabel}.`,
+    `We've got ${pickFull} at ${spokenWinPct(pick.pickWinProb)} to win, and the market is only pricing them at ${spokenWinPct(pick.pickImpliedProb)} — that's a ${edgePct} edge, and it is coming from ${v.drivers}.`,
     `Projected ${v.scoreUnit} land around ${spellNumber(away)} to ${spellNumber(home)}, total near ${spellNumber(total)}.`,
     pick.phantomEdge
       ? `I'm passing on this one — the edge is a mirage off thin data, not a real number.`
@@ -194,10 +215,10 @@ export async function generateBrief(
     `Sport: ${pick.sport.toUpperCase()}`,
     `When: ${when}`,
     `Time: ${spokenTime(pick.gameTimeEt)}`,
-    `Matchup: ${pick.awayTeamFull} at ${pick.homeTeamFull}`,
+    `Matchup: ${teamLabel(pick.awayTeamFull, pick.sport)} at ${teamLabel(pick.homeTeamFull, pick.sport)}`,
     `Start cue: ${v.startLabel}`,
     `Key drivers to reference (already spelled out, say them as-is): ${v.drivers}`,
-    `Pick: ${pick.pickTeamFull} money line at ${spellMoneyLine(pick.pickMl)} (${pick.pickBook ?? "best book"})`,
+    `Pick: ${teamLabel(pick.pickTeamFull, pick.sport)} money line at ${spellMoneyLine(pick.pickMl)} (${pick.pickBook ?? "best book"})`,
     `Model win probability: ${spokenWinPct(pick.pickWinProb)}`,
     `Market-implied probability: ${spokenWinPct(pick.pickImpliedProb)}`,
     `Edge: ${pick.edgePp !== null ? spellPercent(Math.round(pick.edgePp * 10) / 10) : "unknown"}`,

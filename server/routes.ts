@@ -107,8 +107,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // Generate (or fetch cached) audio brief for a pick. Returns { audioUrl,
   // text, available } — available=false means no ElevenLabs key (UI shows the
-  // brief text without playback).
-  app.post("/api/mlb/brief/:id", async (req: Request, res: Response) => {
+  // brief text without playback). The voice is chosen from the resolved pick's
+  // sport (soccer → UK, otherwise US), so the route path is purely cosmetic and
+  // every sport's pick is looked up cross-sport via getAnyPick.
+  const handleBrief = async (req: Request, res: Response) => {
     const pick = await getAnyPick(String(req.params.id), bankroll());
     if (!pick) return res.status(404).json({ message: "pick not found" });
     const text = await generateBrief(pick, bankroll());
@@ -116,12 +118,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.json({ text, audioUrl: null, available: false });
     }
     try {
-      const speech = await generateSpeech(text);
+      const speech = await generateSpeech(text, pick.sport);
       res.json({ text, audioUrl: speech.audioUrl, available: true, cached: speech.cached });
     } catch (e) {
       res.json({ text, audioUrl: null, available: false, error: e instanceof Error ? e.message : "tts failed" });
     }
-  });
+  };
+  app.post("/api/mlb/brief/:id", handleBrief);
+  app.post("/api/nhl/brief/:id", handleBrief);
+  app.post("/api/nba/brief/:id", handleBrief);
+  app.post("/api/soccer/brief/:id", handleBrief);
 
   // Serve cached MP3 by hash.
   app.get("/api/audio/:hash", (req: Request, res: Response) => {
