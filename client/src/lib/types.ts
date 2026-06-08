@@ -81,9 +81,23 @@ export interface BuiltPick {
   polymarket: { found: boolean; pct?: number | null; reason?: string };
   publicPct: number | null;
   sharpPct: number | null;
-  awaySp?: { available?: boolean; pitcher?: string; era?: number | null; fip?: number | null; ip?: number | null; whip?: number | null };
-  homeSp?: { available?: boolean; pitcher?: string; era?: number | null; fip?: number | null; ip?: number | null; whip?: number | null };
+  awaySp?: { available?: boolean; pitcher?: string; era?: number | null; fip?: number | null; ip?: number | null; whip?: number | null; svPct?: number | null };
+  homeSp?: { available?: boolean; pitcher?: string; era?: number | null; fip?: number | null; ip?: number | null; whip?: number | null; svPct?: number | null };
+  // NHL-only goalie fields (undefined on MLB/NBA picks)
+  homeGoalie?: { available: boolean; name: string | null; svPct: number | null; gaa: number | null; gp: number | null } | null;
+  awayGoalie?: { available: boolean; name: string | null; svPct: number | null; gaa: number | null; gp: number | null } | null;
   modelNotes: string[];
+  // Soccer-only fields (undefined on other sports)
+  leagueName?: string | null;
+  leagueId?: number | null;
+  leaguePrefix?: string;
+  isFriendly?: boolean;
+  isDraw?: boolean;
+  homeForm?: string | null;
+  awayForm?: string | null;
+  drawProb?: number | null;
+  mlDraw?: number | null;
+  fairDrawMl?: number | null;
 }
 
 export interface SlatePayload {
@@ -108,6 +122,7 @@ export interface DailySlate {
     mlb: SportSlate;
     nhl: SportSlate;
     nba: SportSlate;
+    soccer: SportSlate;
   };
 }
 

@@ -6,12 +6,13 @@ import { CompactCard } from "@/components/CompactCard";
 import { fmtMoney } from "@/lib/format";
 import type { DailySlate, BuiltPick, Verdict } from "@/lib/types";
 
-type SportFilter = "ALL" | "MLB" | "NHL" | "NBA";
+type SportFilter = "ALL" | "MLB" | "NHL" | "NBA" | "SOCCER";
 const SPORT_CHIPS: { key: SportFilter; label: string; disabled?: boolean }[] = [
   { key: "ALL", label: "ALL" },
   { key: "MLB", label: "MLB" },
   { key: "NHL", label: "NHL" },
   { key: "NBA", label: "NBA" },
+  { key: "SOCCER", label: "SOCCER" },
 ];
 const SOON_CHIPS = ["NFL soon", "NCAAF soon", "NCAAB soon"];
 
@@ -48,7 +49,12 @@ export default function Home() {
   const allPicks = useMemo<BuiltPick[]>(() => {
     if (!data) return [];
     const s = data.sports;
-    return [...s.mlb.picks, ...s.nhl.picks, ...s.nba.picks];
+    return [
+      ...s.mlb.picks,
+      ...s.nhl.picks,
+      ...s.nba.picks,
+      ...(s.soccer?.picks ?? []),
+    ];
   }, [data]);
 
   const visible = useMemo(() => {
@@ -68,11 +74,12 @@ export default function Home() {
   }, [allPicks, sport, showAll]);
 
   const counts = useMemo(() => {
-    const c = { mlb: 0, nhl: 0, nba: 0 };
+    const c = { mlb: 0, nhl: 0, nba: 0, soccer: 0 };
     for (const p of allPicks) {
       if (p.sport === "mlb") c.mlb++;
       else if (p.sport === "nhl") c.nhl++;
       else if (p.sport === "nba") c.nba++;
+      else if (p.sport === "soccer") c.soccer++;
     }
     return c;
   }, [allPicks]);
@@ -150,13 +157,13 @@ export default function Home() {
         </div>
       )}
 
-      {data && sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba"] === 0 && (
+      {data && sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba" | "soccer"] === 0 && (
         <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="empty-sport">
           No {sport} games on the board today.
         </div>
       )}
 
-      {data && visible.length === 0 && !(sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba"] === 0) && (
+      {data && visible.length === 0 && !(sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba" | "soccer"] === 0) && (
         <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="empty-slate">
           {showAll ? "No games on the board today." : "No qualifying plays. Switch to All games to see the full slate."}
         </div>

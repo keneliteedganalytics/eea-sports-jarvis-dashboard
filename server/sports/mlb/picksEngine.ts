@@ -128,6 +128,9 @@ export interface BuiltPick {
   awayWinProb: number | null;
   homeSp: SpStats & Record<string, unknown>;
   awaySp: SpStats & Record<string, unknown>;
+  // NHL-only goalie fields (undefined on MLB/NBA picks)
+  homeGoalie?: { available: boolean; name: string | null; svPct: number | null; gaa: number | null; gp: number | null } | null;
+  awayGoalie?: { available: boolean; name: string | null; svPct: number | null; gaa: number | null; gp: number | null } | null;
   polymarket: PolymarketData;
   publicPct: number | null;  // avg implied prob across soft/public books (0-100)
   sharpPct: number | null;   // implied prob from sharp books (0-100)

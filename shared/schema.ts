@@ -12,6 +12,10 @@ export const games = sqliteTable("games", {
   startTimeUtc: text("start_time_utc").notNull(),
   status: text("status").notNull().default("scheduled"),
   slateDateEt: text("slate_date_et").notNull(),
+  // Soccer fields (v3) — nullable on all other sports
+  leagueName: text("league_name"),
+  leagueId: integer("league_id"),
+  isFriendly: integer("is_friendly", { mode: "boolean" }),
 });
 
 // ── odds_snapshots ───────────────────────────────────────────────
@@ -48,6 +52,8 @@ export const predictions = sqliteTable("predictions", {
   trimmed: integer("trimmed", { mode: "boolean" }).notNull().default(false),
   topPlay: integer("top_play", { mode: "boolean" }).notNull().default(false),
   ts: text("ts").notNull().default(sql`CURRENT_TIMESTAMP`),
+  // Soccer: 3-way draw probability (null for 2-way sports)
+  drawProb: real("draw_prob"),
 });
 
 // ── outcomes ─────────────────────────────────────────────────────
@@ -58,6 +64,8 @@ export const outcomes = sqliteTable("outcomes", {
   finalAwayScore: integer("final_away_score"),
   winnerSide: text("winner_side"),
   closedAt: text("closed_at"),
+  // Soccer: true when the game ended as a draw
+  isDraw: integer("is_draw", { mode: "boolean" }),
 });
 
 // ── slates ───────────────────────────────────────────────────────

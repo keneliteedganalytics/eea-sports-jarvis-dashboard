@@ -15,6 +15,10 @@ export const PHANTOM_NOTE_PATTERNS: RegExp[] = [
   /using league.*ORtg/i,
   /using league.*pace/i,
   /OPS blend skipped/i,
+  // Soccer league-fallback patterns (v3)
+  /using league.*GPG/i,
+  /league-fallback.*goals/i,
+  /missing team form/i,
 ];
 
 export const PHANTOM_NOTE = "⚠️ Phantom edge detected — pricing artifact from missing data";

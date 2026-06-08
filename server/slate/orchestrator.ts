@@ -1,10 +1,11 @@
-// Cross-sport slate orchestrator. Runs MLB / NHL / NBA slate services in
-// parallel via Promise.allSettled so one sport's upstream failure never blanks
-// the whole board — a failed sport returns { picks: [], ok: false, error }.
+// Cross-sport slate orchestrator. Runs MLB / NHL / NBA / SOCCER slate services
+// in parallel via Promise.allSettled so one sport's upstream failure never
+// blanks the whole board — a failed sport returns { picks: [], ok: false, error }.
 
 import { getSlate, getPick } from "../sports/mlb/slate";
 import { getNhlSlate, getNhlPick } from "../sports/nhl/slate";
 import { getNbaSlate, getNbaPick } from "../sports/nba/slate";
+import { getSoccerSlate, getSoccerPick } from "../sports/soccer/slate";
 import { BANKROLL_USD, type BuiltPick } from "../sports/mlb/picksEngine";
 import { applyExposureCap } from "../core/sizing";
 
@@ -23,6 +24,7 @@ export interface DailySlate {
     mlb: SportSlate;
     nhl: SportSlate;
     nba: SportSlate;
+    soccer: SportSlate;
   };
 }
 
@@ -52,22 +54,24 @@ function applySlateExposureCap(slates: SportSlate[], bankroll: number): void {
 }
 
 export async function getDailySlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<DailySlate> {
-  const [mlbR, nhlR, nbaR] = await Promise.allSettled([
+  const [mlbR, nhlR, nbaR, soccerR] = await Promise.allSettled([
     getSlate(bankroll, dateIso),
     getNhlSlate(bankroll, dateIso),
     getNbaSlate(bankroll, dateIso),
+    getSoccerSlate(bankroll, dateIso),
   ]);
 
   const mlb = settledToSport(mlbR);
   const nhl = settledToSport(nhlR);
   const nba = settledToSport(nbaR);
+  const soccer = settledToSport(soccerR);
 
   // 18% slate-wide exposure cap (SPEC §4): scale every actionable stake by one
   // common factor when the combined board exceeds 18% of bankroll.
-  applySlateExposureCap([mlb, nhl, nba], bankroll);
+  applySlateExposureCap([mlb, nhl, nba, soccer], bankroll);
 
   // Operating day / demo flag taken from whichever sport resolved (prefer MLB).
-  const resolved = [mlbR, nhlR, nbaR].find((r) => r.status === "fulfilled") as
+  const resolved = [mlbR, nhlR, nbaR, soccerR].find((r) => r.status === "fulfilled") as
     | PromiseFulfilledResult<{ operatingDay: string; isDemo: boolean }>
     | undefined;
 
@@ -76,18 +80,19 @@ export async function getDailySlate(bankroll = BANKROLL_USD, dateIso?: string): 
     isDemo: resolved?.value.isDemo ?? true,
     bankroll,
     generatedAt: Date.now(),
-    sports: { mlb, nhl, nba },
+    sports: { mlb, nhl, nba, soccer },
   };
 }
 
-// Look up a single pick across all three sports (for /pick/:id detail + briefs).
+// Look up a single pick across all four sports (for /pick/:id detail + briefs).
 export async function getAnyPick(id: string, bankroll = BANKROLL_USD): Promise<BuiltPick | null> {
-  const [mlb, nhl, nba] = await Promise.allSettled([
+  const [mlb, nhl, nba, soccer] = await Promise.allSettled([
     getPick(id, bankroll),
     getNhlPick(id, bankroll),
     getNbaPick(id, bankroll),
+    getSoccerPick(id, bankroll),
   ]);
-  for (const r of [mlb, nhl, nba]) {
+  for (const r of [mlb, nhl, nba, soccer]) {
     if (r.status === "fulfilled" && r.value) return r.value;
   }
   return null;

@@ -13,7 +13,7 @@ import type { BuiltPick } from "@/lib/types";
 
 const STEAM_CENTS = 10;
 
-const SPREAD_LABEL: Record<string, string> = { mlb: "RL", nhl: "PL", nba: "SPR" };
+const SPREAD_LABEL: Record<string, string> = { mlb: "RL", nhl: "PL", nba: "SPR", soccer: "AH" };
 
 export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number }) {
   const openMl = pick.pickSide === "home" ? pick.openHomeMl : pick.openAwayMl;
@@ -28,11 +28,41 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
 
   // MLB pitcher row data
   const isMLB = pick.sport === "mlb";
+  const isSoccer = pick.sport === "soccer";
   const awaySpName = pick.awaySp?.available === false ? "TBD" : (pick.awaySp?.pitcher ?? null);
   const homeSpName = pick.homeSp?.available === false ? "TBD" : (pick.homeSp?.pitcher ?? null);
   const awaySpEra = pick.awaySp?.era != null ? pick.awaySp.era.toFixed(2) : null;
   const homeSpEra = pick.homeSp?.era != null ? pick.homeSp.era.toFixed(2) : null;
   const showPitcherRow = isMLB && (awaySpName !== null || homeSpName !== null);
+
+  // Soccer subtitle row
+  const leaguePrefix = isSoccer ? (pick.leaguePrefix ?? (pick.leagueName ? `${pick.leagueName} ·` : "Soccer ·")) : null;
+  const homeFormStr = pick.homeForm ?? null;
+  const awayFormStr = pick.awayForm ?? null;
+  const showSoccerRow = isSoccer;
+
+  // NHL goalie row data — shown when at least one goalie is available
+  const isNHL = pick.sport === "nhl";
+  const awayGoalieName = pick.awayGoalie?.available
+    ? (pick.awayGoalie.name ?? "TBD")
+    : pick.awayGoalie
+      ? "TBD"
+      : null;
+  const homeGoalieName = pick.homeGoalie?.available
+    ? (pick.homeGoalie.name ?? "TBD")
+    : pick.homeGoalie
+      ? "TBD"
+      : null;
+  const awayGoalieSvPct =
+    pick.awayGoalie?.available && pick.awayGoalie.svPct != null
+      ? `.${Math.round(pick.awayGoalie.svPct * 1000).toString().padStart(3, "0")} SV%`
+      : null;
+  const homeGoalieSvPct =
+    pick.homeGoalie?.available && pick.homeGoalie.svPct != null
+      ? `.${Math.round(pick.homeGoalie.svPct * 1000).toString().padStart(3, "0")} SV%`
+      : null;
+  // Hide the goalie row only if both are completely absent (no data at all)
+  const showGoalieRow = isNHL && (awayGoalieName !== null || homeGoalieName !== null);
 
   // Projected score line — shown on every sport when both scores available
   const showProjScore = pick.projAwayScore != null && pick.projHomeScore != null;
@@ -98,6 +128,21 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
         {showPitcherRow && (
           <div className="mt-0.5 text-xs text-zinc-400" data-testid="pitcher-row">
             SP: {awaySpName ?? "TBD"}{awaySpEra ? ` (${awaySpEra} ERA)` : ""} vs {homeSpName ?? "TBD"}{homeSpEra ? ` (${homeSpEra} ERA)` : ""}
+          </div>
+        )}
+        {/* Soccer: league prefix + form row */}
+        {showSoccerRow && (
+          <div className="mt-0.5 text-xs text-zinc-400" data-testid="soccer-league-row">
+            {leaguePrefix}
+            {(homeFormStr || awayFormStr) && (
+              <span> Form: {awayFormStr ?? "—"} vs {homeFormStr ?? "—"}</span>
+            )}
+          </div>
+        )}
+        {/* NHL-only: starting goalie row */}
+        {showGoalieRow && (
+          <div className="mt-0.5 text-xs text-zinc-400" data-testid="goalie-row">
+            G: {awayGoalieName ?? "TBD"}{awayGoalieSvPct ? ` (${awayGoalieSvPct})` : ""} vs {homeGoalieName ?? "TBD"}{homeGoalieSvPct ? ` (${homeGoalieSvPct})` : ""}
           </div>
         )}
         <div className="mt-0.5 text-sm text-foreground/80">

@@ -206,8 +206,44 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
     awayFairProb: awayFair,
     homeWinProb: model.homeWinProb,
     awayWinProb: model.awayWinProb,
-    homeSp: {},
-    awaySp: {},
+    // Populate homeSp/awaySp with goalie data so the UI and API consumers have
+    // consistent goalie stats. Uses pitcher field for name, era field for GAA,
+    // and adds svPct as an extension field.
+    homeSp: game._homeGoalie
+      ? {
+          available: game._homeGoalie.available,
+          pitcher: game._homeGoalie.goalie ?? undefined,
+          era: game._homeGoalie.gaa ?? null,
+          svPct: game._homeGoalie.svPct ?? null,
+        }
+      : {},
+    awaySp: game._awayGoalie
+      ? {
+          available: game._awayGoalie.available,
+          pitcher: game._awayGoalie.goalie ?? undefined,
+          era: game._awayGoalie.gaa ?? null,
+          svPct: game._awayGoalie.svPct ?? null,
+        }
+      : {},
+    // Dedicated goalie fields for NHL cards in the UI
+    homeGoalie: game._homeGoalie
+      ? {
+          available: game._homeGoalie.available,
+          name: game._homeGoalie.goalie ?? null,
+          svPct: game._homeGoalie.svPct ?? null,
+          gaa: game._homeGoalie.gaa ?? null,
+          gp: game._homeGoalie.gp ?? null,
+        }
+      : null,
+    awayGoalie: game._awayGoalie
+      ? {
+          available: game._awayGoalie.available,
+          name: game._awayGoalie.goalie ?? null,
+          svPct: game._awayGoalie.svPct ?? null,
+          gaa: game._awayGoalie.gaa ?? null,
+          gp: game._awayGoalie.gp ?? null,
+        }
+      : null,
     polymarket: { found: false, pct: null },
     publicPct: null,
     sharpPct: null,

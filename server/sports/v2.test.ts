@@ -103,6 +103,86 @@ test("NHL hard-pass: both goalies missing AND |ML| > 300 → PASS", () => {
   assert.equal(pick.sport, "nhl");
 });
 
+// ── NHL goalie row visibility + real-data phantom suppression ──────────
+test("NHL goalie row hidden when both goalies null", () => {
+  const game: NhlGameInput = {
+    gameId: "n2", gameDate: "2026-06-09", gameTimeEt: "8:00 PM ET", venue: "",
+    homeTeam: "VGK", awayTeam: "CAR", homeTeamFull: "Vegas Golden Knights", awayTeamFull: "Carolina Hurricanes",
+    homeGoalieAvailable: false, awayGoalieAvailable: false,
+    mlHome: -140, mlAway: 120, homeFairProb: 0.57, awayFairProb: 0.43,
+    _homeGoalie: null,
+    _awayGoalie: null,
+  };
+  const model = predictNhl({
+    homeTeam: "VGK", awayTeam: "CAR", homeTeamFull: "Vegas Golden Knights", awayTeamFull: "Carolina Hurricanes",
+    homeStats: { available: true, gpg: 3.1, gapg: 2.7 },
+    awayStats: { available: true, gpg: 3.5, gapg: 2.8 },
+    homeGoalie: null, awayGoalie: null,
+    homeFairProb: 0.57, awayFairProb: 0.43,
+  });
+  const pick = buildNhlPick(game, model);
+  // Both goalies null → homeGoalie/awayGoalie fields should be null → row hidden
+  assert.equal(pick.homeGoalie, null, "homeGoalie should be null");
+  assert.equal(pick.awayGoalie, null, "awayGoalie should be null");
+});
+
+test("NHL phantom triggers when team stats missing AND markets present", () => {
+  const game: NhlGameInput = {
+    gameId: "n3", gameDate: "2026-06-09", gameTimeEt: "8:00 PM ET", venue: "",
+    homeTeam: "VGK", awayTeam: "CAR", homeTeamFull: "Vegas Golden Knights", awayTeamFull: "Carolina Hurricanes",
+    homeGoalieAvailable: false, awayGoalieAvailable: false,
+    mlHome: -140, mlAway: 120, homeFairProb: 0.58, awayFairProb: 0.42,
+  };
+  const model = predictNhl({
+    homeTeam: "VGK", awayTeam: "CAR", homeTeamFull: "Vegas Golden Knights", awayTeamFull: "Carolina Hurricanes",
+    homeStats: {}, awayStats: {}, homeGoalie: null, awayGoalie: null,
+    homeFairProb: 0.58, awayFairProb: 0.42,
+  });
+  // Both stats empty → model warns about league GPG → phantom detector fires
+  assert.ok(detectPhantomEdge(model.modelNotes), "phantom detected with missing stats");
+  const pick = buildNhlPick(game, model);
+  assert.equal(pick.phantomEdge, true, "phantomEdge flag set");
+  assert.equal(pick.units, 0, "units = 0 on phantom");
+  assert.equal(pick.verdictTier, "PASS", "tier forced PASS");
+});
+
+test("NHL no phantom when both teams have real stats", () => {
+  const game: NhlGameInput = {
+    gameId: "n4", gameDate: "2026-06-09", gameTimeEt: "8:00 PM ET", venue: "",
+    homeTeam: "VGK", awayTeam: "CAR", homeTeamFull: "Vegas Golden Knights", awayTeamFull: "Carolina Hurricanes",
+    homeGoalieAvailable: true, awayGoalieAvailable: true,
+    mlHome: -140, mlAway: 120, homeFairProb: 0.57, awayFairProb: 0.43,
+    _homeGoalie: { available: true, goalie: "Carter Hart", svPct: 0.915, gaa: 2.44, gp: 19 },
+    _awayGoalie: { available: true, goalie: "Frederik Andersen", svPct: 0.910, gaa: 1.89, gp: 16 },
+    _homeStats: { available: true, gpg: 3.1, gapg: 2.7 },
+    _awayStats: { available: true, gpg: 3.5, gapg: 2.8 },
+  };
+  const model = predictNhl({
+    homeTeam: "VGK", awayTeam: "CAR", homeTeamFull: "Vegas Golden Knights", awayTeamFull: "Carolina Hurricanes",
+    homeStats: { available: true, gpg: 3.1, gapg: 2.7 },
+    awayStats: { available: true, gpg: 3.5, gapg: 2.8 },
+    homeGoalie: { available: true, goalie: "Carter Hart", svPct: 0.915, gaa: 2.44, gp: 19 },
+    awayGoalie: { available: true, goalie: "Frederik Andersen", svPct: 0.910, gaa: 1.89, gp: 16 },
+    homeFairProb: 0.57, awayFairProb: 0.43,
+  });
+  assert.equal(detectPhantomEdge(model.modelNotes), false, "no phantom with real stats");
+  const pick = buildNhlPick(game, model);
+  assert.equal(pick.phantomEdge, false, "phantomEdge false with real data");
+  // homeGoalie + awayGoalie are populated
+  assert.ok(pick.homeGoalie !== null && pick.homeGoalie !== undefined, "homeGoalie populated");
+  assert.ok(pick.awayGoalie !== null && pick.awayGoalie !== undefined, "awayGoalie populated");
+  assert.equal(pick.homeGoalie?.name, "Carter Hart", "home goalie name");
+  assert.equal(pick.awayGoalie?.name, "Frederik Andersen", "away goalie name");
+  assert.ok(pick.homeGoalie?.svPct != null, "home goalie svPct present");
+  assert.ok(pick.awayGoalie?.svPct != null, "away goalie svPct present");
+  // homeSp/awaySp also populated
+  assert.equal((pick.homeSp as Record<string, unknown>).available, true, "homeSp.available");
+  assert.equal((pick.homeSp as Record<string, unknown>).pitcher, "Carter Hart", "homeSp.pitcher (goalie name)");
+  assert.equal((pick.awaySp as Record<string, unknown>).pitcher, "Frederik Andersen", "awaySp.pitcher (goalie name)");
+  // Model notes must NOT contain team-stats-missing warnings
+  assert.equal(model.modelNotes.some(n => /team stats missing/i.test(n)), false, "no team-stats-missing warnings");
+});
+
 // ── NBA engine: model + tier + efficiency hard-pass ──────────────────
 test("NBA model produces points + win prob + fair ML", () => {
   const model = predictNba({

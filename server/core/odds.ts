@@ -47,6 +47,34 @@ export function decimalToAmerican(dec: number | string | null | undefined): numb
 
 // ── De-vig ────────────────────────────────────────────────────────
 
+// 3-way additive devig for soccer Home/Draw/Away markets.
+// Shin (1991) is designed for 2-outcome markets; for 3-way we use additive:
+// each raw implied probability is divided by the total overround.
+export interface ThreeWayFair {
+  home: number;
+  draw: number;
+  away: number;
+  overround: number;
+}
+
+export function devigThreeWay(
+  homeOdds: number,
+  drawOdds: number,
+  awayOdds: number,
+): ThreeWayFair {
+  const ph = americanToProb(homeOdds) ?? 0;
+  const pd = americanToProb(drawOdds) ?? 0;
+  const pa = americanToProb(awayOdds) ?? 0;
+  const overround = ph + pd + pa; // typically 1.04-1.08
+  if (overround <= 0) return { home: 1 / 3, draw: 1 / 3, away: 1 / 3, overround: 1 };
+  return {
+    home: ph / overround,
+    draw: pd / overround,
+    away: pa / overround,
+    overround,
+  };
+}
+
 export function devigAdditive(
   oddsA: number,
   oddsB: number,
