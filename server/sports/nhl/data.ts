@@ -4,6 +4,7 @@
 
 import { fetchOddsForSport, type OddsEvent, type BookPrice } from "../../adapters/oddsApi";
 import { consensusSnhl, bestPrice, type Bookmaker } from "../../core/odds";
+import { computePublicSharp, type RawBookmaker } from "../../core/consensus";
 import { fetchHockeyTeamStats, fetchHockeyGoalies, type HockeyTeamStats, type GoalieAvail } from "../../adapters/apiSportsHockey";
 import { nameToAbbr } from "./teams";
 import type { NhlGameInput } from "./picksEngine";
@@ -72,6 +73,13 @@ export async function buildNhlSlate(now: Date = new Date()): Promise<NhlSlateBui
     const [homeMl, homeBook] = bestPrice(bms, ev.homeTeamFull);
     const [awayMl, awayBook] = bestPrice(bms, ev.awayTeamFull);
 
+    // Public / sharp consensus from raw bookmaker data (same as MLB)
+    const { publicPct, sharpPct } = computePublicSharp(
+      (ev.rawBookmakers ?? []) as RawBookmaker[],
+      ev.homeTeamFull,
+      ev.awayTeamFull,
+    );
+
     const [homeStats, awayStats] = await Promise.all([
       fetchHockeyTeamStats(ev.homeTeamFull, NHL_SEASON).catch(() => emptyTeamStats()),
       fetchHockeyTeamStats(ev.awayTeamFull, NHL_SEASON).catch(() => emptyTeamStats()),
@@ -113,6 +121,8 @@ export async function buildNhlSlate(now: Date = new Date()): Promise<NhlSlateBui
       _awayStats: awayStats,
       _homeGoalie: homeG ? { available: homeG.available, goalie: homeG.goalie, svPct: homeG.svPct ?? null, gaa: homeG.gaa ?? null, gp: homeG.gp ?? null } : null,
       _awayGoalie: awayG ? { available: awayG.available, goalie: awayG.goalie, svPct: awayG.svPct ?? null, gaa: awayG.gaa ?? null, gp: awayG.gp ?? null } : null,
+      _publicPct: publicPct,
+      _sharpPct: sharpPct,
     } as NhlGameInput);
   }
 

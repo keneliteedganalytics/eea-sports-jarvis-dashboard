@@ -48,6 +48,8 @@ export interface NhlGameInput {
   _awayStats?: TeamHockeyStats | Record<string, never>;
   _homeGoalie?: GoalieStats | null;
   _awayGoalie?: GoalieStats | null;
+  _publicPct?: number | null;
+  _sharpPct?: number | null;
 }
 
 // Goals-model confidence: base 30, edge magnitude, data completeness, alignment.
@@ -245,8 +247,13 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
         }
       : null,
     polymarket: { found: false, pct: null },
-    publicPct: null,
-    sharpPct: null,
+    // Orient public/sharp percentages to the pick side (home-keyed by convention).
+    publicPct: pickSide === "away" && game._publicPct != null
+      ? Math.round((100 - game._publicPct) * 10) / 10
+      : (game._publicPct ?? null),
+    sharpPct: pickSide === "away" && game._sharpPct != null
+      ? Math.round((100 - game._sharpPct) * 10) / 10
+      : (game._sharpPct ?? null),
     modelNotes: model.modelNotes,
   };
 }

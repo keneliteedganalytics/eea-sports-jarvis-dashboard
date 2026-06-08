@@ -69,6 +69,11 @@ export interface SoccerPick extends BuiltPick {
   drawProb: number | null;
   mlDraw: number | null;
   fairDrawMl: number | null;
+  // Convenience alias fields for API consumers
+  teamHome: string;
+  teamAway: string;
+  league: string | null;
+  tier: Verdict;
 }
 
 type SoccerPickSide = Side | "draw";
@@ -371,6 +376,10 @@ export function buildPick(
     awayTeam: game.awayTeam,
     homeTeamFull: homeFull,
     awayTeamFull: awayFull,
+    // Convenience alias fields consumed by the curl verifier and UI renderers
+    teamHome: homeFull,
+    teamAway: awayFull,
+    league: game.leagueName,
     homePitcher: undefined,
     awayPitcher: undefined,
     pickSide: pickSide === "draw" ? "home" : pickSide, // BuiltPick.pickSide is 'home'|'away'
@@ -400,6 +409,7 @@ export function buildPick(
     topPlay,
     verdict,
     verdictTier,
+    tier: verdictTier,   // alias so API consumers that read 'tier' get the verdict tier
     qualifies,
     trapSignal: model.trapSignal,
     trapGapPp: model.trapGapPp,

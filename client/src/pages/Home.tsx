@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Info } from "lucide-react";
 import { PickCard } from "@/components/PickCard";
@@ -38,12 +38,27 @@ function cardState(p: BuiltPick): CardState {
 }
 
 export default function Home() {
-  const [date] = useState<string>(todayEt());
+  // Read ?date= from URL search params; fall back to today's ET date.
+  const [date, setDate] = useState<string>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("date") ?? todayEt();
+  });
   const [sport, setSport] = useState<SportFilter>("ALL");
   const [showAll, setShowAll] = useState(false); // default: plays only
 
+  // Keep date in sync if the URL changes (e.g. browser back/forward).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlDate = params.get("date");
+    if (urlDate && urlDate !== date) setDate(urlDate);
+  }, []);
+
   const { data, isLoading, isError } = useQuery<DailySlate>({
     queryKey: [`/api/slate?date=${date}`],
+    staleTime: 5 * 60 * 1000,     // 5 min — don't re-fetch while still fresh
+    gcTime: 10 * 60 * 1000,       // 10 min cache retention
+    retry: 1,                      // one retry on network/upstream error
+    refetchOnWindowFocus: false,
   });
 
   const allPicks = useMemo<BuiltPick[]>(() => {

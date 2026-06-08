@@ -7,6 +7,7 @@ import { fetchOddsForSport, type OddsEvent } from "../../adapters/oddsApi";
 import { fetchFootballTeamStats, isFriendlyLeague, seasonForLeague } from "../../adapters/apiSportsFootball";
 import { extractDrawOdds } from "./oddsMath";
 import { devigThreeWay } from "../../core/odds";
+import { computePublicSharp, type RawBookmaker } from "../../core/consensus";
 import { nameToAbbr } from "./teams";
 import { SOCCER_ODDS_KEYS, leagueByOddsKey } from "./leagues";
 import type { SoccerGameInput } from "./picksEngine";
@@ -123,6 +124,13 @@ export async function buildSoccerSlate(now: Date = new Date()): Promise<SoccerSl
       awayFairProb = fair.away;
     }
 
+    // Public / sharp consensus from raw bookmaker data
+    const { publicPct, sharpPct } = computePublicSharp(
+      (rawBms ?? []) as RawBookmaker[],
+      ev.homeTeamFull,
+      ev.awayTeamFull,
+    );
+
     // Fetch team stats from API-Sports v3 (in parallel, best-effort)
     const season = leagueInfo ? leagueInfo.season : seasonForLeague(leagueId ?? 71);
     const [homeStats, awayStats] = await Promise.all([
@@ -168,6 +176,8 @@ export async function buildSoccerSlate(now: Date = new Date()): Promise<SoccerSl
       totalBook: ev.total.book,
       openHomeMl: bestHomeMl,
       openAwayMl: bestAwayMl,
+      _publicPct: publicPct,
+      _sharpPct: sharpPct,
       // Attach stats so slate.ts can forward to model
       _homeStats: homeStats,
       _awayStats: awayStats,
