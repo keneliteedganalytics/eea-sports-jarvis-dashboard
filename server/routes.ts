@@ -2,7 +2,11 @@ import type { Express, Request, Response } from "express";
 import type { Server } from "node:http";
 import fs from "node:fs";
 import { initSchema } from "./storage";
-import { getSlate, getPick } from "./sports/mlb/slate";
+import { getSlate } from "./sports/mlb/slate";
+import { getNhlSlate } from "./sports/nhl/slate";
+import { getNbaSlate } from "./sports/nba/slate";
+import { getDailySlate, getAnyPick } from "./slate/orchestrator";
+import { getProps } from "./props";
 import { hitRatesByTier, trackRecord, seedHitRates } from "./sports/mlb/trackRecord";
 import { generateBrief } from "./audio/brief";
 import { generateSpeech, getCachedFilePath, hasElevenLabsKey } from "./audio/tts";
@@ -11,7 +15,7 @@ import { startOddsPoller } from "./pollers/oddsPoller";
 import { startScratchPoller } from "./pollers/scratchPoller";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 
-const STUB_SPORTS = ["nhl", "nba", "ncaaf", "ncaab", "nfl"];
+const STUB_SPORTS = ["ncaaf", "ncaab", "nfl"];
 
 function bankroll(): number {
   const n = Number(process.env.BANKROLL_USD);
@@ -24,15 +28,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   startOddsPoller();
   startScratchPoller();
 
+  // Unified cross-sport board (MLB + NHL + NBA). ?date= is accepted for forward
+  // compat; the slate services key off the current operating day today.
+  app.get("/api/slate", async (_req: Request, res: Response) => {
+    const slate = await getDailySlate(bankroll());
+    res.json(slate);
+  });
+
   // Today's MLB slate (capped, tiered picks).
   app.get("/api/mlb/slate", async (_req: Request, res: Response) => {
     const slate = await getSlate(bankroll());
     res.json(slate);
   });
 
-  // Single pick detail.
+  // NHL + NBA slates.
+  app.get("/api/nhl/slate", async (_req: Request, res: Response) => {
+    res.json(await getNhlSlate(bankroll()));
+  });
+  app.get("/api/nba/slate", async (_req: Request, res: Response) => {
+    res.json(await getNbaSlate(bankroll()));
+  });
+
+  // Single pick detail (any sport).
   app.get("/api/mlb/pick/:id", async (req: Request, res: Response) => {
-    const pick = await getPick(String(req.params.id), bankroll());
+    const pick = await getAnyPick(String(req.params.id), bankroll());
+    if (!pick) return res.status(404).json({ message: "pick not found" });
+    res.json(pick);
+  });
+
+  // Cross-sport pick detail.
+  app.get("/api/pick/:id", async (req: Request, res: Response) => {
+    const pick = await getAnyPick(String(req.params.id), bankroll());
     if (!pick) return res.status(404).json({ message: "pick not found" });
     res.json(pick);
   });
@@ -47,6 +73,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(trackRecord("MLB"));
   });
 
+  // Player props for a sport+date. Headline markets only; MLB carries a Poisson
+  // edge, NHL/NBA are display-only (uncalibrated) for day one.
+  app.get("/api/props", async (req: Request, res: Response) => {
+    const sport = String(req.query.sport ?? "mlb");
+    const date = String(req.query.date ?? "");
+    res.json(await getProps(sport, date, bankroll()));
+  });
+
   // Alerts (steam / scratch). ?since=<id> for incremental polling.
   app.get("/api/alerts", (req: Request, res: Response) => {
     const since = Number(req.query.since ?? 0);
@@ -57,7 +91,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // text, available } — available=false means no ElevenLabs key (UI shows the
   // brief text without playback).
   app.post("/api/mlb/brief/:id", async (req: Request, res: Response) => {
-    const pick = await getPick(String(req.params.id), bankroll());
+    const pick = await getAnyPick(String(req.params.id), bankroll());
     if (!pick) return res.status(404).json({ message: "pick not found" });
     const text = await generateBrief(pick, bankroll());
     if (!hasElevenLabsKey()) {
