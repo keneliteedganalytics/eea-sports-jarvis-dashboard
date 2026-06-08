@@ -15,54 +15,54 @@
   --elevate-1: rgba(255, 255, 255, 0.04);
   --elevate-2: rgba(255, 255, 255, 0.09);
 
-  /* Brand palette (locked) — raw hex for direct use */
-  --bg: #020810;
-  --card-bg: #0a1628;
-  --gold: #c9a227;
-  --gold-light: #e8c14a;
+  /* Brand palette (EEA re-theme §9) — raw hex for direct use */
+  --bg: #0a1628;
+  --card-bg: #0e1d34;
+  --gold: #f4d77a;
+  --gold-light: #f8e3a0;
   --trap: #ff8a47;
   --poly: #5bc0eb;
   --text-primary: #e8eef7;
   --text-muted: #8892a0;
 
   /* shadcn semantic tokens mapped onto the brand palette (H S% L%) */
-  --background: 213 78% 4%;       /* #020810 */
+  --background: 214 52% 10%;      /* #0A1628 */
   --foreground: 213 47% 94%;      /* #E8EEF7 */
-  --border: 214 40% 16%;
-  --card: 214 52% 10%;            /* #0A1628 */
+  --border: 214 40% 20%;
+  --card: 214 52% 13%;            /* #0E1D34 */
   --card-foreground: 213 47% 94%;
-  --card-border: 214 40% 18%;
-  --sidebar: 214 56% 7%;
+  --card-border: 214 40% 22%;
+  --sidebar: 214 56% 8%;
   --sidebar-foreground: 213 47% 94%;
-  --sidebar-border: 214 40% 16%;
-  --sidebar-primary: 45 67% 47%;  /* gold */
-  --sidebar-primary-foreground: 213 78% 4%;
-  --sidebar-accent: 214 40% 16%;
+  --sidebar-border: 214 40% 20%;
+  --sidebar-primary: 45 84% 72%;  /* gold */
+  --sidebar-primary-foreground: 214 52% 10%;
+  --sidebar-accent: 214 40% 20%;
   --sidebar-accent-foreground: 213 47% 94%;
-  --sidebar-ring: 45 67% 47%;
-  --popover: 214 52% 9%;
+  --sidebar-ring: 45 84% 72%;
+  --popover: 214 52% 12%;
   --popover-foreground: 213 47% 94%;
-  --popover-border: 214 40% 18%;
-  --primary: 45 67% 47%;          /* #C9A227 gold */
-  --primary-foreground: 213 78% 4%;
-  --secondary: 214 40% 16%;
+  --popover-border: 214 40% 22%;
+  --primary: 45 84% 72%;          /* #F4D77A gold */
+  --primary-foreground: 214 52% 10%;
+  --secondary: 214 40% 20%;
   --secondary-foreground: 213 47% 94%;
-  --muted: 214 30% 18%;
+  --muted: 214 30% 20%;
   --muted-foreground: 213 12% 60%; /* #8892A0 */
-  --accent: 214 40% 18%;
+  --accent: 214 40% 22%;
   --accent-foreground: 213 47% 94%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 98%;
-  --input: 214 35% 22%;
-  --ring: 45 67% 47%;
-  --chart-1: 45 67% 47%;
+  --input: 214 35% 24%;
+  --ring: 45 84% 72%;
+  --chart-1: 45 84% 72%;
   --chart-2: 197 76% 64%;         /* poly blue */
   --chart-3: 142 69% 58%;         /* green */
   --chart-4: 22 100% 64%;         /* trap orange */
   --chart-5: 234 89% 74%;         /* value indigo */
-  --font-sans: "DM Sans", "Inter", system-ui, sans-serif;
-  --font-serif: "Lora", Georgia, serif;
-  --font-mono: "IBM Plex Mono", "Geist Mono", Menlo, monospace;
+  --font-sans: "DejaVu Sans", "DM Sans", "Inter", system-ui, sans-serif;
+  --font-serif: "DejaVu Serif", "Lora", Georgia, serif;
+  --font-mono: "DejaVu Sans Mono", "IBM Plex Mono", "Geist Mono", Menlo, monospace;
   --radius: 0.625rem;
   --tracking-normal: 0em;
   --spacing: 0.25rem;

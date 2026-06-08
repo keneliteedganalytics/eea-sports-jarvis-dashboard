@@ -81,15 +81,15 @@ export default {
           busy: "rgb(239 68 68)",
           offline: "rgb(156 163 175)",
         },
-        // Brand palette (locked spec §3)
+        // Brand palette (EEA re-theme §9)
         gold: {
-          DEFAULT: "#C9A227",
-          light: "#E8C14A",
-          dark: "#9A7B1E",
+          DEFAULT: "#F4D77A",
+          light: "#F8E3A0",
+          dark: "#C9A227",
         },
         navy: {
-          bg: "#020810",
-          card: "#0A1628",
+          bg: "#0A1628",
+          card: "#0E1D34",
         },
         trap: "#FF8A47",
         poly: "#5BC0EB",
