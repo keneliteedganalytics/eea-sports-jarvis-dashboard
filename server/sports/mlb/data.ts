@@ -3,12 +3,13 @@
 // no API keys it returns an empty slate ("no slate today" in the UI).
 
 import { fetchOdds, type OddsEvent, type BookPrice } from "../../adapters/oddsApi";
-import { fetchSchedule, fetchPitcherStats, type ScheduleGame } from "../../adapters/mlbStats";
+import { fetchSchedule, fetchPitcherStats, fetchTeamOffense, type ScheduleGame } from "../../adapters/mlbStats";
 import { consensusSnhl, bestPrice, type Bookmaker } from "../../core/odds";
 import { getOperatingDay, inOperatingWindow, utcIsoToEtClock } from "./operatingDay";
 import { classifyPitcher } from "./pitchers";
 import type { GameInput } from "./picksEngine";
 import type { PitcherStats } from "./pitchers";
+import type { TeamOffense } from "./ratings";
 
 // Translate an OddsEvent's BookPrice[] into the Bookmaker[] shape that the
 // consensus/best-price helpers expect (h2h market keyed by full team name).
@@ -69,13 +70,19 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
 
     let homeSp: PitcherStats = EMPTY_PITCHER;
     let awaySp: PitcherStats = EMPTY_PITCHER;
+    let homeOff: TeamOffense = { available: false };
+    let awayOff: TeamOffense = { available: false };
     if (sched) {
-      const [h, a] = await Promise.all([
+      const [h, a, ho, ao] = await Promise.all([
         fetchPitcherStats(sched.homePitcherId, sched.homePitcher),
         fetchPitcherStats(sched.awayPitcherId, sched.awayPitcher),
+        fetchTeamOffense(sched.homeTeamId, sched.homeTeamFull).catch(() => ({ available: false }) as TeamOffense),
+        fetchTeamOffense(sched.awayTeamId, sched.awayTeamFull).catch(() => ({ available: false }) as TeamOffense),
       ]);
       homeSp = withClassification(h);
       awaySp = withClassification(a);
+      homeOff = ho;
+      awayOff = ao;
     }
 
     games.push({
@@ -97,6 +104,8 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       awayFairProb: consensus?.awayFairProb ?? null,
       homeSpStats: homeSp,
       awaySpStats: awaySp,
+      homeOffStats: homeOff,
+      awayOffStats: awayOff,
       openHomeMl: null,
       openAwayMl: null,
       spreadHomeLine: ev.spread.homeLine,

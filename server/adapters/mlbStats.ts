@@ -5,6 +5,7 @@
 import { getJson } from "./http";
 import { computeFip, type PitcherStats } from "../sports/mlb/pitchers";
 import { nameToAbbr } from "../sports/mlb/teams";
+import type { TeamOffense } from "../sports/mlb/ratings";
 
 const BASE = "https://statsapi.mlb.com/api/v1";
 
@@ -16,6 +17,8 @@ export interface ScheduleGame {
   homeTeam: string;
   awayTeam: string;
   venue: string;
+  homeTeamId: number | null;
+  awayTeamId: number | null;
   homePitcherId: number | null;
   awayPitcherId: number | null;
   homePitcher: string | null;
@@ -23,7 +26,7 @@ export interface ScheduleGame {
 }
 
 interface RawTeamNode {
-  team?: { name?: string };
+  team?: { id?: number; name?: string };
   probablePitcher?: { id?: number; fullName?: string };
 }
 interface RawGame {
@@ -59,6 +62,8 @@ export async function fetchSchedule(dateStr: string): Promise<ScheduleGame[]> {
         homeTeam: nameToAbbr(homeFull),
         awayTeam: nameToAbbr(awayFull),
         venue: g.venue?.name ?? "",
+        homeTeamId: home?.team?.id ?? null,
+        awayTeamId: away?.team?.id ?? null,
         homePitcherId: home?.probablePitcher?.id ?? null,
         awayPitcherId: away?.probablePitcher?.id ?? null,
         homePitcher: home?.probablePitcher?.fullName ?? null,
@@ -123,5 +128,50 @@ export async function fetchPitcherStats(
     era,
     fip,
     whip: toNum(split.whip),
+  };
+}
+
+interface RawHittingSplit {
+  stat?: {
+    runs?: number;
+    gamesPlayed?: number;
+    obp?: string;
+    slg?: string;
+    ops?: string;
+    avg?: string;
+  };
+}
+interface RawTeamStats {
+  stats?: { splits?: RawHittingSplit[] }[];
+}
+
+// Fetch a team's current-season hitting line (runs/game + OPS) for the model's
+// offense step. Empty/unavailable on any failure so the slate degrades softly.
+export async function fetchTeamOffense(
+  teamId: number | null,
+  teamName: string | null,
+): Promise<TeamOffense> {
+  const base: TeamOffense = { available: false, team: teamName ?? undefined };
+  if (!teamId) return base;
+
+  const res = await getJson<RawTeamStats>(`${BASE}/teams/${teamId}/stats`, {
+    stats: "season",
+    group: "hitting",
+    season: new Date().getUTCFullYear(),
+  });
+  const split = res.ok ? res.data?.stats?.[0]?.splits?.[0]?.stat : undefined;
+  if (!split) return base;
+
+  const runs = toNum(split.runs);
+  const games = toNum(split.gamesPlayed);
+  const rpg = runs !== null && games !== null && games > 0 ? runs / games : null;
+
+  return {
+    available: true,
+    team: teamName ?? undefined,
+    rpg,
+    ops: toNum(split.ops),
+    obp: toNum(split.obp),
+    slg: toNum(split.slg),
   };
 }
