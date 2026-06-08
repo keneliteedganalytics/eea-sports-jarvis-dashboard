@@ -82,6 +82,24 @@ export interface SlatePayload {
   picks: BuiltPick[];
 }
 
+export interface SportSlate {
+  picks: BuiltPick[];
+  ok: boolean;
+  error?: string | null;
+}
+
+export interface DailySlate {
+  operatingDay: string;
+  isDemo: boolean;
+  bankroll: number;
+  generatedAt: number;
+  sports: {
+    mlb: SportSlate;
+    nhl: SportSlate;
+    nba: SportSlate;
+  };
+}
+
 export interface TierHitRate {
   tier: string;
   windows: { windowDays: number; pct: number; wins: number; losses: number; pushes: number; unitsWon: number }[];

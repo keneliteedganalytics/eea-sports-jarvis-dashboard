@@ -2,49 +2,80 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Info } from "lucide-react";
 import { PickCard } from "@/components/PickCard";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { CompactCard } from "@/components/CompactCard";
 import { fmtMoney } from "@/lib/format";
-import type { SlatePayload, Verdict } from "@/lib/types";
+import type { DailySlate, BuiltPick, Verdict } from "@/lib/types";
 
-const TIERS: (Verdict | "ALL")[] = ["ALL", "BONUS", "SNIPER", "EDGE", "RECON", "VALUE", "LEAN"];
-const MIN_EDGES = [0, 2, 4, 6, 8];
-type SortKey = "units" | "edge" | "confidence" | "time";
+type SportFilter = "ALL" | "MLB" | "NHL" | "NBA";
+const SPORT_CHIPS: { key: SportFilter; label: string; disabled?: boolean }[] = [
+  { key: "ALL", label: "ALL" },
+  { key: "MLB", label: "MLB" },
+  { key: "NHL", label: "NHL" },
+  { key: "NBA", label: "NBA" },
+];
+const SOON_CHIPS = ["NFL soon", "NCAAF soon", "NCAAB soon"];
+
+const TIER_RANK: Record<Verdict, number> = {
+  BONUS: 0, SNIPER: 1, EDGE: 2, RECON: 3, VALUE: 4, LEAN: 5, PASS: 6,
+};
+const QUALIFYING: Verdict[] = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE", "LEAN"];
+
+function todayEt(): string {
+  // Operating-day date in YYYY-MM-DD (America/New_York).
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  });
+  return fmt.format(new Date());
+}
+
+type CardState = "qualifying" | "pass" | "hard_pass";
+function cardState(p: BuiltPick): CardState {
+  if (p.hardPassReason) return "hard_pass";
+  if (QUALIFYING.includes(p.verdictTier)) return "qualifying";
+  return "pass";
+}
 
 export default function Home() {
-  const { data, isLoading, isError } = useQuery<SlatePayload>({ queryKey: ["/api/mlb/slate"] });
+  const [date] = useState<string>(todayEt());
+  const [sport, setSport] = useState<SportFilter>("ALL");
+  const [showAll, setShowAll] = useState(false); // default: plays only
 
-  const [tier, setTier] = useState<Verdict | "ALL">("ALL");
-  const [minEdge, setMinEdge] = useState(0);
-  const [sort, setSort] = useState<SortKey>("units");
+  const { data, isLoading, isError } = useQuery<DailySlate>({
+    queryKey: [`/api/slate?date=${date}`],
+  });
 
-  const picks = useMemo(() => {
-    const all = data?.picks ?? [];
-    const filtered = all.filter((p) => {
-      if (tier !== "ALL" && p.verdictTier !== tier) return false;
-      if ((p.edgePp ?? 0) < minEdge) return false;
-      return true;
+  const allPicks = useMemo<BuiltPick[]>(() => {
+    if (!data) return [];
+    const s = data.sports;
+    return [...s.mlb.picks, ...s.nhl.picks, ...s.nba.picks];
+  }, [data]);
+
+  const visible = useMemo(() => {
+    let picks = allPicks;
+    if (sport !== "ALL") picks = picks.filter((p) => p.sport.toUpperCase() === sport);
+    if (!showAll) picks = picks.filter((p) => cardState(p) === "qualifying");
+
+    // Order: qualifying (tier rank desc → edge) → PASS → HARD_PASS.
+    const order: Record<CardState, number> = { qualifying: 0, pass: 1, hard_pass: 2 };
+    return [...picks].sort((a, b) => {
+      const sa = cardState(a), sb = cardState(b);
+      if (order[sa] !== order[sb]) return order[sa] - order[sb];
+      const r = TIER_RANK[a.verdictTier] - TIER_RANK[b.verdictTier];
+      if (r !== 0) return r;
+      return (b.edgePp ?? -999) - (a.edgePp ?? -999);
     });
-    const sorted = [...filtered].sort((a, b) => {
-      switch (sort) {
-        case "edge":
-          return (b.edgePp ?? 0) - (a.edgePp ?? 0);
-        case "confidence":
-          return b.confidence - a.confidence;
-        case "time":
-          return a.gameTimeEt.localeCompare(b.gameTimeEt);
-        case "units":
-        default:
-          return b.units - a.units;
-      }
-    });
-    return sorted;
-  }, [data, tier, minEdge, sort]);
+  }, [allPicks, sport, showAll]);
+
+  const counts = useMemo(() => {
+    const c = { mlb: 0, nhl: 0, nba: 0 };
+    for (const p of allPicks) {
+      if (p.sport === "mlb") c.mlb++;
+      else if (p.sport === "nhl") c.nhl++;
+      else if (p.sport === "nba") c.nba++;
+    }
+    return c;
+  }, [allPicks]);
 
   return (
     <div className="space-y-5">
@@ -52,84 +83,64 @@ export default function Home() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Today's Board</h1>
           <p className="text-xs text-muted-foreground">
-            {data ? `Operating day ${data.operatingDay} · bankroll ${fmtMoney(data.bankroll)}` : "Loading slate…"}
+            {data
+              ? `Operating day ${data.operatingDay} · bankroll ${fmtMoney(data.bankroll)} · ${allPicks.length} games`
+              : "Loading slate…"}
           </p>
         </div>
       </div>
 
       {data?.isDemo && (
-        <div
-          className="flex items-start gap-2 rounded-xl border border-gold/25 bg-gold/5 p-3 text-xs text-gold-light"
-          data-testid="demo-banner"
-        >
+        <div className="flex items-start gap-2 rounded-xl border border-gold/25 bg-gold/5 p-3 text-xs text-gold-light" data-testid="demo-banner">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             Demo slate — no live odds key configured. These games are illustrative so you can explore the desk.
-            Add an Odds API key to pull the live board.
           </span>
         </div>
       )}
 
-      {/* Slate filter row: Sport · Tier · Min Edge · Sort */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-card-border bg-navy-card p-3" data-testid="slate-filters">
-        <FilterField label="Sport">
-          <Select value="mlb" disabled>
-            <SelectTrigger className="h-8 w-28 text-xs" data-testid="filter-sport">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="mlb">MLB</SelectItem>
-            </SelectContent>
-          </Select>
-        </FilterField>
+      {/* Sport chips + Show toggle */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-card-border bg-navy-card p-3" data-testid="slate-filters">
+        {SPORT_CHIPS.map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            onClick={() => setSport(c.key)}
+            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wider transition-colors ${
+              sport === c.key ? "bg-gold text-background" : "bg-background/40 text-muted-foreground hover:text-gold"
+            }`}
+            data-testid={`chip-${c.key}`}
+          >
+            {c.label}
+          </button>
+        ))}
+        {SOON_CHIPS.map((s) => (
+          <span key={s} className="rounded-full bg-background/30 px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/60">
+            {s}
+          </span>
+        ))}
 
-        <FilterField label="Tier">
-          <Select value={tier} onValueChange={(v) => setTier(v as Verdict | "ALL")}>
-            <SelectTrigger className="h-8 w-32 text-xs" data-testid="filter-tier">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {TIERS.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t === "ALL" ? "All tiers" : t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FilterField>
-
-        <FilterField label="Min Edge">
-          <Select value={String(minEdge)} onValueChange={(v) => setMinEdge(Number(v))}>
-            <SelectTrigger className="h-8 w-24 text-xs" data-testid="filter-min-edge">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {MIN_EDGES.map((e) => (
-                <SelectItem key={e} value={String(e)}>
-                  {e}pp+
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FilterField>
-
-        <FilterField label="Sort">
-          <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
-            <SelectTrigger className="h-8 w-32 text-xs" data-testid="filter-sort">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="units">Units</SelectItem>
-              <SelectItem value="edge">Edge</SelectItem>
-              <SelectItem value="confidence">Confidence</SelectItem>
-              <SelectItem value="time">Game time</SelectItem>
-            </SelectContent>
-          </Select>
-        </FilterField>
-
-        <span className="ml-auto text-xs text-muted-foreground" data-testid="filter-count">
-          {picks.length} pick{picks.length === 1 ? "" : "s"}
-        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Show</span>
+          <div className="flex overflow-hidden rounded-full border border-card-border">
+            <button
+              type="button"
+              onClick={() => setShowAll(false)}
+              className={`px-3 py-1 text-xs ${!showAll ? "bg-gold text-background" : "text-muted-foreground hover:text-gold"}`}
+              data-testid="toggle-plays-only"
+            >
+              Plays only
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAll(true)}
+              className={`px-3 py-1 text-xs ${showAll ? "bg-gold text-background" : "text-muted-foreground hover:text-gold"}`}
+              data-testid="toggle-all-games"
+            >
+              All games
+            </button>
+          </div>
+        </div>
       </div>
 
       {isLoading && <SkeletonGrid />}
@@ -138,32 +149,31 @@ export default function Home() {
           Couldn't load the slate. The desk will retry shortly.
         </div>
       )}
-      {data && picks.length === 0 && (
-        <div
-          className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground"
-          data-testid="empty-slate"
-        >
-          No picks clear the board for these filters.
+
+      {data && sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba"] === 0 && (
+        <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="empty-sport">
+          No {sport} games on the board today.
         </div>
       )}
 
-      {data && picks.length > 0 && (
+      {data && visible.length === 0 && !(sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba"] === 0) && (
+        <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="empty-slate">
+          {showAll ? "No games on the board today." : "No qualifying plays. Switch to All games to see the full slate."}
+        </div>
+      )}
+
+      {data && visible.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="pick-grid">
-          {picks.map((p) => (
-            <PickCard key={p.gameId} pick={p} bankroll={data.bankroll} />
-          ))}
+          {visible.map((p) =>
+            cardState(p) === "qualifying" ? (
+              <PickCard key={p.gameId} pick={p} bankroll={data.bankroll} />
+            ) : (
+              <CompactCard key={p.gameId} pick={p} />
+            ),
+          )}
         </div>
       )}
     </div>
-  );
-}
-
-function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex items-center gap-2">
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
-      {children}
-    </label>
   );
 }
 
