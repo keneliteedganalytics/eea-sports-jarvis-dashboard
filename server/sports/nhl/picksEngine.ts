@@ -209,6 +209,8 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
     homeSp: {},
     awaySp: {},
     polymarket: { found: false, pct: null },
+    publicPct: null,
+    sharpPct: null,
     modelNotes: model.modelNotes,
   };
 }

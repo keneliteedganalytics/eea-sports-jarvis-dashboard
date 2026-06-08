@@ -1,8 +1,9 @@
 // v2 unit tests — NHL/NBA engines, hard-pass guards, orchestrator fallback,
-// and the MLB prop edge calc. Standalone tsx harness (node:assert).
+// MLB prop edge calc, public/sharp consensus, and PRISM behaviour.
 import assert from "node:assert/strict";
 
 import { buildPick as buildMlbPick, type GameInput } from "./mlb/picksEngine";
+import { computePublicSharp, type RawBookmaker } from "../core/consensus";
 import { predictGame as predictMlb } from "./mlb/model";
 import { buildPick as buildNhlPick, type NhlGameInput } from "./nhl/picksEngine";
 import { predictGame as predictNhl } from "./nhl/model";
@@ -232,6 +233,107 @@ test("exposure: over-cap board scales down to 18% and flags trimmed", () => {
   const total = out.reduce((s, x) => s + x.stakeDollars, 0);
   assert.ok(total <= 35800 * 0.18 + 8, `total ${total} within cap (rounding slack)`);
   assert.equal(out.every((x) => x.trimmed), true);
+});
+
+// ── Public/Sharp consensus (Fix 2) ──────────────────────────────────
+test("publicSharp: pinnacle present → sharpPct uses pinnacle", () => {
+  const bms: RawBookmaker[] = [
+    {
+      key: "draftkings",
+      markets: [{ key: "h2h", outcomes: [{ name: "Team A", price: -140 }, { name: "Team B", price: 120 }] }],
+    },
+    {
+      key: "fanduel",
+      markets: [{ key: "h2h", outcomes: [{ name: "Team A", price: -138 }, { name: "Team B", price: 118 }] }],
+    },
+    {
+      key: "pinnacle",
+      markets: [{ key: "h2h", outcomes: [{ name: "Team A", price: -135 }, { name: "Team B", price: 115 }] }],
+    },
+  ];
+  const result = computePublicSharp(bms, "Team A", "Team B");
+  assert.ok(result.publicPct !== null, "publicPct computed");
+  assert.ok(result.sharpPct !== null, "sharpPct computed");
+  // Pinnacle -135 devigged: should be ~57%
+  assert.ok((result.sharpPct as number) > 50 && (result.sharpPct as number) < 70, `sharpPct ${result.sharpPct} in range`);
+});
+
+test("publicSharp: no sharp book → falls back to devig consensus", () => {
+  const bms: RawBookmaker[] = [
+    {
+      key: "draftkings",
+      markets: [{ key: "h2h", outcomes: [{ name: "Team A", price: -140 }, { name: "Team B", price: 120 }] }],
+    },
+    {
+      key: "fanduel",
+      markets: [{ key: "h2h", outcomes: [{ name: "Team A", price: -138 }, { name: "Team B", price: 118 }] }],
+    },
+  ];
+  const result = computePublicSharp(bms, "Team A", "Team B");
+  assert.ok(result.publicPct !== null, "publicPct computed from public books");
+  // No pinnacle/circa/betonline → fallback to consensus across all books
+  assert.ok(result.sharpPct !== null, "sharpPct falls back to all-book devig");
+});
+
+// ── PRISM / Polymarket Fix 3 ──────────────────────────────────────────
+test("PRISM: polymarket found=true → prismPct used, bar shows value", () => {
+  const game: GameInput = {
+    gameId: "p2", gameDate: "2026-06-08", gameTimeEt: "7:00 PM ET", venue: "",
+    homeTeam: "CLE", awayTeam: "NYY", homeTeamFull: "Cleveland Guardians", awayTeamFull: "New York Yankees",
+    mlHome: -115, mlAway: -105, homeFairProb: 0.52, awayFairProb: 0.48,
+  };
+  const model = predictMlb({
+    homeTeam: "CLE", awayTeam: "NYY", homeTeamFull: "Cleveland Guardians", awayTeamFull: "New York Yankees",
+    homeSpStats: {}, awaySpStats: {}, homeOffStats: {}, awayOffStats: {},
+    venueTriCode: "CLE", homeFairProb: 0.52, awayFairProb: 0.48,
+  });
+  const polyData = { found: true, pct: 58.0 };
+  const pick = buildMlbPick(game, model, 35800, polyData);
+  assert.equal(pick.polymarket.found, true);
+  assert.ok(pick.polymarket.pct != null && pick.polymarket.pct > 0, "PRISM pct present");
+});
+
+test("PRISM: polymarket found=false → pct null, reason set", () => {
+  const game: GameInput = {
+    gameId: "p3", gameDate: "2026-06-08", gameTimeEt: "7:00 PM ET", venue: "",
+    homeTeam: "CLE", awayTeam: "NYY", homeTeamFull: "Cleveland Guardians", awayTeamFull: "New York Yankees",
+    mlHome: -115, mlAway: -105, homeFairProb: 0.52, awayFairProb: 0.48,
+    _polymarketData: { found: false, pct: null, reason: "no market available" },
+  };
+  const model = predictMlb({
+    homeTeam: "CLE", awayTeam: "NYY", homeTeamFull: "Cleveland Guardians", awayTeamFull: "New York Yankees",
+    homeSpStats: {}, awaySpStats: {}, homeOffStats: {}, awayOffStats: {},
+    venueTriCode: "CLE", homeFairProb: 0.52, awayFairProb: 0.48,
+  });
+  const pick = buildMlbPick(game, model);
+  assert.equal(pick.polymarket.found, false);
+  assert.equal(pick.polymarket.pct, null);
+  assert.equal(pick.polymarket.reason, "no market available");
+});
+
+test("pitcher row hidden: both SPs missing (available===false)", () => {
+  const game: GameInput = {
+    gameId: "p4", gameDate: "2026-06-08", gameTimeEt: "7:00 PM ET", venue: "",
+    homeTeam: "CLE", awayTeam: "NYY", homeTeamFull: "Cleveland Guardians", awayTeamFull: "New York Yankees",
+    mlHome: -115, mlAway: -105, homeFairProb: 0.52, awayFairProb: 0.48,
+    homeSpStats: { available: false }, awaySpStats: { available: false },
+  };
+  const model = predictMlb({
+    homeTeam: "CLE", awayTeam: "NYY", homeTeamFull: "Cleveland Guardians", awayTeamFull: "New York Yankees",
+    homeSpStats: {}, awaySpStats: {}, homeOffStats: {}, awayOffStats: {},
+    venueTriCode: "CLE", homeFairProb: 0.52, awayFairProb: 0.48,
+  });
+  const pick = buildMlbPick(game, model);
+  // Both SPs have available===false; pitcher field should be falsy
+  const awaySp = pick.awaySp as Record<string, unknown>;
+  const homeSp = pick.homeSp as Record<string, unknown>;
+  assert.equal(awaySp.available, false);
+  assert.equal(homeSp.available, false);
+  // In UI, if both available===false pitcher names are TBD; row is hidden if both are TBD
+  const awayName = awaySp.available === false ? null : (awaySp.pitcher as string | null);
+  const homeName = homeSp.available === false ? null : (homeSp.pitcher as string | null);
+  assert.equal(awayName, null, "away pitcher should be null for TBD logic");
+  assert.equal(homeName, null, "home pitcher should be null for TBD logic");
 });
 
 (async () => {

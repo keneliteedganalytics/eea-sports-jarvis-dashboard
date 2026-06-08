@@ -78,7 +78,11 @@ export interface BuiltPick {
   awayFairProb: number | null;
   homeWinProb: number | null;
   awayWinProb: number | null;
-  polymarket: { found: boolean; pct?: number | null };
+  polymarket: { found: boolean; pct?: number | null; reason?: string };
+  publicPct: number | null;
+  sharpPct: number | null;
+  awaySp?: { available?: boolean; pitcher?: string; era?: number | null; fip?: number | null; ip?: number | null; whip?: number | null };
+  homeSp?: { available?: boolean; pitcher?: string; era?: number | null; fip?: number | null; ip?: number | null; whip?: number | null };
   modelNotes: string[];
 }
 

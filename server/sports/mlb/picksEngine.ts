@@ -48,11 +48,25 @@ export interface GameInput {
   totalOverPrice?: number | null;
   totalUnderPrice?: number | null;
   totalBook?: string | null;
+  // Pre-computed public/sharp consensus (set by data.ts, optional)
+  _publicPct?: number | null;
+  _sharpPct?: number | null;
+  _polymarketData?: PolymarketData;
 }
 
 export interface PolymarketData {
   found: boolean;
   pct?: number | null; // 0-100 for pick side
+  reason?: string;     // why not found
+}
+
+export interface SpStats {
+  available?: boolean;
+  pitcher?: string;
+  era?: number | null;
+  fip?: number | null;
+  ip?: number | null;
+  whip?: number | null;
 }
 
 export interface BuiltPick {
@@ -112,9 +126,11 @@ export interface BuiltPick {
   awayFairProb: number | null;
   homeWinProb: number | null;
   awayWinProb: number | null;
-  homeSp: Record<string, unknown>;
-  awaySp: Record<string, unknown>;
+  homeSp: SpStats & Record<string, unknown>;
+  awaySp: SpStats & Record<string, unknown>;
   polymarket: PolymarketData;
+  publicPct: number | null;  // avg implied prob across soft/public books (0-100)
+  sharpPct: number | null;   // implied prob from sharp books (0-100)
   modelNotes: string[];
 }
 
@@ -292,7 +308,15 @@ export function buildPick(
   model: ModelResult,
   bankroll = BANKROLL_USD,
   polymarketData?: PolymarketData,
+  publicPct: number | null = null,
+  sharpPct: number | null = null,
 ): BuiltPick {
+  // Allow callers to pre-attach data via game fields (simpler threading).
+  // Note: _publicPct / _sharpPct from data.ts are home-side probabilities.
+  // We'll orient them to the pick side after we determine pickSide below.
+  const resolvedPoly = polymarketData ?? game._polymarketData;
+  const rawPublicPct = publicPct ?? game._publicPct ?? null;
+  const rawSharpPct  = sharpPct  ?? game._sharpPct  ?? null;
   const homeFull = game.homeTeamFull;
   const awayFull = game.awayTeamFull;
   const homeSp = (game.homeSpStats ?? {}) as Record<string, unknown>;
@@ -370,6 +394,23 @@ export function buildPick(
 
   const ev = pickWp !== null && pickMl !== null ? computeEv(pickWp, pickMl) : 0.0;
 
+  // Orient public/sharp pcts to the pick side.
+  // data.ts computes them for the home side; away picks need 100 - x.
+  const resolvedPublicPct = pickSide === "away" && rawPublicPct !== null
+    ? Math.round((100 - rawPublicPct) * 10) / 10
+    : rawPublicPct;
+  const resolvedSharpPct = pickSide === "away" && rawSharpPct !== null
+    ? Math.round((100 - rawSharpPct) * 10) / 10
+    : rawSharpPct;
+
+  // Re-orient polymarket pct to the pick side.
+  // The lookup in data.ts fetches for the home side; if we're picking away
+  // we invert it (pct → 100 - pct) so the bar represents the pick team.
+  let orientedPoly = resolvedPoly;
+  if (resolvedPoly?.found && resolvedPoly.pct != null && pickSide === "away") {
+    orientedPoly = { ...resolvedPoly, pct: Math.round((100 - resolvedPoly.pct) * 10) / 10 };
+  }
+
   const confidence = computeConfidence({
     edgePp: pickEdge,
     evPer100: ev,
@@ -381,10 +422,10 @@ export function buildPick(
     homeOff,
     awayOff,
     pickWinProb: pickWp,
-    polymarket: polymarketData,
+    polymarket: orientedPoly,
   });
 
-  const polyPct = polymarketData?.found ? (polymarketData.pct ?? null) : null;
+  const polyPct = orientedPoly?.found ? (orientedPoly.pct ?? null) : null;
 
   const tier = assignTier({
     edgePp: pickEdge,
@@ -530,7 +571,9 @@ export function buildPick(
     awayWinProb: awayWp,
     homeSp,
     awaySp,
-    polymarket: polymarketData ?? { found: false, pct: null },
+    polymarket: orientedPoly ?? { found: false, pct: null },
+    publicPct: resolvedPublicPct,
+    sharpPct: resolvedSharpPct,
     modelNotes: model.modelNotes,
   };
 }

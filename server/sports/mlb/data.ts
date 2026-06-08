@@ -5,9 +5,11 @@
 import { fetchOdds, type OddsEvent, type BookPrice } from "../../adapters/oddsApi";
 import { fetchSchedule, fetchPitcherStats, fetchTeamOffense, type ScheduleGame } from "../../adapters/mlbStats";
 import { consensusSnhl, bestPrice, type Bookmaker } from "../../core/odds";
+import { computePublicSharp, type RawBookmaker } from "../../core/consensus";
+import { fetchPolymarketForGame, type PolymarketResult } from "../../adapters/polymarket";
 import { getOperatingDay, inOperatingWindow, utcIsoToEtClock } from "./operatingDay";
 import { classifyPitcher } from "./pitchers";
-import type { GameInput } from "./picksEngine";
+import type { GameInput, PolymarketData } from "./picksEngine";
 import type { PitcherStats } from "./pitchers";
 import type { TeamOffense } from "./ratings";
 
@@ -72,14 +74,28 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       continue;
     }
 
-    const [h, a, homeOff, awayOff] = await Promise.all([
+    const [h, a, homeOff, awayOff, polyResult] = await Promise.all([
       fetchPitcherStats(sched.homePitcherId, sched.homePitcher),
       fetchPitcherStats(sched.awayPitcherId, sched.awayPitcher),
       fetchTeamOffense(sched.homeTeamId, sched.homeTeamFull).catch(() => ({ available: false }) as TeamOffense),
       fetchTeamOffense(sched.awayTeamId, sched.awayTeamFull).catch(() => ({ available: false }) as TeamOffense),
+      // Polymarket lookup — failure is non-fatal, returns found:false
+      fetchPolymarketForGame(ev.homeTeamFull, ev.awayTeamFull, opDay, "home")
+        .catch((): PolymarketResult => ({ found: false, pct: null, reason: "lookup error" })),
     ]);
     const homeSp: PitcherStats = withClassification(h);
     const awaySp: PitcherStats = withClassification(a);
+
+    // Public / sharp consensus from raw bookmaker data
+    const { publicPct, sharpPct } = computePublicSharp(
+      ev.rawBookmakers as RawBookmaker[],
+      ev.homeTeamFull,
+      ev.awayTeamFull,
+    );
+    // polyResult is keyed to home side; we'll re-orient per pick side in picksEngine
+    const polyData: PolymarketData = polyResult.found
+      ? { found: true, pct: polyResult.pct, reason: undefined }
+      : { found: false, pct: null, reason: polyResult.reason };
 
     games.push({
       gameId: ev.eventId,
@@ -113,6 +129,9 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       totalOverPrice: ev.total.overPrice,
       totalUnderPrice: ev.total.underPrice,
       totalBook: ev.total.book,
+      _publicPct: publicPct,
+      _sharpPct: sharpPct,
+      _polymarketData: polyData,
     });
   }
 

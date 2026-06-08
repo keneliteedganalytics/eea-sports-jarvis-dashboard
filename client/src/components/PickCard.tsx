@@ -20,9 +20,22 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
   const move = lineMovement(openMl, pick.pickMl);
   const isSteam = move.cents >= STEAM_CENTS;
 
-  const publicPct = (pick.pickImpliedProb ?? 0) * 100;
-  const sharpPct = (pick.pickWinProb ?? 0) * 100;
+  // Use real public/sharp pcts from the server; fall back to null (renders as —)
+  const publicPct = pick.publicPct;
+  const sharpPct = pick.sharpPct;
   const prismPct = pick.polymarket.found ? pick.polymarket.pct ?? null : null;
+  const prismReason = !pick.polymarket.found ? (pick.polymarket.reason ?? "No Polymarket market available") : null;
+
+  // MLB pitcher row data
+  const isMLB = pick.sport === "mlb";
+  const awaySpName = pick.awaySp?.available === false ? "TBD" : (pick.awaySp?.pitcher ?? null);
+  const homeSpName = pick.homeSp?.available === false ? "TBD" : (pick.homeSp?.pitcher ?? null);
+  const awaySpEra = pick.awaySp?.era != null ? pick.awaySp.era.toFixed(2) : null;
+  const homeSpEra = pick.homeSp?.era != null ? pick.homeSp.era.toFixed(2) : null;
+  const showPitcherRow = isMLB && (awaySpName !== null || homeSpName !== null);
+
+  // Projected score line — shown on every sport when both scores available
+  const showProjScore = pick.projAwayScore != null && pick.projHomeScore != null;
 
   return (
     <article
@@ -81,13 +94,26 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
         <Link href={`/pick/${pick.gameId}`} className="text-sm font-medium text-foreground hover:text-gold">
           {pick.awayTeam} @ {pick.homeTeam} · {pick.gameTimeEt}
         </Link>
+        {/* MLB-only: starting pitcher row */}
+        {showPitcherRow && (
+          <div className="mt-0.5 text-xs text-zinc-400" data-testid="pitcher-row">
+            SP: {awaySpName ?? "TBD"}{awaySpEra ? ` (${awaySpEra} ERA)` : ""} vs {homeSpName ?? "TBD"}{homeSpEra ? ` (${homeSpEra} ERA)` : ""}
+          </div>
+        )}
         <div className="mt-0.5 text-sm text-foreground/80">
           {pick.pickTeam} ML {fmtLine(pick.pickMl)}{" "}
           <span className="text-muted-foreground">{pick.pickBook ? `· ${pick.pickBook}` : ""}</span>
         </div>
       </div>
 
-      {/* 4b. Spread + total markets */}
+      {/* 4b. Projected score (all sports) */}
+      {showProjScore && (
+        <div className="text-xs text-zinc-400" data-testid="proj-score">
+          Projected: {pick.awayTeam} {pick.projAwayScore.toFixed(1)} — {pick.homeTeam} {pick.projHomeScore.toFixed(1)}
+        </div>
+      )}
+
+      {/* 4c. Spread + total markets */}
       {(pick.markets?.spread?.available || pick.markets?.total?.available) && (
         <div className="flex flex-col gap-1 rounded-lg border border-card-border bg-background/40 px-2.5 py-2" data-testid="markets-block">
           <SpreadRow market={pick.markets.spread} label={SPREAD_LABEL[pick.sport] ?? "SPR"} />
@@ -96,7 +122,7 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
       )}
 
       {/* 5. 3-bar */}
-      <SignalBars publicPct={publicPct} sharpPct={sharpPct} prismPct={prismPct} />
+      <SignalBars publicPct={publicPct} sharpPct={sharpPct} prismPct={prismPct} prismReason={prismReason} />
 
       {/* 6. Edge / EV subtitle */}
       <div className="text-[11px] tabular-nums text-muted-foreground">

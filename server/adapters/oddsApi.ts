@@ -40,6 +40,8 @@ export interface OddsEvent {
   books: BookPrice[];
   spread: SpreadConsensus;
   total: TotalConsensus;
+  // Raw bookmaker objects — used by the consensus/public-sharp calc
+  rawBookmakers: RawBookmaker[];
 }
 
 interface RawOutcome {
@@ -172,6 +174,7 @@ export async function fetchOddsForSport(
       books,
       spread: consensusSpread(ev.bookmakers ?? [], ev.home_team, ev.away_team),
       total: consensusTotal(ev.bookmakers ?? []),
+      rawBookmakers: ev.bookmakers ?? [],
     };
   });
 }
