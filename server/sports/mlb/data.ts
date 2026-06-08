@@ -37,8 +37,6 @@ function matchSchedule(ev: OddsEvent, schedule: ScheduleGame[]): ScheduleGame | 
   );
 }
 
-const EMPTY_PITCHER: PitcherStats = { available: false, pitcher: "TBD" };
-
 function withClassification(p: PitcherStats): PitcherStats {
   const c = classifyPitcher(p);
   return { ...p, classification: c.classification, hardPassReason: c.hardPassReason, sparse: c.sparse, sparseReason: c.sparseReason };
@@ -68,22 +66,20 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
 
     const sched = matchSchedule(ev, schedule);
 
-    let homeSp: PitcherStats = EMPTY_PITCHER;
-    let awaySp: PitcherStats = EMPTY_PITCHER;
-    let homeOff: TeamOffense = { available: false };
-    let awayOff: TeamOffense = { available: false };
-    if (sched) {
-      const [h, a, ho, ao] = await Promise.all([
-        fetchPitcherStats(sched.homePitcherId, sched.homePitcher),
-        fetchPitcherStats(sched.awayPitcherId, sched.awayPitcher),
-        fetchTeamOffense(sched.homeTeamId, sched.homeTeamFull).catch(() => ({ available: false }) as TeamOffense),
-        fetchTeamOffense(sched.awayTeamId, sched.awayTeamFull).catch(() => ({ available: false }) as TeamOffense),
-      ]);
-      homeSp = withClassification(h);
-      awaySp = withClassification(a);
-      homeOff = ho;
-      awayOff = ao;
+    // SPEC §3: drop games with an unannounced (TBD) probable starter — without
+    // both starters the model has no real pitcher inputs, so the card is noise.
+    if (!sched || sched.homePitcherId === null || sched.awayPitcherId === null) {
+      continue;
     }
+
+    const [h, a, homeOff, awayOff] = await Promise.all([
+      fetchPitcherStats(sched.homePitcherId, sched.homePitcher),
+      fetchPitcherStats(sched.awayPitcherId, sched.awayPitcher),
+      fetchTeamOffense(sched.homeTeamId, sched.homeTeamFull).catch(() => ({ available: false }) as TeamOffense),
+      fetchTeamOffense(sched.awayTeamId, sched.awayTeamFull).catch(() => ({ available: false }) as TeamOffense),
+    ]);
+    const homeSp: PitcherStats = withClassification(h);
+    const awaySp: PitcherStats = withClassification(a);
 
     games.push({
       gameId: ev.eventId,
