@@ -205,6 +205,23 @@ export function buildPick(
     hardPassReason = hardPassReason ?? model.reason ?? "model_skipped";
   }
 
+  // Safety guard (live-test 6/7): when BOTH starters lack stats, the model is
+  // leaning entirely on the market prior — so a large moneyline is a market
+  // signal we cannot beat, not an edge. Hard-pass extreme/heavy lines outright.
+  const bothSpMissing = !homeSp.available && !awaySp.available;
+  if (bothSpMissing) {
+    const hMl = Math.abs(game.mlHome ?? 0);
+    const aMl = Math.abs(game.mlAway ?? 0);
+    const maxMl = Math.max(hMl, aMl);
+    if (maxMl > 400) {
+      hardPass = true;
+      hardPassReason = "missing_pitcher_data_with_extreme_line";
+    } else if (maxMl > 250) {
+      hardPass = true;
+      hardPassReason = "missing_pitcher_data_with_heavy_favorite";
+    }
+  }
+
   // pick side (max edge)
   const homeWp = model.homeWinProb;
   const awayWp = model.awayWinProb;
