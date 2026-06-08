@@ -43,8 +43,11 @@ export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promi
     if (games.length > 0) {
       return { operatingDay, isDemo: false, bankroll, picks: runEngine(games, bankroll) };
     }
+    // Odds key is present but no games found (e.g. future date / off-day).
+    // Return a live (non-demo) empty slate rather than falling through to demo.
+    return { operatingDay, isDemo: false, bankroll, picks: [] };
   }
-  // Fallback: deterministic demo slate.
+  // Fallback: deterministic demo slate (no Odds key configured).
   const opDay = getOperatingDay(now);
   return {
     operatingDay: opDay,

@@ -47,10 +47,10 @@ export interface NhlSlatePayload {
 export async function getNhlSlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<NhlSlatePayload> {
   const now = dateIso ? operatingDayAnchor(dateIso) : new Date();
   if (hasOddsKey()) {
+    // When we have a live Odds API key, always return real data — even if the
+    // schedule is empty (e.g. off-day).  An empty live slate is NOT demo data.
     const { operatingDay, games } = await buildNhlSlate(now);
-    if (games.length > 0) {
-      return { operatingDay, isDemo: false, bankroll, picks: runEngine(games, bankroll) };
-    }
+    return { operatingDay, isDemo: false, bankroll, picks: runEngine(games, bankroll) };
   }
   const opDay = operatingDay(now);
   return {

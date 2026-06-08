@@ -65,16 +65,16 @@ export async function getSoccerSlate(
   if (hasOddsKey()) {
     try {
       const { operatingDay: opDay, games } = await buildSoccerSlate(now);
-      if (games.length > 0) {
-        return {
-          operatingDay: opDay,
-          isDemo: false,
-          bankroll,
-          picks: runEngine(games, bankroll),
-        };
-      }
+      // When we have a live Odds API key, always return real data — even if the
+      // schedule is legitimately empty (off-day / no covered leagues).
+      return {
+        operatingDay: opDay,
+        isDemo: false,
+        bankroll,
+        picks: runEngine(games, bankroll),
+      };
     } catch {
-      // Fall through to demo
+      // Fall through to demo only on hard error
     }
   }
 

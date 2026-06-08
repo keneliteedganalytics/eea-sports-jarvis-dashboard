@@ -12,6 +12,7 @@ import { applyExposureCap } from "../core/sizing";
 export interface SportSlate {
   picks: BuiltPick[];
   ok: boolean;
+  isDemo?: boolean;
   error?: string | null;
 }
 
@@ -29,10 +30,10 @@ export interface DailySlate {
 }
 
 function settledToSport(
-  r: PromiseSettledResult<{ picks: BuiltPick[] }>,
+  r: PromiseSettledResult<{ picks: BuiltPick[]; isDemo?: boolean }>,
 ): SportSlate {
-  if (r.status === "fulfilled") return { picks: r.value.picks, ok: true, error: null };
-  return { picks: [], ok: false, error: r.reason instanceof Error ? r.reason.message : String(r.reason) };
+  if (r.status === "fulfilled") return { picks: r.value.picks, ok: true, isDemo: r.value.isDemo ?? false, error: null };
+  return { picks: [], ok: false, isDemo: false, error: r.reason instanceof Error ? r.reason.message : String(r.reason) };
 }
 
 // Mutate actionable picks in place so the combined board honors the 18% cap.
@@ -70,14 +71,17 @@ export async function getDailySlate(bankroll = BANKROLL_USD, dateIso?: string): 
   // common factor when the combined board exceeds 18% of bankroll.
   applySlateExposureCap([mlb, nhl, nba, soccer], bankroll);
 
-  // Operating day / demo flag taken from whichever sport resolved (prefer MLB).
+  // Operating day taken from whichever sport resolved (prefer MLB).
+  // Top-level isDemo is true only if every sport is in demo mode (all keys absent).
   const resolved = [mlbR, nhlR, nbaR, soccerR].find((r) => r.status === "fulfilled") as
     | PromiseFulfilledResult<{ operatingDay: string; isDemo: boolean }>
     | undefined;
 
+  const allDemo = [mlb, nhl, nba, soccer].every((s) => s.isDemo ?? false);
+
   return {
     operatingDay: resolved?.value.operatingDay ?? operatingDay(),
-    isDemo: resolved?.value.isDemo ?? true,
+    isDemo: allDemo,
     bankroll,
     generatedAt: Date.now(),
     sports: { mlb, nhl, nba, soccer },

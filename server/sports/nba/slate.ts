@@ -45,10 +45,10 @@ export interface NbaSlatePayload {
 export async function getNbaSlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<NbaSlatePayload> {
   const now = dateIso ? operatingDayAnchor(dateIso) : new Date();
   if (hasOddsKey()) {
+    // With a live Odds API key, always return real data — even if the schedule
+    // is empty today (off-day / future date without posted lines yet).
     const { operatingDay, games } = await buildNbaSlate(now);
-    if (games.length > 0) {
-      return { operatingDay, isDemo: false, bankroll, picks: runEngine(games, bankroll) };
-    }
+    return { operatingDay, isDemo: false, bankroll, picks: runEngine(games, bankroll) };
   }
   const opDay = operatingDay(now);
   return {
