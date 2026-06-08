@@ -40,6 +40,41 @@ export interface PolymarketSentiment {
   note?: string;
 }
 
+// Per-market recommendation (ML, spread, total). Each card carries all three.
+export interface Market {
+  available: boolean;
+  pick: string | null; // human label e.g. "LAD ML", "TB -1.5", "Over 8.5"
+  line: number | null; // point/handicap/total line; null for ML
+  priceAmerican: number | null; // market price for the pick side
+  fairLine: number | null; // devigged fair american price for pick side
+  edgePp: number | null; // model/fair vs market edge in percentage points
+  tier: Verdict;
+  units: number;
+  side: string | null; // 'home'|'away' for ml/spread, 'over'|'under' for total
+  book: string | null;
+}
+
+export interface MarketSet {
+  ml: Market;
+  spread: Market;
+  total: Market;
+}
+
+export function emptyMarket(): Market {
+  return {
+    available: false,
+    pick: null,
+    line: null,
+    priceAmerican: null,
+    fairLine: null,
+    edgePp: null,
+    tier: "PASS",
+    units: 0,
+    side: null,
+    book: null,
+  };
+}
+
 // 3-bar component input: public (book consensus), sharp (model), PRISM (poly)
 export interface SignalBars {
   publicPct: number; // book-implied

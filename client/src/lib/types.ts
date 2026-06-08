@@ -3,7 +3,27 @@
 
 export type Verdict = "BONUS" | "SNIPER" | "EDGE" | "RECON" | "VALUE" | "LEAN" | "PASS";
 
+export interface Market {
+  available: boolean;
+  pick: string | null;
+  line: number | null;
+  priceAmerican: number | null;
+  fairLine: number | null;
+  edgePp: number | null;
+  tier: Verdict;
+  units: number;
+  side: string | null;
+  book: string | null;
+}
+
+export interface MarketSet {
+  ml: Market;
+  spread: Market;
+  total: Market;
+}
+
 export interface BuiltPick {
+  sport: string;
   gameId: string;
   gameDate: string;
   gameTimeEt: string;
@@ -19,6 +39,7 @@ export interface BuiltPick {
   pickTeam: string;
   pickTeamFull: string;
   pickType: "ML";
+  markets: MarketSet;
   pickMl: number | null;
   pickBook: string | null;
   pickWinProb: number | null;

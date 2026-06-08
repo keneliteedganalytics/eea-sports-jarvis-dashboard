@@ -13,8 +13,38 @@ function off(rpg: number, ops: number): TeamOffense {
   return { available: true, rpg, ops };
 }
 
+// Synthesize a standard run-line and a total for demo games so the ML/spread/
+// total trio renders without live odds. Favorite (lower ML) lays -1.5.
+function withDerivedMarkets(g: GameInput): GameInput {
+  const homeFav = (g.mlHome ?? 0) < (g.mlAway ?? 0);
+  const totalLine = round1(
+    ((g.homeOffStats as { rpg?: number })?.rpg ?? 4.5) +
+      ((g.awayOffStats as { rpg?: number })?.rpg ?? 4.5),
+  );
+  return {
+    ...g,
+    spreadHomeLine: homeFav ? -1.5 : 1.5,
+    spreadHomePrice: homeFav ? 130 : -160,
+    spreadAwayLine: homeFav ? 1.5 : -1.5,
+    spreadAwayPrice: homeFav ? -160 : 130,
+    spreadBook: g.mlHomeBook ?? "draftkings",
+    totalLine,
+    totalOverPrice: -110,
+    totalUnderPrice: -110,
+    totalBook: g.mlAwayBook ?? "fanduel",
+  };
+}
+
+function round1(x: number): number {
+  return Math.round(x * 2) / 2; // nearest 0.5 for a baseball total
+}
+
 // fairProb pairs are derived to create a spread of edges vs the model.
 export function DEMO_GAMES(dateEt: string): GameInput[] {
+  return RAW_DEMO_GAMES(dateEt).map(withDerivedMarkets);
+}
+
+function RAW_DEMO_GAMES(dateEt: string): GameInput[] {
   return [
     {
       gameId: "demo-LAD-SF",

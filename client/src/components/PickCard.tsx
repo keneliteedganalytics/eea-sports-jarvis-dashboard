@@ -5,10 +5,15 @@ import { SignalBars } from "./SignalBars";
 import { HitRateFooter } from "./HitRateFooter";
 import { JarvisPlayer } from "./JarvisPlayer";
 import { WhyPanel } from "./WhyPanel";
+import { SpreadRow } from "./SpreadRow";
+import { TotalRow } from "./TotalRow";
+import { PropsPanel } from "./PropsPanel";
 import { fmtLine, fmtMoney, fmtPct, fmtUnits, lineMovement } from "@/lib/format";
 import type { BuiltPick } from "@/lib/types";
 
 const STEAM_CENTS = 10;
+
+const SPREAD_LABEL: Record<string, string> = { mlb: "RL", nhl: "PL", nba: "SPR" };
 
 export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number }) {
   const openMl = pick.pickSide === "home" ? pick.openHomeMl : pick.openAwayMl;
@@ -56,6 +61,14 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
         </div>
       </div>
 
+      {/* 4b. Spread + total markets */}
+      {(pick.markets?.spread?.available || pick.markets?.total?.available) && (
+        <div className="flex flex-col gap-1 rounded-lg border border-card-border bg-background/40 px-2.5 py-2" data-testid="markets-block">
+          <SpreadRow market={pick.markets.spread} label={SPREAD_LABEL[pick.sport] ?? "SPR"} />
+          <TotalRow market={pick.markets.total} />
+        </div>
+      )}
+
       {/* 5. 3-bar */}
       <SignalBars publicPct={publicPct} sharpPct={sharpPct} prismPct={prismPct} />
 
@@ -93,6 +106,9 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
 
       {/* 10. Why panel */}
       <WhyPanel pick={pick} />
+
+      {/* 11. Player props (collapsed) */}
+      <PropsPanel sport={pick.sport} gameId={pick.gameId} gameDate={pick.gameDate} />
 
       <span className="sr-only">{`bankroll ${fmtMoney(bankroll)}`}</span>
     </article>

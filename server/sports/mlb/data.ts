@@ -99,6 +99,15 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       awaySpStats: awaySp,
       openHomeMl: null,
       openAwayMl: null,
+      spreadHomeLine: ev.spread.homeLine,
+      spreadHomePrice: ev.spread.homePrice,
+      spreadAwayLine: ev.spread.awayLine,
+      spreadAwayPrice: ev.spread.awayPrice,
+      spreadBook: ev.spread.book,
+      totalLine: ev.total.line,
+      totalOverPrice: ev.total.overPrice,
+      totalUnderPrice: ev.total.underPrice,
+      totalBook: ev.total.book,
     });
   }
 

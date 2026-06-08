@@ -3,7 +3,9 @@
 
 import { assignTier, MIN_CONFIDENCE } from "../../core/tier";
 import { computeKellyStake, unitsFromStake, unitSize, KELLY_FRACTION, KELLY_CAP_PCT } from "../../core/kelly";
-import type { Verdict, Side } from "../../core/types";
+import { buildTwoWayMarket } from "../../core/markets";
+import type { Verdict, Side, Market, MarketSet } from "../../core/types";
+import { emptyMarket } from "../../core/types";
 import type { ModelResult } from "./model";
 import type { PitcherStats } from "./pitchers";
 import type { TeamOffense } from "./ratings";
@@ -35,6 +37,15 @@ export interface GameInput {
   awayOffStats?: TeamOffense | Record<string, never>;
   openHomeMl?: number | null;
   openAwayMl?: number | null;
+  spreadHomeLine?: number | null;
+  spreadHomePrice?: number | null;
+  spreadAwayLine?: number | null;
+  spreadAwayPrice?: number | null;
+  spreadBook?: string | null;
+  totalLine?: number | null;
+  totalOverPrice?: number | null;
+  totalUnderPrice?: number | null;
+  totalBook?: string | null;
 }
 
 export interface PolymarketData {
@@ -43,6 +54,7 @@ export interface PolymarketData {
 }
 
 export interface BuiltPick {
+  sport: string; // 'mlb' | 'nhl' | 'nba'
   gameId: string;
   gameDate: string;
   gameTimeEt: string;
@@ -58,6 +70,7 @@ export interface BuiltPick {
   pickTeam: string;
   pickTeamFull: string;
   pickType: "ML";
+  markets: MarketSet;
   pickMl: number | null;
   pickBook: string | null;
   pickWinProb: number | null;
@@ -179,6 +192,89 @@ export function computeEv(modelProb: number | null, americanOdds: number | null,
   const q = 1.0 - p;
   const profitIfWin = americanOdds > 0 ? stake * (americanOdds / 100.0) : stake * (100.0 / Math.abs(americanOdds));
   return round2(p * profitIfWin - q * stake);
+}
+
+// Build the ML / spread / total market trio for a card. ML reuses the engine's
+// devigged fair line; spread (run-line) and total derive model cover/over
+// probabilities from the projected scores.
+function buildMlbMarkets(
+  game: GameInput,
+  model: ModelResult,
+  pickSide: Side,
+  pickTeam: string,
+  pickEdge: number | null,
+  pickMl: number | null,
+  pickBook: string | null,
+  pickTier: Verdict,
+  pickUnits: number,
+  hardPass: boolean,
+): MarketSet {
+  // ── ML: reuse the headline pick we already computed.
+  const ml: Market = {
+    available: pickMl !== null,
+    pick: pickMl !== null ? `${pickTeam} ML ${fmtAmerican(pickMl)}` : null,
+    line: null,
+    priceAmerican: pickMl,
+    fairLine: pickSide === "home" ? model.fairHomeMl : model.fairAwayMl,
+    edgePp: pickEdge !== null ? round2(pickEdge) : null,
+    tier: hardPass ? "PASS" : pickTier,
+    units: hardPass ? 0 : pickUnits,
+    side: pickSide,
+    book: pickBook,
+  };
+
+  if (hardPass) {
+    return { ml: { ...ml, tier: "PASS", units: 0 }, spread: emptyMarket(), total: emptyMarket() };
+  }
+
+  const margin = model.projHomeScore - model.projAwayScore; // home - away
+
+  // ── Spread (run-line ±1.5). Model prob the home side covers -1.5 / +1.5.
+  let spread: Market = emptyMarket();
+  if (game.spreadHomePrice != null && game.spreadAwayPrice != null) {
+    const homeLine = game.spreadHomeLine ?? -1.5;
+    // P(home margin > -homeLine). For home -1.5 → P(margin > 1.5).
+    const homeCoverProb = logistic((margin + homeLine) / RUN_MARGIN_SCALE);
+    spread = buildTwoWayMarket(
+      {
+        aLabel: "home",
+        aLine: homeLine,
+        aPrice: game.spreadHomePrice,
+        bLabel: "away",
+        bLine: game.spreadAwayLine ?? -homeLine,
+        bPrice: game.spreadAwayPrice,
+        book: game.spreadBook ?? null,
+      },
+      homeCoverProb,
+      BANKROLL_USD,
+      (side, line, price) => {
+        const team = side === "a" ? game.homeTeam : game.awayTeam;
+        return `${team} ${fmtLine(line)} (${fmtAmerican(price)})`;
+      },
+    );
+  }
+
+  // ── Total (over/under). Model prob the game goes over the posted line.
+  let total: Market = emptyMarket();
+  if (game.totalOverPrice != null && game.totalUnderPrice != null && game.totalLine != null) {
+    const overProb = logistic((model.expectedTotalRuns - game.totalLine) / TOTAL_SCALE);
+    total = buildTwoWayMarket(
+      {
+        aLabel: "over",
+        aLine: game.totalLine,
+        aPrice: game.totalOverPrice,
+        bLabel: "under",
+        bLine: game.totalLine,
+        bPrice: game.totalUnderPrice,
+        book: game.totalBook ?? null,
+      },
+      overProb,
+      BANKROLL_USD,
+      (side, line, price) => `${side === "a" ? "Over" : "Under"} ${line} (${fmtAmerican(price)})`,
+    );
+  }
+
+  return { ml, spread, total };
 }
 
 export function buildPick(
@@ -312,7 +408,21 @@ export function buildPick(
     stakeDollars = round2(0.5 * unit);
   }
 
+  const markets = buildMlbMarkets(
+    game,
+    model,
+    pickSide,
+    pickTeam,
+    pickEdge,
+    pickMl,
+    pickBook,
+    tier,
+    units,
+    hardPass,
+  );
+
   return {
+    sport: "mlb",
     gameId: game.gameId,
     gameDate: game.gameDate,
     gameTimeEt: game.gameTimeEt,
@@ -328,6 +438,7 @@ export function buildPick(
     pickTeam,
     pickTeamFull,
     pickType: "ML",
+    markets,
     pickMl,
     pickBook,
     pickWinProb: pickWp,
@@ -400,6 +511,25 @@ export function applyDailyCap(picks: BuiltPick[], maxPicks = MAX_PICKS_PER_DAY):
     }
   }
   return sorted;
+}
+
+// Scale params for mapping projected run differentials → cover/over probability.
+// Tuned so a 1-run edge on the line ≈ 56% and a 1.5-run total gap ≈ 60%.
+const RUN_MARGIN_SCALE = 2.6;
+const TOTAL_SCALE = 2.9;
+
+function logistic(x: number): number {
+  return 1 / (1 + Math.exp(-x));
+}
+
+function fmtAmerican(ml: number | null): string {
+  if (ml === null) return "";
+  return ml > 0 ? `+${ml}` : `${ml}`;
+}
+
+function fmtLine(line: number | null): string {
+  if (line === null) return "";
+  return line > 0 ? `+${line}` : `${line}`;
 }
 
 function numOrNull(v: unknown): number | null {
