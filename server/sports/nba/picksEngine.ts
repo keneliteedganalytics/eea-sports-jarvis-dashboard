@@ -42,6 +42,8 @@ export interface NbaGameInput {
   // Carrier fields threaded from the adapter into the model (not serialized).
   _homeStats?: TeamHoopStats | Record<string, never>;
   _awayStats?: TeamHoopStats | Record<string, never>;
+  _publicPct?: number | null;
+  _sharpPct?: number | null;
 }
 
 // Possession-model confidence: base 30, edge magnitude, data completeness, alignment.
@@ -200,8 +202,14 @@ export function buildPick(game: NbaGameInput, model: NbaModelResult, bankroll = 
     homeSp: {},
     awaySp: {},
     polymarket: { found: false, pct: null },
-    publicPct: null,
-    sharpPct: null,
+    publicPct: (() => {
+      const raw = game._publicPct ?? null;
+      return pickSide === "away" && raw !== null ? Math.round((100 - raw) * 10) / 10 : raw;
+    })(),
+    sharpPct: (() => {
+      const raw = game._sharpPct ?? null;
+      return pickSide === "away" && raw !== null ? Math.round((100 - raw) * 10) / 10 : raw;
+    })(),
     modelNotes: model.modelNotes,
   };
 }

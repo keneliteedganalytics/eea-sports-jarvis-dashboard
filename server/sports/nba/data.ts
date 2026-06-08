@@ -4,6 +4,7 @@
 
 import { fetchOddsForSport, type OddsEvent, type BookPrice } from "../../adapters/oddsApi";
 import { consensusSnhl, bestPrice, type Bookmaker } from "../../core/odds";
+import { computePublicSharp, type RawBookmaker } from "../../core/consensus";
 import { fetchHoopTeamStats } from "../../adapters/apiSportsBasketball";
 import { nameToAbbr } from "./teams";
 import type { NbaGameInput } from "./picksEngine";
@@ -66,6 +67,14 @@ export async function buildNbaSlate(now: Date = new Date()): Promise<NbaSlateBui
     const [homeMl, homeBook] = bestPrice(bms, ev.homeTeamFull);
     const [awayMl, awayBook] = bestPrice(bms, ev.awayTeamFull);
 
+    // Public / sharp consensus from raw bookmaker data
+    const rawBms = ev.rawBookmakers ?? [];
+    const { publicPct, sharpPct } = computePublicSharp(
+      rawBms as RawBookmaker[],
+      ev.homeTeamFull,
+      ev.awayTeamFull,
+    );
+
     const [homeStats, awayStats] = await Promise.all([
       fetchHoopTeamStats(ev.homeTeamFull, NBA_SEASON).catch(() => emptyStats()),
       fetchHoopTeamStats(ev.awayTeamFull, NBA_SEASON).catch(() => emptyStats()),
@@ -97,6 +106,8 @@ export async function buildNbaSlate(now: Date = new Date()): Promise<NbaSlateBui
       totalBook: ev.total.book,
       _homeStats: homeStats,
       _awayStats: awayStats,
+      _publicPct: publicPct,
+      _sharpPct: sharpPct,
     });
   }
 
