@@ -51,6 +51,13 @@ export interface BuiltPick {
   units: number;
   kellyStakeDollars: number;
   kellyCapped: boolean;
+  halfCut: boolean;
+  phantomEdge: boolean;
+  trimmed: boolean;
+  subSampleWarning: boolean;
+  subSampleDetails: string | null;
+  alignmentSignalRaw: number | null;
+  topPlay: boolean;
   verdict: "PLAY" | "PASS" | "LEAN";
   verdictTier: Verdict;
   qualifies: boolean;

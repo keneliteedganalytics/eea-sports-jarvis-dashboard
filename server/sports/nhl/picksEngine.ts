@@ -1,14 +1,16 @@
-// NHL picks engine — mirrors the MLB structure: confidence, Kelly sizing, tier,
-// ML/spread(puck-line)/total markets, daily-cap 6, and an NHL hard-pass guard.
+// NHL picks engine — mirrors the MLB structure: confidence, EEA flat-unit
+// sizing, tier, ML/spread(puck-line)/total markets, daily-cap 6, NHL hard-pass
+// guard, and phantom-edge detection.
 
 import { assignTier } from "../../core/tier";
-import { computeKellyStake, unitsFromStake, unitSize, KELLY_FRACTION, KELLY_CAP_PCT } from "../../core/kelly";
+import { convictionUnits, applyJuicePenalty, unitsToStake } from "../../core/sizing";
+import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
 import { buildTwoWayMarket } from "../../core/markets";
 import { emptyMarket, type Market, type MarketSet, type Side, type Verdict } from "../../core/types";
 import type { BuiltPick } from "../mlb/picksEngine";
 import type { NhlModelResult, GoalieStats, TeamHockeyStats } from "./model";
 
-export const BANKROLL_USD = 29000;
+export const BANKROLL_USD = 35800;
 export const MAX_PICKS_PER_DAY = 6;
 const PUCK_MARGIN_SCALE = 1.9; // goals-diff → cover prob scale
 const TOTAL_SCALE = 2.2;
@@ -117,22 +119,36 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
     winProb: pickWp,
   });
 
-  const unit = unitSize(bankroll);
-  const kelly =
-    pickWp !== null && pickMl !== null && !hardPass
-      ? computeKellyStake(pickWp, pickMl, bankroll, KELLY_FRACTION, KELLY_CAP_PCT)
-      : { stakeDollars: 0, capped: false, fullKelly: 0, kellyUsed: 0, finalFraction: 0 };
-  let units = unitsFromStake(kelly.stakeDollars, unit);
+  // EEA flat-unit sizing (SPEC §4): conviction units → juice penalty → stake.
+  let verdictTier = tier;
+  const baseUnits = hardPass ? 0 : convictionUnits(verdictTier);
+  const { units: juicedUnits, halfCut } = applyJuicePenalty(baseUnits, pickMl);
+  let units = juicedUnits;
+  let stakeDollars = unitsToStake(units, bankroll);
 
-  const qualifies = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE"].includes(tier);
+  // Alignment signal (SPEC §8): raw edge magnitude — confirming upgrade signal.
+  const alignmentSignalRaw = pickEdge !== null ? Math.abs(round1(pickEdge)) : null;
+
+  // Phantom-edge detector (SPEC §1, P0). Runs after tier: a missing-data pricing
+  // artifact forces PASS / 0 units.
+  let phantomEdge = false;
+  if (detectPhantomEdge(model.modelNotes)) {
+    phantomEdge = true;
+    verdictTier = "PASS";
+    units = 0;
+    stakeDollars = 0;
+    if (!model.modelNotes.includes(PHANTOM_NOTE)) model.modelNotes.unshift(PHANTOM_NOTE);
+  }
+
+  const qualifies = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE"].includes(verdictTier);
   let verdict: "PLAY" | "PASS" | "LEAN";
-  if (hardPass || tier === "PASS") verdict = "PASS";
-  else if (tier === "LEAN") verdict = "LEAN";
+  if (hardPass || verdictTier === "PASS") verdict = "PASS";
+  else if (verdictTier === "LEAN") verdict = "LEAN";
   else if (qualifies) verdict = "PLAY";
   else verdict = "PASS";
-  if (qualifies && units < 0.5) units = 0.5;
 
-  const markets = buildMarkets(game, model, pickSide, pickTeam, pickEdge, pickMl, pickBook, tier, units, hardPass);
+  const hardPassOrPhantom = hardPass || phantomEdge;
+  const markets = buildMarkets(game, model, pickSide, pickTeam, pickEdge, pickMl, pickBook, verdictTier, units, hardPassOrPhantom);
 
   return {
     sport: "nhl",
@@ -160,12 +176,19 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
     edgePp: pickEdge !== null ? round2(pickEdge) : null,
     evPer100: 0,
     confidence,
-    units: hardPass ? 0 : units,
-    kellyStakeDollars: hardPass ? 0 : kelly.stakeDollars,
-    kellyCapped: kelly.capped,
+    units,
+    kellyStakeDollars: stakeDollars,
+    kellyCapped: false,
+    halfCut,
+    phantomEdge,
+    trimmed: false,
+    subSampleWarning: false,
+    subSampleDetails: null,
+    alignmentSignalRaw,
+    topPlay: false,
     verdict,
-    verdictTier: hardPass ? "PASS" : tier,
-    qualifies: hardPass ? false : qualifies,
+    verdictTier,
+    qualifies,
     trapSignal: false,
     trapGapPp: null,
     eliteFadeApplied: false,
@@ -277,6 +300,9 @@ export function applyDailyCap(picks: BuiltPick[], maxPicks = MAX_PICKS_PER_DAY):
   return sorted;
 }
 
+function round1(x: number): number {
+  return Math.round(x * 10) / 10;
+}
 function round2(x: number): number {
   return Math.round(x * 100) / 100;
 }

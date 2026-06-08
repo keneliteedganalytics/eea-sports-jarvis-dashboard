@@ -1,18 +1,20 @@
 // Picks engine — ported from sports-engine sports/mlb/picks_engine.py.
 // Confidence (7-component), Kelly sizing, verdict tier, daily 6-pick cap.
 
-import { assignTier, MIN_CONFIDENCE } from "../../core/tier";
-import { computeKellyStake, unitsFromStake, unitSize, KELLY_FRACTION, KELLY_CAP_PCT } from "../../core/kelly";
+import { assignTier } from "../../core/tier";
+import { convictionUnits, applyJuicePenalty, unitsToStake, computeUnit } from "../../core/sizing";
+import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
 import { buildTwoWayMarket } from "../../core/markets";
 import type { Verdict, Side, Market, MarketSet } from "../../core/types";
 import { emptyMarket } from "../../core/types";
 import type { ModelResult } from "./model";
-import type { PitcherStats } from "./pitchers";
+import { SOLID_IP_MIN, type PitcherStats } from "./pitchers";
 import type { TeamOffense } from "./ratings";
 
 export const ELITE_FADE_PP = 12.0;
 export const MAX_PICKS_PER_DAY = 6;
-export const BANKROLL_USD = 29000;
+// June reset (EEA operating rules). Overridable via BANKROLL_USD env at the route.
+export const BANKROLL_USD = 35800;
 
 export interface GameInput {
   gameId: string;
@@ -82,6 +84,14 @@ export interface BuiltPick {
   units: number;
   kellyStakeDollars: number;
   kellyCapped: boolean;
+  // EEA sizing + signal fields (SPEC v2.5)
+  halfCut: boolean;
+  phantomEdge: boolean;
+  trimmed: boolean;
+  subSampleWarning: boolean;
+  subSampleDetails: string | null;
+  alignmentSignalRaw: number | null;
+  topPlay: boolean;
   verdict: "PLAY" | "PASS" | "LEAN";
   verdictTier: Verdict;
   qualifies: boolean;
@@ -387,27 +397,68 @@ export function buildPick(
     winProb: pickWp,
   });
 
-  const unit = unitSize(bankroll);
-  const kelly =
-    pickWp !== null && pickMl !== null && !hardPass
-      ? computeKellyStake(pickWp, pickMl, bankroll, KELLY_FRACTION, KELLY_CAP_PCT)
-      : { fullKelly: 0, kellyUsed: 0, finalFraction: 0, stakeDollars: 0, capped: false };
-  let rawUnits = unitsFromStake(kelly.stakeDollars, unit);
+  // EEA flat-unit sizing (SPEC §4): conviction units → juice penalty → stake.
+  let verdictTier = tier;
+  const baseUnits = hardPass ? 0 : convictionUnits(verdictTier);
+  const { units: juicedUnits, halfCut } = applyJuicePenalty(baseUnits, pickMl);
+  let units = juicedUnits;
+  let stakeDollars = unitsToStake(units, bankroll);
 
-  const qualifies = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE"].includes(tier);
+  // Sub-25 IP warning (SPEC §7): judgment-only flag, no auto tier/size change.
+  const homeIp = numOrNull(homeSp.ip) ?? 0;
+  const awayIp = numOrNull(awaySp.ip) ?? 0;
+  const subFlags: string[] = [];
+  if (homeIp > 0 && homeIp < SOLID_IP_MIN) subFlags.push(`${homeSp.pitcher ?? "home SP"} ${homeIp.toFixed(1)} IP`);
+  if (awayIp > 0 && awayIp < SOLID_IP_MIN) subFlags.push(`${awaySp.pitcher ?? "away SP"} ${awayIp.toFixed(1)} IP`);
+  const subSampleWarning = subFlags.length > 0;
+  const subSampleDetails = subSampleWarning ? subFlags.join(" · ") : null;
+
+  // Alignment signal (SPEC §8, Ken's locked answer): raw edge magnitude before
+  // shrinkage. Distinct from the trap detector — raw ≥20pp is a confirming
+  // upgrade signal, not a downgrade.
+  const alignmentSignalRaw = model.trapGapPp ?? (pickEdge !== null ? Math.abs(round1(pickEdge)) : null);
+
+  // Phantom-edge detector (SPEC §1, P0). Runs AFTER tier assignment: if any
+  // model note signals a missing-data pricing artifact, force PASS / 0 units.
+  let phantomEdge = false;
+  if (detectPhantomEdge(model.modelNotes)) {
+    phantomEdge = true;
+    verdictTier = "PASS";
+    units = 0;
+    stakeDollars = 0;
+    if (!model.modelNotes.includes(PHANTOM_NOTE)) model.modelNotes.unshift(PHANTOM_NOTE);
+  }
+
+  const qualifies = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE"].includes(verdictTier);
   let verdict: "PLAY" | "PASS" | "LEAN";
-  if (hardPass || tier === "PASS") verdict = "PASS";
-  else if (tier === "LEAN") verdict = "LEAN";
+  if (hardPass || verdictTier === "PASS") verdict = "PASS";
+  else if (verdictTier === "LEAN") verdict = "LEAN";
   else if (qualifies) verdict = "PLAY";
   else verdict = "PASS";
 
-  let units = rawUnits;
-  let stakeDollars = kelly.stakeDollars;
-  if (qualifies && rawUnits < 0.5) {
-    units = 0.5;
-    stakeDollars = round2(0.5 * unit);
-  }
+  // 6-signal TOP PLAY badge (SPEC §8) — computed separately from tier.
+  const ourSp = pickSide === "home" ? homeSp : awaySp;
+  const ourFip = numOrNull(ourSp.fip);
+  const ourIp = pickSide === "home" ? homeIp : awayIp;
+  const eliteOurSp = ourFip !== null && ourFip <= 3.5 && ourIp >= 80;
+  const crossConfirmed =
+    model.shrinkageApplied &&
+    polyPct !== null &&
+    polyPct >= 55 &&
+    pickWp !== null &&
+    pickWp >= 0.5;
+  const topPlay =
+    !phantomEdge &&
+    !hardPass &&
+    confidence >= 80 &&
+    (pickEdge ?? 0) >= 8 &&
+    (alignmentSignalRaw ?? 0) >= 20 &&
+    eliteOurSp &&
+    crossConfirmed &&
+    pickMl !== null &&
+    pickMl >= -110;
 
+  const hardPassOrPhantom = hardPass || phantomEdge;
   const markets = buildMlbMarkets(
     game,
     model,
@@ -416,9 +467,9 @@ export function buildPick(
     pickEdge,
     pickMl,
     pickBook,
-    tier,
+    verdictTier,
     units,
-    hardPass,
+    hardPassOrPhantom,
   );
 
   return {
@@ -449,9 +500,16 @@ export function buildPick(
     confidence,
     units,
     kellyStakeDollars: stakeDollars,
-    kellyCapped: kelly.capped,
+    kellyCapped: false,
+    halfCut,
+    phantomEdge,
+    trimmed: false,
+    subSampleWarning,
+    subSampleDetails,
+    alignmentSignalRaw,
+    topPlay,
     verdict,
-    verdictTier: tier,
+    verdictTier,
     qualifies,
     trapSignal: model.trapSignal,
     trapGapPp: model.trapGapPp,
@@ -536,6 +594,9 @@ function numOrNull(v: unknown): number | null {
   if (v === null || v === undefined) return null;
   const n = Number(v);
   return Number.isNaN(n) ? null : n;
+}
+function round1(x: number): number {
+  return Math.round(x * 10) / 10;
 }
 function round2(x: number): number {
   return Math.round(x * 100) / 100;

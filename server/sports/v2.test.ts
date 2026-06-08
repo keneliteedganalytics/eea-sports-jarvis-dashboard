@@ -9,6 +9,8 @@ import { predictGame as predictNhl } from "./nhl/model";
 import { buildPick as buildNbaPick, type NbaGameInput } from "./nba/picksEngine";
 import { predictGame as predictNba } from "./nba/model";
 import { mlbPropEdge } from "../props/model";
+import { detectPhantomEdge, PHANTOM_NOTE } from "../core/phantom";
+import { computeUnit, convictionUnits, applyJuicePenalty, unitsToStake } from "../core/sizing";
 
 let passed = 0;
 let failed = 0;
@@ -151,6 +153,69 @@ test("prop edge: HR .080/PA × 4.3 PA → over-0.5 model prob ≈ .344", () => {
   assert.ok(Math.abs((e.modelProb as number) - 0.344) < 0.01, `got ${e.modelProb}`);
   assert.equal(e.side, "over");
   assert.notEqual(e.fairOverAmerican, null);
+});
+
+// ── Phantom-edge detector (SPEC §1, P0) ──────────────────────────────
+test("phantom: 'using league RPG' note → detected", () => {
+  assert.equal(detectPhantomEdge(["using league-average RPG prior"]), true);
+});
+
+test("phantom: 'using league ORtg' note → detected (NBA SAS@NYK bug)", () => {
+  assert.equal(detectPhantomEdge(["no team stats — using league ORtg/pace"]), true);
+});
+
+test("phantom: clean notes → not detected", () => {
+  assert.equal(detectPhantomEdge(["FIP 3.21 vs 4.05", "OPS edge to home"]), false);
+});
+
+test("phantom: NBA missing-efficiency pick forces PASS / 0 units", () => {
+  const game: NbaGameInput = {
+    gameId: "p1", gameDate: "2026-06-08", gameTimeEt: "8:00 PM ET", venue: "",
+    homeTeam: "NYK", awayTeam: "SAS", homeTeamFull: "New York Knicks", awayTeamFull: "San Antonio Spurs",
+    mlHome: -150, mlAway: 130, homeFairProb: 0.58, awayFairProb: 0.42,
+    totalLine: 216.5, totalOverPrice: -110, totalUnderPrice: -110,
+  };
+  const model = predictNba({
+    homeTeam: "NYK", awayTeam: "SAS", homeTeamFull: "New York Knicks", awayTeamFull: "San Antonio Spurs",
+    homeStats: {}, awayStats: {}, homeFairProb: 0.58, awayFairProb: 0.42,
+  });
+  const pick = buildNbaPick(game, model);
+  if (detectPhantomEdge(model.modelNotes)) {
+    assert.equal(pick.phantomEdge, true, "phantom flag set");
+    assert.equal(pick.verdictTier, "PASS");
+    assert.equal(pick.units, 0);
+    assert.ok(pick.modelNotes.includes(PHANTOM_NOTE), "phantom note prepended");
+  }
+});
+
+// ── EEA flat-unit sizing (SPEC §4) ───────────────────────────────────
+test("sizing: 1 unit = 1.5% of $35,800 = $537", () => {
+  assert.equal(computeUnit(35800), 537);
+});
+
+test("sizing: conviction units per tier", () => {
+  assert.equal(convictionUnits("BONUS"), 3.0);
+  assert.equal(convictionUnits("SNIPER"), 2.5);
+  assert.equal(convictionUnits("EDGE"), 2.0);
+  assert.equal(convictionUnits("RECON"), 1.5);
+  assert.equal(convictionUnits("VALUE"), 1.0);
+  assert.equal(convictionUnits("PASS"), 0);
+});
+
+test("sizing: line worse than -180 → half-cut", () => {
+  const { units, halfCut } = applyJuicePenalty(2.0, -210);
+  assert.equal(halfCut, true);
+  assert.equal(units, 1.0);
+});
+
+test("sizing: line -150 → no cut", () => {
+  const { units, halfCut } = applyJuicePenalty(2.0, -150);
+  assert.equal(halfCut, false);
+  assert.equal(units, 2.0);
+});
+
+test("sizing: 2 units at $35,800 → $1,074 stake", () => {
+  assert.equal(unitsToStake(2.0, 35800), 1074);
 });
 
 (async () => {

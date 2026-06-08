@@ -1,7 +1,19 @@
-// Stake sizing — ported from sports-engine core/kelly.py + picks_engine Kelly math.
-// Quarter-Kelly with a 3% bankroll hard cap.
+// LEGACY stake sizing — compat shim. The live engine sizes off EEA flat units
+// (see core/sizing.ts); this file is retained only so historical callers and
+// the locked betting-math tests keep resolving. New code must import from
+// core/sizing.ts.
 
 import { americanToDecimal } from "./odds";
+
+export {
+  FLAT_UNIT_PCT,
+  JUICE_HALF_CUT_THRESHOLD,
+  EXPOSURE_CAP_PCT,
+  computeUnit,
+  convictionUnits,
+  applyJuicePenalty,
+  unitsToStake,
+} from "./sizing";
 
 export const KELLY_FRACTION = 0.25; // quarter-Kelly
 export const KELLY_CAP_PCT = 0.03; // 3% bankroll hard cap
