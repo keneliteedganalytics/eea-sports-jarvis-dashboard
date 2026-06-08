@@ -110,6 +110,7 @@ export interface SlatePayload {
 export interface SportSlate {
   picks: BuiltPick[];
   ok: boolean;
+  isDemo?: boolean;
   error?: string | null;
 }
 

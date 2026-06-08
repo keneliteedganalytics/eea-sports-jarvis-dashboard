@@ -112,6 +112,7 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Global demo banner: shown only when ALL sports are running demo data (no live key at all). */}
       {data?.isDemo && (
         <div className="flex items-start gap-2 rounded-xl border border-gold/25 bg-gold/5 p-3 text-xs text-gold-light" data-testid="demo-banner">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />
@@ -120,6 +121,23 @@ export default function Home() {
           </span>
         </div>
       )}
+      {/* Per-sport demo notices: shown when a specific sport is demo but others are live. */}
+      {data && !data.isDemo && (() => {
+        const demoBadges: { sport: string; label: string }[] = [];
+        if (data.sports.mlb?.isDemo) demoBadges.push({ sport: "mlb", label: "MLB" });
+        if (data.sports.nhl?.isDemo) demoBadges.push({ sport: "nhl", label: "NHL" });
+        if (data.sports.nba?.isDemo) demoBadges.push({ sport: "nba", label: "NBA" });
+        if (data.sports.soccer?.isDemo) demoBadges.push({ sport: "soccer", label: "Soccer" });
+        if (demoBadges.length === 0) return null;
+        return (
+          <div className="flex items-start gap-2 rounded-xl border border-gold/25 bg-gold/5 p-3 text-xs text-gold-light" data-testid="demo-banner-partial">
+            <Info className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              {demoBadges.map((b) => b.label).join(" & ")} showing illustrative demo games — live odds key is active for other sports.
+            </span>
+          </div>
+        );
+      })()}
 
       {/* Sport chips + Show toggle */}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-card-border bg-navy-card p-3" data-testid="slate-filters">
