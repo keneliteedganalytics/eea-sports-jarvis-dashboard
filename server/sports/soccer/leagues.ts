@@ -63,6 +63,27 @@ export const SOCCER_LEAGUES: LeagueInfo[] = [
     oddsKey: "soccer_brazil_campeonato",
     season: 2026,
   },
+  {
+    id: 72,
+    name: "Brazil Série B",
+    displayName: "Série B",
+    oddsKey: "soccer_brazil_serie_b",
+    season: 2026,
+  },
+  {
+    id: 265,
+    name: "Primera División",
+    displayName: "Chile Primera",
+    oddsKey: "soccer_chile_campeonato",
+    season: 2026,
+  },
+  {
+    id: 169,
+    name: "Super League",
+    displayName: "China Super League",
+    oddsKey: "soccer_china_superleague",
+    season: 2026,
+  },
 ];
 
 // All Odds API sport keys we pull soccer odds for (in priority order).

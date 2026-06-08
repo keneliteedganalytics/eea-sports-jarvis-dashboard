@@ -67,18 +67,69 @@ interface RawPrediction {
   }>;
 }
 
+// In-process caches — valid for the lifetime of the Node.js process.
+// Soccer team stats and name→ID mappings don't change mid-season.
+const _statsCache = new Map<string, TeamGoalStats>();    // teamId:leagueId:season → stats
+const _teamIdCache = new Map<string, number | null>();   // "name:leagueId" → teamId
+
 // Resolve a team ID by searching the football API.
+// Cached by (teamName, leagueId) to avoid repeated lookups.
 async function resolveTeamId(teamName: string, leagueId: number): Promise<number | null> {
-  const res = await getJson<RawTeamSearch>(
-    `${BASE}/teams`,
-    { search: teamName, league: leagueId },
-    key(),
-  );
-  const first = res.ok ? res.data?.response?.[0]?.team : undefined;
-  return first?.id ?? null;
+  const nameCacheKey = `${teamName}:${leagueId}`;
+  const cached = _teamIdCache.get(nameCacheKey);
+  if (cached !== undefined) return cached;
+  try {
+    const res = await getJson<RawTeamSearch>(
+      `${BASE}/teams`,
+      { search: teamName, league: leagueId },
+      key(),
+    );
+    const first = res.ok ? res.data?.response?.[0]?.team : undefined;
+    const id = first?.id ?? null;
+    _teamIdCache.set(nameCacheKey, id);
+    return id;
+  } catch {
+    _teamIdCache.set(nameCacheKey, null);
+    return null;
+  }
 }
 
-// Fetch team statistics for a given team + league + season.
+// Fetch team statistics by known team ID + league + season (no resolve step).
+export async function fetchTeamStatsByTeamId(
+  teamId: number,
+  leagueId: number,
+  season: number,
+): Promise<TeamGoalStats> {
+  if (!hasApiSportsKey()) return { available: false };
+  const cacheKey = `${teamId}:${leagueId}:${season}`;
+  const cached = _statsCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  try {
+    const res = await getJson<RawTeamStats>(
+      `${BASE}/teams/statistics`,
+      { team: teamId, league: leagueId, season },
+      key(),
+    );
+    const g = res.ok ? res.data?.response?.goals : undefined;
+    const gpg = g ? num(g.for?.average?.total) : null;
+    const gapg = g ? num(g.against?.average?.total) : null;
+    const form = res.data?.response?.form ?? null;
+    const result: TeamGoalStats =
+      gpg !== null || gapg !== null
+        ? { available: true, gpg, gapg, form: form ? form.slice(-5) : null }
+        : { available: false };
+    _statsCache.set(cacheKey, result);
+    return result;
+  } catch {
+    const result: TeamGoalStats = { available: false };
+    _statsCache.set(cacheKey, result);
+    return result;
+  }
+}
+
+// Fetch team statistics for a given team name + league + season.
+// Uses two API calls: name→ID resolve, then stats fetch.
+// Cached by team ID + league + season after first resolve.
 export async function fetchFootballTeamStats(
   teamName: string,
   leagueId: number,
@@ -88,20 +139,7 @@ export async function fetchFootballTeamStats(
   try {
     const teamId = await resolveTeamId(teamName, leagueId);
     if (!teamId) return { available: false };
-
-    const res = await getJson<RawTeamStats>(
-      `${BASE}/teams/statistics`,
-      { team: teamId, league: leagueId, season },
-      key(),
-    );
-    const g = res.ok ? res.data?.response?.goals : undefined;
-    if (!g) return { available: false };
-
-    const gpg = num(g.for?.average?.total);
-    const gapg = num(g.against?.average?.total);
-    const form = res.data?.response?.form ?? null;
-    if (gpg === null && gapg === null) return { available: false };
-    return { available: true, gpg, gapg, form: form ? form.slice(-5) : null };
+    return fetchTeamStatsByTeamId(teamId, leagueId, season);
   } catch {
     return { available: false };
   }

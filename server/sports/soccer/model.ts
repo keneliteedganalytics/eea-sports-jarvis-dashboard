@@ -106,10 +106,19 @@ export function predictGame(ctx: SoccerModelContext): SoccerModelResult {
   const awayMktProb = ctx.awayFairProb ?? null;
   const drawMktProb = ctx.drawFairProb ?? null;
 
-  // Hard pass: both teams missing goal data
+  // Both teams missing goal data
   const bothMissingForm = (!hStats.available || hGpg === null) && (!aStats.available || aGpg === null);
   if (bothMissingForm) {
-    notes.push("missing team form — league-fallback goals used");
+    // Only add the phantom-triggering note when market probs are ALSO absent.
+    // When market fair probs are available, the blended model is legitimate
+    // (market becomes the dominant prior), so we log an informational note
+    // that does NOT trigger phantom-edge detection.
+    const hasMkt = ctx.homeFairProb !== null && ctx.awayFairProb !== null && ctx.drawFairProb !== null;
+    if (hasMkt) {
+      notes.push("⚠️ no team stats — using league-average Poisson priors blended with market");
+    } else {
+      notes.push("missing team form — league-fallback goals used");
+    }
     // Not crashing — fall through with league averages
   }
 
@@ -232,10 +241,15 @@ export function predictGame(ctx: SoccerModelContext): SoccerModelResult {
   }
   if (bothMissingForm) {
     dataQualityTier = "LEAGUE_AVG";
-    notes.push("⚠️ league-fallback goals — no team form data");
+    // Note already added above; avoid duplicating
   }
 
-  const hardPassReason = bothMissingForm ? "missing_team_form" : null;
+  // Only hard-pass when both team stats AND market probs are unavailable.
+  // When market fair probs are present (from 3-way devig), the model can still
+  // produce meaningful edge estimates even without team goal data — the market
+  // itself becomes the prior and we compare vs our Poisson distribution.
+  const hasMarketData = homeMktProb !== null && awayMktProb !== null && drawMktProb !== null;
+  const hardPassReason = (bothMissingForm && !hasMarketData) ? "missing_team_form" : null;
 
   return {
     canModel: true,
