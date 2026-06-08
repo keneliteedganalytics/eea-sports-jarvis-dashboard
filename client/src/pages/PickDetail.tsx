@@ -51,15 +51,20 @@ export default function PickDetail() {
 
             <div className="mt-4 flex items-baseline gap-3">
               <span className="text-4xl font-bold tabular-nums text-gold" data-testid="detail-units">
-                {fmtUnits(data.units)}
+                {data.phantomEdge ? "—" : fmtUnits(data.units)}
               </span>
               <div className="text-sm text-foreground/80">
                 <div className="font-medium">
                   {data.pickTeam} ML {fmtLine(data.pickMl)} {data.pickBook ? `· ${data.pickBook}` : ""}
                 </div>
                 <div className="text-xs text-muted-foreground tabular-nums">
-                  {data.kellyStakeDollars > 0 ? `${fmtMoney(data.kellyStakeDollars)} stake` : "no stake"}
-                  {data.kellyCapped && " · quarter-Kelly cap"}
+                  {data.phantomEdge
+                    ? "data gap · no play"
+                    : data.kellyStakeDollars > 0
+                      ? `${fmtMoney(data.kellyStakeDollars)} stake`
+                      : "no stake"}
+                  {!data.phantomEdge && data.halfCut && " · half (juice)"}
+                  {!data.phantomEdge && data.trimmed && " · trimmed (cap)"}
                 </div>
               </div>
             </div>

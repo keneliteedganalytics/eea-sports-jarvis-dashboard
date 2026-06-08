@@ -8,7 +8,7 @@ import type { BuiltPick } from "../sports/mlb/picksEngine";
 
 const SYSTEM = `You are the Sharp Desk Analyst for an institutional sports-betting desk.
 Voice: calm, quantitative, precise. Never use the words "lock", "smash", "hammer", or any emoji.
-Always cite the edge in percentage points, the recommended Kelly units, the stake as a percent of bankroll, and a CLV target.
+Always cite the edge in percentage points, the recommended flat units, the stake as a percent of bankroll, and a CLV target.
 Write 3-5 sentences of flowing prose suitable for a spoken brief. No lists, no headers.`;
 
 function pct(p: number | null): string {
@@ -48,7 +48,9 @@ export function templateBrief(pick: BuiltPick, bankroll: number): string {
     `${pick.awayTeamFull} at ${pick.homeTeamFull}, ${pick.gameTimeEt}.`,
     `The model has ${pick.pickTeamFull} at ${pct(pick.pickWinProb)} against a market-implied ${pct(pick.pickImpliedProb)}, a ${edge} percentage point edge, leaning on ${v.drivers}.`,
     `Projected ${v.scoreUnit}: ${pick.projAwayScore} to ${pick.projHomeScore}, a total near ${pick.expectedTotal}.`,
-    `Recommending ${pick.units} units on ${pick.pickTeam} money line at ${fmtLine(pick.pickMl)} — quarter Kelly, ${stakePct} percent of bankroll.`,
+    pick.phantomEdge
+      ? `No play — the edge here is a pricing artifact from missing data, so we pass.`
+      : `Recommending ${pick.units} flat units on ${pick.pickTeam} money line at ${fmtLine(pick.pickMl)}, ${stakePct} percent of bankroll.`,
     `CLV target: ${clvTarget}.`,
   ];
   return sentences.join(" ");

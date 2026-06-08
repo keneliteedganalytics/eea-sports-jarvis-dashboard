@@ -30,8 +30,19 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
       data-testid={`pick-card-${pick.gameId}`}
     >
       {/* 1. Tier pill */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center gap-1.5">
         <TierPill tier={pick.verdictTier} />
+        {pick.topPlay && (
+          <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: "#0A1628", backgroundColor: "#F4D77A" }} data-testid="top-play-badge">
+            Top Play
+          </span>
+        )}
+        <span className="flex-1" />
+        {pick.phantomEdge && (
+          <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: "#0A1628", backgroundColor: "#F4D77A" }} data-testid="data-gap-badge">
+            Data Gap
+          </span>
+        )}
         {pick.trapSignal && (
           <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: "#FF8A47", backgroundColor: "#FF8A4715" }}>
             Trap
@@ -42,11 +53,16 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
       {/* 2. Units chip (large, gold) */}
       <div className="flex items-baseline gap-2">
         <span className="text-3xl font-bold tabular-nums text-gold" data-testid={`units-${pick.gameId}`}>
-          {fmtUnits(pick.units)}
+          {pick.phantomEdge ? "—" : fmtUnits(pick.units)}
         </span>
         <span className="text-xs text-muted-foreground tabular-nums">
-          {pick.kellyStakeDollars > 0 ? `${fmtMoney(pick.kellyStakeDollars)} stake` : "no stake"}
-          {pick.kellyCapped && " · capped"}
+          {pick.phantomEdge
+            ? "data gap · no play"
+            : pick.kellyStakeDollars > 0
+              ? `${fmtMoney(pick.kellyStakeDollars)} stake`
+              : "no stake"}
+          {!pick.phantomEdge && pick.halfCut && " · half (juice)"}
+          {!pick.phantomEdge && pick.trimmed && " · trimmed (cap)"}
         </span>
       </div>
 

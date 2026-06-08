@@ -4,7 +4,7 @@
 
 import { devigShin, probToAmerican } from "./odds";
 import { assignTier } from "./tier";
-import { unitSize, computeKellyStake, unitsFromStake, KELLY_FRACTION, KELLY_CAP_PCT } from "./kelly";
+import { convictionUnits, applyJuicePenalty } from "./sizing";
 import { emptyMarket, type Market, type Verdict } from "./types";
 
 export interface TwoWayPrices {
@@ -59,13 +59,11 @@ export function buildTwoWayMarket(
           winProb: modelProb,
         });
 
+  // EEA flat-unit sizing (SPEC §4): conviction units per tier, juice half-cut.
   const qualifies = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE"].includes(tier);
   let units = 0;
   if (qualifies && modelProb !== null) {
-    const unit = unitSize(bankroll);
-    const kelly = computeKellyStake(modelProb, sidePrice, bankroll, KELLY_FRACTION, KELLY_CAP_PCT);
-    units = unitsFromStake(kelly.stakeDollars, unit);
-    if (units < 0.5) units = 0.5;
+    units = applyJuicePenalty(convictionUnits(tier), sidePrice).units;
   }
 
   return {

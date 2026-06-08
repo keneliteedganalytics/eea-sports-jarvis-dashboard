@@ -44,16 +44,19 @@ key and degrades gracefully when it is absent.
 | `OPENWEATHER_API_KEY` | Park weather refinement |
 | `ANTHROPIC_API_KEY` | LLM-written analyst briefs (else template) |
 | `ELEVENLABS_API_KEY` | Voice briefs (else text-only) |
-| `BANKROLL_USD` | Stake sizing base (default 29000) |
+| `BANKROLL_USD` | Stake sizing base (default 35800) |
 
 ## Engine
 
 The model ports the locked `sports-engine` math: Shin de-vig, american↔prob↔decimal
 conversions, Pythagenpat run expectancy, FIP, park factors, a bullpen dampener, a
-stale-line trap detector, and an elite-pitcher fade. Stakes use quarter-Kelly with a
-3% bankroll hard cap, surfaced as conviction units. Picks are graded into a tier
-ladder (BONUS → SNIPER → EDGE → RECON → VALUE → LEAN → PASS) with a 7-component
-confidence score and a 6-pick daily cap (surplus downgraded to LEAN).
+stale-line trap detector, and an elite-pitcher fade. Stakes use EEA flat-unit
+sizing — one unit is 1.5% of bankroll, each conviction tier maps to an exact unit
+count, lines worse than -180 are half-staked, and a slate-wide 18% exposure cap
+trims the board. A phantom-edge detector forces PASS when a fat edge is a pricing
+artifact from missing data. Picks are graded into a tier ladder (BONUS → SNIPER →
+EDGE → RECON → VALUE → LEAN → PASS) with a 7-component confidence score and a
+6-pick daily cap (surplus downgraded to LEAN).
 
 ## Routes
 
