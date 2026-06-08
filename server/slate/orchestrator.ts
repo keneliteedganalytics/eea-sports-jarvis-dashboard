@@ -6,6 +6,7 @@ import { getSlate, getPick } from "../sports/mlb/slate";
 import { getNhlSlate, getNhlPick } from "../sports/nhl/slate";
 import { getNbaSlate, getNbaPick } from "../sports/nba/slate";
 import { BANKROLL_USD, type BuiltPick } from "../sports/mlb/picksEngine";
+import { applyExposureCap } from "../core/sizing";
 
 export interface SportSlate {
   picks: BuiltPick[];
@@ -32,6 +33,24 @@ function settledToSport(
   return { picks: [], ok: false, error: r.reason instanceof Error ? r.reason.message : String(r.reason) };
 }
 
+// Mutate actionable picks in place so the combined board honors the 18% cap.
+function applySlateExposureCap(slates: SportSlate[], bankroll: number): void {
+  const actionable = slates
+    .flatMap((s) => s.picks)
+    .filter((p) => p.qualifies && p.kellyStakeDollars > 0);
+  if (actionable.length === 0) return;
+
+  const capped = applyExposureCap(
+    actionable.map((p) => ({ units: p.units, stakeDollars: p.kellyStakeDollars })),
+    bankroll,
+  );
+  actionable.forEach((p, i) => {
+    p.units = capped[i].units;
+    p.kellyStakeDollars = capped[i].stakeDollars;
+    if (capped[i].trimmed) p.trimmed = true;
+  });
+}
+
 export async function getDailySlate(bankroll = BANKROLL_USD): Promise<DailySlate> {
   const [mlbR, nhlR, nbaR] = await Promise.allSettled([
     getSlate(bankroll),
@@ -42,6 +61,10 @@ export async function getDailySlate(bankroll = BANKROLL_USD): Promise<DailySlate
   const mlb = settledToSport(mlbR);
   const nhl = settledToSport(nhlR);
   const nba = settledToSport(nbaR);
+
+  // 18% slate-wide exposure cap (SPEC §4): scale every actionable stake by one
+  // common factor when the combined board exceeds 18% of bankroll.
+  applySlateExposureCap([mlb, nhl, nba], bankroll);
 
   // Operating day / demo flag taken from whichever sport resolved (prefer MLB).
   const resolved = [mlbR, nhlR, nbaR].find((r) => r.status === "fulfilled") as

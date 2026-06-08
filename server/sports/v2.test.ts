@@ -10,7 +10,7 @@ import { buildPick as buildNbaPick, type NbaGameInput } from "./nba/picksEngine"
 import { predictGame as predictNba } from "./nba/model";
 import { mlbPropEdge } from "../props/model";
 import { detectPhantomEdge, PHANTOM_NOTE } from "../core/phantom";
-import { computeUnit, convictionUnits, applyJuicePenalty, unitsToStake } from "../core/sizing";
+import { computeUnit, convictionUnits, applyJuicePenalty, unitsToStake, applyExposureCap } from "../core/sizing";
 
 let passed = 0;
 let failed = 0;
@@ -216,6 +216,22 @@ test("sizing: line -150 → no cut", () => {
 
 test("sizing: 2 units at $35,800 → $1,074 stake", () => {
   assert.equal(unitsToStake(2.0, 35800), 1074);
+});
+
+// ── 18% slate-wide exposure cap (SPEC §4) ────────────────────────────
+test("exposure: under-cap board is untouched", () => {
+  const out = applyExposureCap([{ units: 2, stakeDollars: 1074 }, { units: 1, stakeDollars: 537 }], 35800);
+  assert.equal(out.every((x) => !x.trimmed), true);
+  assert.equal(out[0].stakeDollars, 1074);
+});
+
+test("exposure: over-cap board scales down to 18% and flags trimmed", () => {
+  // Cap = 0.18 × 35,800 = $6,444. Eight 3-unit BONUS plays = 8 × $1,611 = $12,888.
+  const stakes = Array.from({ length: 8 }, () => ({ units: 3, stakeDollars: 1611 }));
+  const out = applyExposureCap(stakes, 35800);
+  const total = out.reduce((s, x) => s + x.stakeDollars, 0);
+  assert.ok(total <= 35800 * 0.18 + 8, `total ${total} within cap (rounding slack)`);
+  assert.equal(out.every((x) => x.trimmed), true);
 });
 
 (async () => {

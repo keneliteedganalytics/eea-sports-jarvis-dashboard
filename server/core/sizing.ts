@@ -56,3 +56,33 @@ export function applyJuicePenalty(units: number, americanOdds: number | null): J
 export function unitsToStake(units: number, bankroll: number): number {
   return Math.round(units * computeUnit(bankroll));
 }
+
+export interface ExposureStake {
+  units: number;
+  stakeDollars: number;
+  trimmed: boolean;
+}
+
+// 18% slate-wide exposure cap (SPEC §4). If total staked dollars across the
+// whole board exceed 18% of bankroll, scale every actionable stake down by a
+// single common factor and flag the trimmed plays. Stakes are returned in the
+// same order they were passed in.
+export function applyExposureCap(
+  stakes: { units: number; stakeDollars: number }[],
+  bankroll: number,
+): ExposureStake[] {
+  const cap = bankroll * EXPOSURE_CAP_PCT;
+  const total = stakes.reduce((s, x) => s + x.stakeDollars, 0);
+  if (total <= cap || total === 0) {
+    return stakes.map((x) => ({ ...x, trimmed: false }));
+  }
+  const factor = cap / total;
+  return stakes.map((x) => {
+    if (x.stakeDollars <= 0) return { ...x, trimmed: false };
+    return {
+      units: Math.round(x.units * factor * 100) / 100,
+      stakeDollars: Math.round(x.stakeDollars * factor),
+      trimmed: true,
+    };
+  });
+}
