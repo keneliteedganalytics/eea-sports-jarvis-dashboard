@@ -51,11 +51,11 @@ function applySlateExposureCap(slates: SportSlate[], bankroll: number): void {
   });
 }
 
-export async function getDailySlate(bankroll = BANKROLL_USD): Promise<DailySlate> {
+export async function getDailySlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<DailySlate> {
   const [mlbR, nhlR, nbaR] = await Promise.allSettled([
-    getSlate(bankroll),
-    getNhlSlate(bankroll),
-    getNbaSlate(bankroll),
+    getSlate(bankroll, dateIso),
+    getNhlSlate(bankroll, dateIso),
+    getNbaSlate(bankroll, dateIso),
   ]);
 
   const mlb = settledToSport(mlbR);

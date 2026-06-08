@@ -6,7 +6,7 @@ import { predictGame } from "./model";
 import { buildPick, applyDailyCap, BANKROLL_USD, type BuiltPick, type GameInput } from "./picksEngine";
 import { buildSlate } from "./data";
 import { hasOddsKey } from "../../adapters/oddsApi";
-import { getOperatingDay } from "./operatingDay";
+import { getOperatingDay, operatingDayAnchor } from "./operatingDay";
 import { DEMO_GAMES } from "./demoSlate";
 
 function runEngine(games: GameInput[], bankroll = BANKROLL_USD): BuiltPick[] {
@@ -36,23 +36,25 @@ export interface SlatePayload {
   picks: BuiltPick[];
 }
 
-export async function getSlate(bankroll = BANKROLL_USD): Promise<SlatePayload> {
+export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<SlatePayload> {
+  const now = dateIso ? operatingDayAnchor(dateIso) : new Date();
   if (hasOddsKey()) {
-    const { operatingDay, games } = await buildSlate();
+    const { operatingDay, games } = await buildSlate(now);
     if (games.length > 0) {
       return { operatingDay, isDemo: false, bankroll, picks: runEngine(games, bankroll) };
     }
   }
   // Fallback: deterministic demo slate.
+  const opDay = getOperatingDay(now);
   return {
-    operatingDay: getOperatingDay(),
+    operatingDay: opDay,
     isDemo: true,
     bankroll,
-    picks: runEngine(DEMO_GAMES(getOperatingDay()), bankroll),
+    picks: runEngine(DEMO_GAMES(opDay), bankroll),
   };
 }
 
-export async function getPick(id: string, bankroll = BANKROLL_USD): Promise<BuiltPick | null> {
-  const slate = await getSlate(bankroll);
+export async function getPick(id: string, bankroll = BANKROLL_USD, dateIso?: string): Promise<BuiltPick | null> {
+  const slate = await getSlate(bankroll, dateIso);
   return slate.picks.find((p) => p.gameId === id) ?? null;
 }

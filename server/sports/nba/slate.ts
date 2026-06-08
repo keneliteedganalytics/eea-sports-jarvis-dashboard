@@ -5,6 +5,7 @@ import { predictGame } from "./model";
 import { buildPick, applyDailyCap, BANKROLL_USD, type NbaGameInput } from "./picksEngine";
 import { buildNbaSlate } from "./data";
 import { hasOddsKey } from "../../adapters/oddsApi";
+import { operatingDayAnchor } from "../mlb/operatingDay";
 import { DEMO_NBA_GAMES } from "./demoSlate";
 import type { BuiltPick } from "../mlb/picksEngine";
 
@@ -41,22 +42,24 @@ export interface NbaSlatePayload {
   picks: BuiltPick[];
 }
 
-export async function getNbaSlate(bankroll = BANKROLL_USD): Promise<NbaSlatePayload> {
+export async function getNbaSlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<NbaSlatePayload> {
+  const now = dateIso ? operatingDayAnchor(dateIso) : new Date();
   if (hasOddsKey()) {
-    const { operatingDay, games } = await buildNbaSlate();
+    const { operatingDay, games } = await buildNbaSlate(now);
     if (games.length > 0) {
       return { operatingDay, isDemo: false, bankroll, picks: runEngine(games, bankroll) };
     }
   }
+  const opDay = operatingDay(now);
   return {
-    operatingDay: operatingDay(),
+    operatingDay: opDay,
     isDemo: true,
     bankroll,
-    picks: runEngine(DEMO_NBA_GAMES(operatingDay()), bankroll),
+    picks: runEngine(DEMO_NBA_GAMES(opDay), bankroll),
   };
 }
 
-export async function getNbaPick(id: string, bankroll = BANKROLL_USD): Promise<BuiltPick | null> {
-  const slate = await getNbaSlate(bankroll);
+export async function getNbaPick(id: string, bankroll = BANKROLL_USD, dateIso?: string): Promise<BuiltPick | null> {
+  const slate = await getNbaSlate(bankroll, dateIso);
   return slate.picks.find((p) => p.gameId === id) ?? null;
 }

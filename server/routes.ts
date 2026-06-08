@@ -16,10 +16,18 @@ import { startScratchPoller } from "./pollers/scratchPoller";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 
 const STUB_SPORTS = ["ncaaf", "ncaab", "nfl"];
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function bankroll(): number {
   const n = Number(process.env.BANKROLL_USD);
   return Number.isFinite(n) && n > 0 ? n : BANKROLL_USD;
+}
+
+// Validate the ?date= query param. Returns a YYYY-MM-DD string or undefined.
+function parseDateParam(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !DATE_RE.test(raw)) return undefined;
+  const t = Date.parse(`${raw}T12:00:00Z`);
+  return Number.isNaN(t) ? undefined : raw;
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
@@ -28,10 +36,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   startOddsPoller();
   startScratchPoller();
 
-  // Unified cross-sport board (MLB + NHL + NBA). ?date= is accepted for forward
-  // compat; the slate services key off the current operating day today.
-  app.get("/api/slate", async (_req: Request, res: Response) => {
-    const slate = await getDailySlate(bankroll());
+  // Unified cross-sport board (MLB + NHL + NBA). ?date=YYYY-MM-DD overrides the
+  // operating day so historical/forward slates can be inspected.
+  app.get("/api/slate", async (req: Request, res: Response) => {
+    const dateIso = parseDateParam(req.query.date);
+    const slate = await getDailySlate(bankroll(), dateIso);
     res.json(slate);
   });
 

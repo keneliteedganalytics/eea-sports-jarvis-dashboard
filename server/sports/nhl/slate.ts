@@ -5,6 +5,7 @@ import { predictGame } from "./model";
 import { buildPick, applyDailyCap, BANKROLL_USD, type NhlGameInput } from "./picksEngine";
 import { buildNhlSlate } from "./data";
 import { hasOddsKey } from "../../adapters/oddsApi";
+import { operatingDayAnchor } from "../mlb/operatingDay";
 import { DEMO_NHL_GAMES } from "./demoSlate";
 import type { BuiltPick } from "../mlb/picksEngine";
 
@@ -43,22 +44,24 @@ export interface NhlSlatePayload {
   picks: BuiltPick[];
 }
 
-export async function getNhlSlate(bankroll = BANKROLL_USD): Promise<NhlSlatePayload> {
+export async function getNhlSlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<NhlSlatePayload> {
+  const now = dateIso ? operatingDayAnchor(dateIso) : new Date();
   if (hasOddsKey()) {
-    const { operatingDay, games } = await buildNhlSlate();
+    const { operatingDay, games } = await buildNhlSlate(now);
     if (games.length > 0) {
       return { operatingDay, isDemo: false, bankroll, picks: runEngine(games, bankroll) };
     }
   }
+  const opDay = operatingDay(now);
   return {
-    operatingDay: operatingDay(),
+    operatingDay: opDay,
     isDemo: true,
     bankroll,
-    picks: runEngine(DEMO_NHL_GAMES(operatingDay()), bankroll),
+    picks: runEngine(DEMO_NHL_GAMES(opDay), bankroll),
   };
 }
 
-export async function getNhlPick(id: string, bankroll = BANKROLL_USD): Promise<BuiltPick | null> {
-  const slate = await getNhlSlate(bankroll);
+export async function getNhlPick(id: string, bankroll = BANKROLL_USD, dateIso?: string): Promise<BuiltPick | null> {
+  const slate = await getNhlSlate(bankroll, dateIso);
   return slate.picks.find((p) => p.gameId === id) ?? null;
 }

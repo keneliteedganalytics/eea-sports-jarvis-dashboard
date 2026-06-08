@@ -26,6 +26,13 @@ function etParts(date: Date): { year: number; month: number; day: number; hour: 
   return { year: get("year"), month: get("month"), day: get("day"), hour, minute: get("minute") };
 }
 
+// Anchor a YYYY-MM-DD operating day to a concrete Date that resolves back to
+// that same operating day. Noon UTC maps to 07:00–08:00 ET — past the 6 AM
+// boundary, same calendar date — so getOperatingDay(anchor) === dateIso.
+export function operatingDayAnchor(dateIso: string): Date {
+  return new Date(`${dateIso}T12:00:00Z`);
+}
+
 // Returns the operating day as a YYYY-MM-DD string (ET). Before 6 AM ET the
 // operating day is still "yesterday".
 export function getOperatingDay(now: Date = new Date()): string {
