@@ -95,6 +95,25 @@ export const hitRateCache = sqliteTable("hit_rate_cache", {
   refreshedAt: text("refreshed_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+// ── props ────────────────────────────────────────────────────────
+export const props = sqliteTable("props", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  gameId: text("game_id").notNull(),
+  sport: text("sport").notNull(),
+  playerName: text("player_name").notNull(),
+  market: text("market").notNull(),
+  line: real("line").notNull(),
+  overPrice: integer("over_price"),
+  underPrice: integer("under_price"),
+  book: text("book").notNull(),
+  modelProb: real("model_prob"),
+  edgePp: real("edge_pp"),
+  tier: text("tier"),
+  side: text("side"),
+  uncalibrated: integer("uncalibrated", { mode: "boolean" }).notNull().default(true),
+  ts: text("ts").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 // ── insert schemas ───────────────────────────────────────────────
 export const insertGameSchema = createInsertSchema(games);
 export const insertOddsSnapshotSchema = createInsertSchema(oddsSnapshots).omit({ id: true });

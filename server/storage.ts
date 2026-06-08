@@ -96,6 +96,23 @@ export function initSchema(): void {
       mp3_path TEXT NOT NULL,
       ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS props (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      game_id TEXT NOT NULL,
+      sport TEXT NOT NULL,
+      player_name TEXT NOT NULL,
+      market TEXT NOT NULL,
+      line REAL NOT NULL,
+      over_price INTEGER,
+      under_price INTEGER,
+      book TEXT NOT NULL,
+      model_prob REAL,
+      edge_pp REAL,
+      tier TEXT,
+      side TEXT,
+      uncalibrated INTEGER NOT NULL DEFAULT 1,
+      ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS hit_rate_cache (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       sport TEXT NOT NULL,
