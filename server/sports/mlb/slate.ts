@@ -8,9 +8,21 @@ import { buildSlate } from "./data";
 import { hasOddsKey } from "../../adapters/oddsApi";
 import { getOperatingDay, operatingDayAnchor } from "./operatingDay";
 import { DEMO_GAMES } from "./demoSlate";
+import { umpireAdjustmentForGame, NEUTRAL_UMPIRE, type UmpireAdjustment } from "./umpires";
 
-function runEngine(games: GameInput[], bankroll = BANKROLL_USD): BuiltPick[] {
-  const picks = games.map((g) => {
+async function runEngine(games: GameInput[], bankroll = BANKROLL_USD): Promise<BuiltPick[]> {
+  // Best-effort umpire lookups in parallel; any failure degrades to neutral so
+  // the slate is never blocked.
+  const umpires = await Promise.all(
+    games.map(async (g): Promise<UmpireAdjustment> => {
+      try {
+        return await umpireAdjustmentForGame(g.gamePk);
+      } catch {
+        return NEUTRAL_UMPIRE;
+      }
+    }),
+  );
+  const picks = games.map((g, i) => {
     const model = predictGame({
       homeTeam: g.homeTeam,
       awayTeam: g.awayTeam,
@@ -23,6 +35,7 @@ function runEngine(games: GameInput[], bankroll = BANKROLL_USD): BuiltPick[] {
       venueTriCode: g.homeTeam,
       homeFairProb: g.homeFairProb,
       awayFairProb: g.awayFairProb,
+      umpireAdjustment: umpires[i],
     });
     return buildPick(g, model, bankroll);
   });
@@ -41,7 +54,7 @@ export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promi
   if (hasOddsKey()) {
     const { operatingDay, games } = await buildSlate(now);
     if (games.length > 0) {
-      return { operatingDay, isDemo: false, bankroll, picks: runEngine(games, bankroll) };
+      return { operatingDay, isDemo: false, bankroll, picks: await runEngine(games, bankroll) };
     }
     // Odds key is present but no games found (e.g. future date / off-day).
     // Return a live (non-demo) empty slate rather than falling through to demo.
@@ -53,7 +66,7 @@ export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promi
     operatingDay: opDay,
     isDemo: true,
     bankroll,
-    picks: runEngine(DEMO_GAMES(opDay), bankroll),
+    picks: await runEngine(DEMO_GAMES(opDay), bankroll),
   };
 }
 

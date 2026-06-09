@@ -99,6 +99,7 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
 
     games.push({
       gameId: ev.eventId,
+      gamePk: sched?.gamePk ?? null,
       gameDate: opDay,
       gameTimeEt: utcIsoToEtClock(ev.startIso),
       venue: sched?.venue ?? "",

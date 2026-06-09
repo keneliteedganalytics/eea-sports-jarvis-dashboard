@@ -18,6 +18,7 @@ export const BANKROLL_USD = 25000;
 
 export interface GameInput {
   gameId: string;
+  gamePk?: string | null; // MLB Stats API gamePk (for umpire/lineup lookups)
   gameDate: string;
   gameTimeEt: string;
   venue: string;
@@ -134,6 +135,8 @@ export interface BuiltPick {
   polymarket: PolymarketData;
   publicPct: number | null;  // avg implied prob across soft/public books (0-100)
   sharpPct: number | null;   // implied prob from sharp books (0-100)
+  umpireName?: string | null;   // assigned HP umpire (MLB), null when unknown
+  umpireRunAdj?: number;        // per-game run adjustment from umpire profile
   modelNotes: string[];
   // Graded-book status, attached when a slate is served (undefined until the
   // pick is persisted; "pending" once in the book). Drives the colored cards.
@@ -584,6 +587,8 @@ export function buildPick(
     polymarket: orientedPoly ?? { found: false, pct: null },
     publicPct: resolvedPublicPct,
     sharpPct: resolvedSharpPct,
+    umpireName: model.umpireName,
+    umpireRunAdj: model.umpireRunAdj,
     modelNotes: model.modelNotes,
   };
 }

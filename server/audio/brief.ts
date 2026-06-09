@@ -151,6 +151,19 @@ function clvPhrase(fairMl: number | null): string {
   return `Fair value sits at ${spellMoneyLine(fairMl)}, so anything inside that beats the close.`;
 }
 
+// Spoken umpire note for MLB picks when the assigned plate umpire moves run
+// scoring meaningfully (|adj| > 0.15 runs/game). Returns "" otherwise.
+function umpirePhrase(pick: BuiltPick): string {
+  if (pick.sport !== "mlb") return "";
+  const adj = pick.umpireRunAdj ?? 0;
+  const name = pick.umpireName ?? null;
+  if (!name || Math.abs(adj) <= 0.15) return "";
+  const surname = name.trim().split(/\s+/).slice(-1)[0] || name;
+  const tenths = Math.round(Math.abs(adj) * 10) / 10;
+  const dir = adj > 0 ? "a hitter-friendly zone, pushing scoring up" : "a tight zone that suppresses scoring";
+  return `${surname} is behind the plate with ${dir} by about ${spellNumber(tenths)} runs a game.`;
+}
+
 // Build the deterministic spoken brief from pick fields. This is the canonical
 // script: fully humanized, no digits, no acronyms, no double commas. The Claude
 // path falls back to this when no key is set.
@@ -185,6 +198,9 @@ export function buildBriefScript(pick: BuiltPick, bankroll: number, now: Date = 
       : `So we're on ${pickShort} on the money line at ${spellMoneyLine(pick.pickMl)}, ${spellUnits(pick.units)}, about ${stakePct} of the roll.`,
     clvPhrase(pick.fairMl),
   ];
+
+  const ump = umpirePhrase(pick);
+  if (ump) sentences.splice(3, 0, ump);
 
   // Spell any stat acronyms the team names or drivers may still carry, then
   // collapse any incidental double commas/spaces into a single clean pause.
@@ -226,6 +242,7 @@ export async function generateBrief(
     `Tier: ${pick.verdictTier}, confidence ${spellNumber(pick.confidence)} out of ninety-nine`,
     `Fair value / closing line: ${spellMoneyLine(pick.fairMl)}`,
     `Projected ${v.scoreUnit}: away ${spellNumber(away)}, home ${spellNumber(home)}, total ${spellNumber(Math.round((away + home) * 10) / 10)}`,
+    ...(umpirePhrase(pick) ? [`Umpire note (work in naturally): ${umpirePhrase(pick)}`] : []),
   ].join("\n");
 
   const text = await generate(SYSTEM, `Write the spoken brief for this pick:\n${facts}`);

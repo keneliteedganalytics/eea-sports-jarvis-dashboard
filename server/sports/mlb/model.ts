@@ -11,6 +11,7 @@ import {
 import { bullpenRunAdjustment, type BullpenStats } from "./bullpen";
 import { isElitePitcher, dataQualityTier, type PitcherStats } from "./pitchers";
 import { pythagenpatWinPct, LG_AVG_RPG, type TeamOffense } from "./ratings";
+import { umpireShortName, type UmpireAdjustment } from "./umpires";
 
 // ── Tunable constants (SPEC §4) ───────────────────────────────────
 export const MLB_LG_ERA = 4.2;
@@ -43,6 +44,7 @@ export interface ModelContext {
   weatherRefined?: WeatherRefined | null;
   weatherRaw?: { windRunAdj?: number | null } | null;
   starterIpShare?: number;
+  umpireAdjustment?: UmpireAdjustment | null; // HP umpire run/zone profile
 }
 
 export interface ModelResult {
@@ -71,6 +73,8 @@ export interface ModelResult {
   bullpenAdjHome: number;
   bullpenAdjAway: number;
   parkFactor: number;
+  umpireName: string | null;
+  umpireRunAdj: number;
   method: string;
   modelNotes: string[];
 }
@@ -180,6 +184,19 @@ export function predictGame(ctx: ModelContext): ModelResult {
   let awayExp = awayRpg * (spShare * homeSpA + bpShare * homeBpFactor) * parkF;
   awayExp += totalWeatherAdj / 2.0;
 
+  // Step F2: home-plate umpire — split the per-game run adjustment across both
+  // teams. Neutral/missing profiles carry runScoreAdj 0 and are a no-op.
+  const ump = ctx.umpireAdjustment ?? null;
+  const umpRunAdj = ump?.found ? ump.runScoreAdj : 0;
+  if (ump?.name) {
+    homeExp += umpRunAdj / 2.0;
+    awayExp += umpRunAdj / 2.0;
+    if (Math.abs(umpRunAdj) > 0.001) {
+      const signed = `${umpRunAdj >= 0 ? "+" : ""}${round2(umpRunAdj)}`;
+      methodLog.push(`ump(${umpireShortName(ump.name)}, ${signed}r)`);
+    }
+  }
+
   homeExp = Math.max(2.0, homeExp);
   awayExp = Math.max(2.0, awayExp);
   const predictedTotal = round2(homeExp + awayExp);
@@ -272,6 +289,8 @@ export function predictGame(ctx: ModelContext): ModelResult {
     bullpenAdjHome: round2(homeBpAdj),
     bullpenAdjAway: round2(awayBpAdj),
     parkFactor: round2(parkF),
+    umpireName: ump?.name ?? null,
+    umpireRunAdj: round2(umpRunAdj),
     method: methodLog.join(" | "),
     modelNotes: warnings,
   };
