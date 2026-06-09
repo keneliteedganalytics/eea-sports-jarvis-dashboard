@@ -24,6 +24,11 @@ import {
   type LineupResult,
   type LineupStatus,
 } from "./lineups";
+import {
+  recentFormConfidenceDelta,
+  NEUTRAL_FORM,
+  type RecentForm,
+} from "./recentForm";
 
 export const ELITE_FADE_PP = 12.0;
 export const MAX_PICKS_PER_DAY = 6;
@@ -73,6 +78,9 @@ export interface GameInput {
   // Per-side lineup status, resolved in the slate after the pick side is known.
   _lineupHome?: LineupResult | null;
   _lineupAway?: LineupResult | null;
+  // Per-side recent-form splits (last-7 / last-14), resolved in the slate.
+  _recentFormHome?: RecentForm | null;
+  _recentFormAway?: RecentForm | null;
 }
 
 export interface PolymarketData {
@@ -482,13 +490,19 @@ export function buildPick(
   const lineup: LineupResult =
     (pickSide === "home" ? game._lineupHome : game._lineupAway) ?? PENDING_LINEUP;
 
+  // Recent-form split for the backed side: hot last-7 bats nudge confidence up,
+  // cold bats down. NEUTRAL/missing form is a no-op.
+  const recentForm: RecentForm =
+    (pickSide === "home" ? game._recentFormHome : game._recentFormAway) ?? NEUTRAL_FORM;
+
   const confidence = Math.max(
     0,
     Math.min(
       99,
       baseConfidence +
         sharpConfidenceDelta(movement.sharpSignal) +
-        lineupConfidenceDelta(lineup.status),
+        lineupConfidenceDelta(lineup.status) +
+        recentFormConfidenceDelta(recentForm),
     ),
   );
 

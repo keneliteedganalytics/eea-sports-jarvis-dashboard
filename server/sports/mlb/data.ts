@@ -9,6 +9,7 @@ import { computePublicSharp, type RawBookmaker } from "../../core/consensus";
 import { fetchPolymarketForGame, type PolymarketResult } from "../../adapters/polymarket";
 import { getOperatingDay, inOperatingWindow, utcIsoToEtClock } from "./operatingDay";
 import { captureSnapshot } from "../../adapters/lineMovement";
+import { recentFormForTeam, NEUTRAL_FORM } from "./recentForm";
 import { classifyPitcher } from "./pitchers";
 import type { GameInput, PolymarketData } from "./picksEngine";
 import type { PitcherStats } from "./pitchers";
@@ -75,7 +76,7 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       continue;
     }
 
-    const [h, a, homeOff, awayOff, polyResult] = await Promise.all([
+    const [h, a, homeOff, awayOff, polyResult, homeForm, awayForm] = await Promise.all([
       fetchPitcherStats(sched.homePitcherId, sched.homePitcher),
       fetchPitcherStats(sched.awayPitcherId, sched.awayPitcher),
       fetchTeamOffense(sched.homeTeamId, sched.homeTeamFull).catch(() => ({ available: false }) as TeamOffense),
@@ -83,6 +84,9 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       // Polymarket lookup — failure is non-fatal, returns found:false
       fetchPolymarketForGame(ev.homeTeamFull, ev.awayTeamFull, opDay, "home")
         .catch((): PolymarketResult => ({ found: false, pct: null, reason: "lookup error" })),
+      // Recent-form splits (last-7 / last-14) — best-effort, NEUTRAL on failure
+      recentFormForTeam(sched.homeTeamId).catch(() => NEUTRAL_FORM),
+      recentFormForTeam(sched.awayTeamId).catch(() => NEUTRAL_FORM),
     ]);
     const homeSp: PitcherStats = withClassification(h);
     const awaySp: PitcherStats = withClassification(a);
@@ -135,6 +139,8 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       _sharpPct: sharpPct,
       _polymarketData: polyData,
       _oddsEvent: ev,
+      _recentFormHome: homeForm,
+      _recentFormAway: awayForm,
     });
   }
 
