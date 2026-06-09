@@ -9,6 +9,7 @@ import { WhyPanel } from "./WhyPanel";
 import { SpreadRow } from "./SpreadRow";
 import { TotalRow } from "./TotalRow";
 import { PropsPanel } from "./PropsPanel";
+import { BetPlacedButton } from "./BetPlacedButton";
 import { fmtGameDate, fmtGameTime, fmtLine, fmtMoney, fmtPct, fmtUnits, lineMovement, TIER_LABEL } from "@/lib/format";
 import { gradeVisual } from "@/lib/grade";
 import type { BuiltPick } from "@/lib/types";
@@ -161,6 +162,12 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
             {!pick.phantomEdge && pick.trimmed && " · trimmed (cap)"}
           </span>
         </div>
+
+        {/* Bet lock-in — actionable, non-final picks only. Greys out / locks once
+            confirmed so the tier/stake/odds can't be silently re-tiered. */}
+        {!pick.phantomEdge && pick.units > 0 && pick.verdictTier !== "PASS" && pick.gradeStatus !== "final" && (
+          <BetPlacedButton pick={pick} />
+        )}
 
         {/* Matchup + date/time + Pick */}
         <div>

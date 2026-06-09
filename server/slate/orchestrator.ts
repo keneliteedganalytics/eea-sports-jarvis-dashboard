@@ -118,6 +118,19 @@ function attachGradedStatus(slates: SportSlate[], day: string): void {
       p.liveStatusDetail = row.liveStatusDetail;
       p.finalAwayScore = row.finalAwayScore;
       p.finalHomeScore = row.finalHomeScore;
+      if (row.locked) {
+        p.locked = true;
+        p.lockedAt = row.lockedAt;
+        // row is already lock-overlaid by picksForDate, so tier/stake/odds carry
+        // the frozen values — mirror them onto the board pick so the card and
+        // analytics show the LOCKED tier, not a recompute.
+        p.lockedTier = row.lockedTier;
+        p.lockedStake = row.lockedStake;
+        p.lockedOdds = row.lockedOdds;
+        p.verdictTier = row.tier as typeof p.verdictTier;
+        p.kellyStakeDollars = row.stakeDollars;
+        p.pickMl = row.pickMl;
+      }
     }
   }
 }

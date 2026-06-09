@@ -53,6 +53,15 @@ export interface GradedPick {
   gradedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  // Bet lock-in. Once the user confirms they placed a bet (Bet Placed button),
+  // the pick is frozen: tier/stake/odds and pick-identifying fields can no
+  // longer be re-tiered by a downstream slate recompute. The locked* columns
+  // snapshot the values at confirmation time and are what analytics must show.
+  locked: 0 | 1;
+  lockedAt: string | null;
+  lockedTier: string | null;
+  lockedStake: number | null;
+  lockedOdds: number | null;
 }
 
 function dbPath(): string {
@@ -106,14 +115,39 @@ export function gradedDb(): Database.Database {
       clvPct REAL,
       gradedAt TEXT,
       createdAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
+      updatedAt TEXT NOT NULL,
+      locked INTEGER NOT NULL DEFAULT 0,
+      lockedAt TEXT,
+      lockedTier TEXT,
+      lockedStake REAL,
+      lockedOdds INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_picks_gameDate ON picks(gameDate);
     CREATE INDEX IF NOT EXISTS idx_picks_status ON picks(status);
     CREATE INDEX IF NOT EXISTS idx_picks_sport ON picks(sport);
   `);
+  // Migrate pre-lock databases in place (CREATE TABLE IF NOT EXISTS skips the new
+  // columns on an existing table). Mirror of migrations/0001_pick_lock.sql.
+  ensureColumns(sqlite, "picks", {
+    locked: "INTEGER NOT NULL DEFAULT 0",
+    lockedAt: "TEXT",
+    lockedTier: "TEXT",
+    lockedStake: "REAL",
+    lockedOdds: "INTEGER",
+  });
   _db = sqlite;
   return _db;
+}
+
+// Add any missing columns to an existing table (SQLite has no IF NOT EXISTS for
+// ADD COLUMN). Idempotent and safe to run on every boot.
+function ensureColumns(db: Database.Database, table: string, cols: Record<string, string>): void {
+  const present = new Set(
+    (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  for (const [name, ddl] of Object.entries(cols)) {
+    if (!present.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${ddl}`);
+  }
 }
 
 // Composite id keeps one row per (game, market, side) so re-running the slate
@@ -158,10 +192,13 @@ export function upsertPick(input: UpsertPickInput): boolean {
   const id = pickId(input.gameId, input.pickType, input.pickSide);
   const now = new Date().toISOString();
 
-  const existing = db.prepare("SELECT status FROM picks WHERE id = ?").get(id) as
-    | { status: PickStatus }
+  const existing = db.prepare("SELECT status, locked FROM picks WHERE id = ?").get(id) as
+    | { status: PickStatus; locked: 0 | 1 }
     | undefined;
   if (existing && existing.status !== "pending") return false;
+  // A locked (bet-placed) pick is immutable for tier/stake/odds — never let a
+  // slate recompute clobber it, even while it's still pending pre-game.
+  if (existing && existing.locked) return false;
 
   if (existing) {
     db.prepare(
@@ -195,8 +232,59 @@ export function upsertPick(input: UpsertPickInput): boolean {
   return true;
 }
 
+// When a pick is locked, its frozen tier/stake/odds are authoritative — analytics
+// and the board must show the LOCKED values, never a later recompute. Overlay
+// them onto the canonical fields at read time so every consumer is consistent.
+function applyLock(row: GradedPick | undefined): GradedPick | undefined {
+  if (!row || !row.locked) return row;
+  return {
+    ...row,
+    tier: row.lockedTier ?? row.tier,
+    stakeDollars: row.lockedStake ?? row.stakeDollars,
+    pickMl: row.lockedOdds ?? row.pickMl,
+  };
+}
+
 export function getPick(id: string): GradedPick | undefined {
+  return applyLock(gradedDb().prepare("SELECT * FROM picks WHERE id = ?").get(id) as GradedPick | undefined);
+}
+
+// Raw row without the locked-value overlay — for callers that need the actual
+// stored tier/stake (e.g. confirmBet snapshotting). Internal.
+function getRawPick(id: string): GradedPick | undefined {
   return gradedDb().prepare("SELECT * FROM picks WHERE id = ?").get(id) as GradedPick | undefined;
+}
+
+// Lock guard for the tier-recompute pipeline. Any code path that would re-tier,
+// re-stake, or re-price a pick must call this first and bail when it returns the
+// pick unchanged. A locked pick reflects a bet the user has actually placed, so
+// its tier/stake/odds are sacred. Pure (no I/O) so it's trivially testable.
+export function pickLockGuard<T extends { locked?: 0 | 1 | boolean }>(pick: T): { locked: boolean; pick: T } {
+  return { locked: Boolean(pick.locked), pick };
+}
+
+// Snapshot the current tier/stake/odds into the locked* columns and freeze the
+// row. Idempotent: a second call returns the already-frozen row without
+// re-snapshotting (the first confirmation is authoritative).
+export function confirmBet(id: string): GradedPick | undefined {
+  const db = gradedDb();
+  const row = getRawPick(id);
+  if (!row) return undefined;
+  if (row.locked) return applyLock(row);
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE picks SET locked=1, lockedAt=@lockedAt,
+       lockedTier=@lockedTier, lockedStake=@lockedStake, lockedOdds=@lockedOdds,
+       updatedAt=@updatedAt WHERE id=@id`,
+  ).run({
+    id,
+    lockedAt: now,
+    lockedTier: row.tier,
+    lockedStake: row.stakeDollars,
+    lockedOdds: row.pickMl,
+    updatedAt: now,
+  });
+  return getPick(id);
 }
 
 // Open picks for a date that still need a live/score update (not yet final and
@@ -208,7 +296,8 @@ export function openPicksForDate(date: string): GradedPick[] {
 }
 
 export function picksForDate(date: string): GradedPick[] {
-  return gradedDb().prepare("SELECT * FROM picks WHERE gameDate = ? ORDER BY gameTimeEt").all(date) as GradedPick[];
+  const rows = gradedDb().prepare("SELECT * FROM picks WHERE gameDate = ? ORDER BY gameTimeEt").all(date) as GradedPick[];
+  return rows.map((r) => applyLock(r)!);
 }
 
 // Update the live in-progress fields (score + status detail) without grading.
@@ -251,11 +340,13 @@ export function settlePick(
 export function gradedPicks(sport?: string): GradedPick[] {
   const db = gradedDb();
   if (sport && sport.toUpperCase() !== "ALL") {
-    return db
+    const rows = db
       .prepare("SELECT * FROM picks WHERE status='final' AND sport=? ORDER BY gameDate DESC, gameTimeEt DESC")
       .all(sport.toLowerCase()) as GradedPick[];
+    return rows.map((r) => applyLock(r)!);
   }
-  return db
+  const rows = db
     .prepare("SELECT * FROM picks WHERE status='final' ORDER BY gameDate DESC, gameTimeEt DESC")
     .all() as GradedPick[];
+  return rows.map((r) => applyLock(r)!);
 }

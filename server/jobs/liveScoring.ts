@@ -92,7 +92,8 @@ export async function pollEspnAndUpdate(date: string): Promise<PollSummary> {
     let games: EspnGame[] = [];
     try {
       games = sport === "soccer" ? await fetchSoccerScoreboard(date) : await fetchSportScoreboard(sport, date);
-    } catch {
+    } catch (e) {
+      console.error(`[liveScoring] ${sport} fetch threw for ${date}:`, e instanceof Error ? e.message : e);
       games = [];
     }
     if (games.length === 0) continue;
@@ -133,4 +134,6 @@ export function startLiveScoring(): void {
   if (timer) return;
   void pollNow();
   timer = setInterval(() => void pollNow(), POLL_INTERVAL_MS);
+  // Don't keep the event loop alive solely for the poller.
+  timer.unref?.();
 }

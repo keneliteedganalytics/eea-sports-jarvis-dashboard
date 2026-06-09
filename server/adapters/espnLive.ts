@@ -24,9 +24,14 @@ export interface EspnGame {
   away: EspnCompetitor;
 }
 
+// ESPN historically returned competitor.score as a numeric string ("3"). On some
+// scoreboards (and intermittently for live games) it ships as an object
+// { value, displayValue } instead. Accept both shapes so live scores keep
+// rendering through ESPN's field rotations.
+type RawScore = string | number | { value?: number; displayValue?: string } | null | undefined;
 interface RawCompetitor {
   homeAway?: "home" | "away";
-  score?: string;
+  score?: RawScore;
   team?: { abbreviation?: string; displayName?: string };
 }
 interface RawStatusType {
@@ -86,6 +91,14 @@ function stateFromType(type: RawStatusType | undefined): { state: EventState; co
   return { state, completed, detail };
 }
 
+// Coerce ESPN's score field (string | number | { value } ) to a number, or null
+// when absent/unparseable. NaN never leaks out.
+function parseScore(raw: RawScore): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const n = typeof raw === "object" ? raw.value ?? Number(raw.displayValue) : Number(raw);
+  return Number.isFinite(n) ? (n as number) : null;
+}
+
 export function parseEspnEvent(ev: RawEvent): EspnGame | null {
   const comp = ev.competitions?.[0];
   if (!comp) return null;
@@ -98,7 +111,7 @@ export function parseEspnEvent(ev: RawEvent): EspnGame | null {
     side,
     abbreviation: (c.team?.abbreviation ?? "").toUpperCase(),
     displayName: c.team?.displayName ?? "",
-    score: c.score !== undefined && c.score !== "" ? Number(c.score) : null,
+    score: parseScore(c.score),
   });
 
   return {
@@ -128,7 +141,17 @@ export async function fetchSportScoreboard(sport: string, dateStr: string): Prom
   if (!sportPath) return [];
   const ymd = dateStr.replace(/-/g, "");
   const res = await getJson<RawScoreboard>(scoreboardUrl(sportPath), { dates: ymd });
-  return res.ok ? parseScoreboard(res.data) : [];
+  if (!res.ok) {
+    // Surface the failure instead of silently returning [] — a stale live widget
+    // used to be indistinguishable from "no games".
+    console.error(`[espn] ${sport} scoreboard fetch failed (${ymd}): status=${res.status} ${res.error ?? ""}`.trim());
+    return [];
+  }
+  const games = parseScoreboard(res.data);
+  if (res.data?.events && res.data.events.length > 0 && games.length === 0) {
+    console.error(`[espn] ${sport} scoreboard returned ${res.data.events.length} events but 0 parsed (${ymd}) — shape change?`);
+  }
+  return games;
 }
 
 // Fetch soccer across the configured league codes (or a single given league),
@@ -140,7 +163,10 @@ export async function fetchSoccerScoreboard(dateStr: string, leagues: string[] =
   const out: EspnGame[] = [];
   for (const code of leagues) {
     const res = await getJson<RawScoreboard>(scoreboardUrl(`soccer/${code}`), { dates: ymd });
-    if (!res.ok) continue;
+    if (!res.ok) {
+      console.error(`[espn] soccer/${code} scoreboard fetch failed (${ymd}): status=${res.status} ${res.error ?? ""}`.trim());
+      continue;
+    }
     for (const g of parseScoreboard(res.data)) {
       if (seen.has(g.eventId)) continue;
       seen.add(g.eventId);
