@@ -8,6 +8,12 @@ data.db-shm
 data.db-wal
 data.db-journal
 
+# Graded book (real settled picks) — runtime state, never committed
+data/
+graded_book.db
+graded_book.db-shm
+graded_book.db-wal
+
 .env
 .env.*
 !.env.example

@@ -4,6 +4,7 @@ import { SignalBars } from "./SignalBars";
 import { SpreadRow } from "./SpreadRow";
 import { TotalRow } from "./TotalRow";
 import { fmtGameDate, fmtGameTime, fmtLine } from "@/lib/format";
+import { gradeVisual } from "@/lib/grade";
 import type { BuiltPick } from "@/lib/types";
 
 const SPREAD_LABEL: Record<string, string> = { mlb: "RL", nhl: "PL", nba: "SPR", soccer: "AH" };
@@ -56,13 +57,31 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
   const prismPct = pick.polymarket.found ? pick.polymarket.pct ?? null : null;
   const prismReason = !pick.polymarket.found ? (pick.polymarket.reason ?? "No Polymarket market available") : null;
 
+  const grade = gradeVisual(pick);
+
   return (
     <article
-      className={`flex flex-col gap-2 rounded-xl border border-card-border bg-navy-card p-3 ${
-        hardPass ? "opacity-55" : ""
-      }`}
+      className={`flex flex-col gap-2 rounded-xl border bg-navy-card p-3 ${grade ? "" : "border-card-border"} ${
+        hardPass && !grade ? "opacity-55" : ""
+      } ${grade?.pulse ? "animate-pulse" : ""}`}
+      style={grade ? { borderColor: grade.borderColor, borderWidth: 2 } : undefined}
       data-testid={`compact-card-${pick.gameId}`}
     >
+      {grade && (
+        <div
+          className="rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+          style={{ color: "#0A1628", backgroundColor: grade.badgeColor }}
+          data-testid={`grade-badge-${pick.gameId}`}
+        >
+          {grade.badgeText}
+        </div>
+      )}
+      {grade?.scoreLine && (
+        <div className="text-[11px] font-medium text-foreground/90" data-testid={`grade-score-${pick.gameId}`}>
+          {grade.scoreLine}
+        </div>
+      )}
+
       {/* Header: tier pill + sport label */}
       <div className="flex items-center justify-between gap-2">
         <TierPill tier={pick.verdictTier} />

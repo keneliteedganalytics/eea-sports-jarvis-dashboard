@@ -1,9 +1,10 @@
-// Analytics aggregation layer. Reuses the hit-rate cache + bet log that power
-// the Track Record page and rolls them into the views the /analytics dashboard
-// renders: headline KPIs, win-rate by tier, ROI by sport, a CLV trend line, a
-// running drawdown curve, and a tier×window hit-rate heatmap. All figures are
-// derived from the same seeded store, so Analytics and Track Record never
-// disagree. Filters (sport / tier / since-date) are applied to the bet log.
+// Analytics aggregation layer. Reuses the graded bet log + hit-rate views that
+// power the Track Record page and rolls them into the views the /analytics
+// dashboard renders: headline KPIs, win-rate by tier, ROI by sport, a CLV trend
+// line, a running drawdown curve, and a tier×window hit-rate heatmap. All figures
+// are derived from the same graded book, so Analytics and Track Record never
+// disagree. An empty book yields empty charts + zero KPIs — no fabricated data.
+// Filters (sport / tier / since-date) are applied to the bet log.
 
 import { hitRatesByTier, trackRecord, type BetLogEntry } from "./sports/mlb/trackRecord";
 

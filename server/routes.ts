@@ -7,13 +7,14 @@ import { getNhlSlate } from "./sports/nhl/slate";
 import { getNbaSlate } from "./sports/nba/slate";
 import { getDailySlate, getAnyPick } from "./slate/orchestrator";
 import { getProps } from "./props";
-import { hitRatesByTier, trackRecord, seedHitRates } from "./sports/mlb/trackRecord";
+import { hitRatesByTier, trackRecord } from "./sports/mlb/trackRecord";
 import { buildAnalytics } from "./analytics";
 import { generateBrief } from "./audio/brief";
 import { generateSpeech, getCachedFilePath, hasElevenLabsKey } from "./audio/tts";
 import { getAlerts } from "./pollers/alerts";
 import { startOddsPoller } from "./pollers/oddsPoller";
 import { startScratchPoller } from "./pollers/scratchPoller";
+import { startLiveScoring, pollEspnAndUpdate } from "./jobs/liveScoring";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 
 const STUB_SPORTS = ["ncaaf", "ncaab", "nfl"];
@@ -33,9 +34,9 @@ function parseDateParam(raw: unknown): string | undefined {
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   initSchema();
-  seedHitRates("MLB");
   startOddsPoller();
   startScratchPoller();
+  startLiveScoring();
 
   // Unified cross-sport board (MLB + NHL + NBA). ?date=YYYY-MM-DD overrides the
   // operating day so historical/forward slates can be inspected.
@@ -78,9 +79,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(hitRatesByTier("MLB"));
   });
 
-  // Track Record summary + bet log.
+  // Track Record summary + graded bet log. Per-sport and all-sports variants;
+  // an empty graded book returns zero KPIs + an empty log (UI shows the empty
+  // state). No seed data anywhere — every row is a real, settled pick.
+  app.get("/api/track-record", (_req: Request, res: Response) => {
+    res.json(trackRecord("ALL"));
+  });
   app.get("/api/mlb/track-record", (_req: Request, res: Response) => {
     res.json(trackRecord("MLB"));
+  });
+  app.get("/api/nhl/track-record", (_req: Request, res: Response) => {
+    res.json(trackRecord("NHL"));
+  });
+  app.get("/api/nba/track-record", (_req: Request, res: Response) => {
+    res.json(trackRecord("NBA"));
+  });
+  app.get("/api/soccer/track-record", (_req: Request, res: Response) => {
+    res.json(trackRecord("SOCCER"));
+  });
+
+  // Admin: run one live-scoring pass for a date (?date=YYYY-MM-DD, default
+  // today's operating day). Fetches the public ESPN scoreboard, updates live
+  // scores, and grades any games that have gone final.
+  app.post("/api/admin/poll-now", async (req: Request, res: Response) => {
+    const date = parseDateParam(req.query.date) ?? new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    const summary = await pollEspnAndUpdate(date);
+    res.json(summary);
   });
 
   // Analytics dashboard aggregation. Optional ?sport= ?tier= ?since= filters.

@@ -135,6 +135,17 @@ export interface BuiltPick {
   publicPct: number | null;  // avg implied prob across soft/public books (0-100)
   sharpPct: number | null;   // implied prob from sharp books (0-100)
   modelNotes: string[];
+  // Graded-book status, attached when a slate is served (undefined until the
+  // pick is persisted; "pending" once in the book). Drives the colored cards.
+  gradeStatus?: "pending" | "in_progress" | "final";
+  gradeResult?: "W" | "L" | "P" | null;
+  gradePl?: number | null;
+  clvPct?: number | null;
+  liveAwayScore?: number | null;
+  liveHomeScore?: number | null;
+  liveStatusDetail?: string | null;
+  finalAwayScore?: number | null;
+  finalHomeScore?: number | null;
 }
 
 // 7-component confidence with elite-fade & sparse penalties (MLB variant).

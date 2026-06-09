@@ -9,6 +9,7 @@ import { SpreadRow } from "./SpreadRow";
 import { TotalRow } from "./TotalRow";
 import { PropsPanel } from "./PropsPanel";
 import { fmtGameDate, fmtGameTime, fmtLine, fmtMoney, fmtPct, fmtUnits, lineMovement } from "@/lib/format";
+import { gradeVisual } from "@/lib/grade";
 import type { BuiltPick } from "@/lib/types";
 
 const STEAM_CENTS = 10;
@@ -67,11 +68,30 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
   // Projected score line — shown on every sport when both scores available
   const showProjScore = pick.projAwayScore != null && pick.projHomeScore != null;
 
+  const grade = gradeVisual(pick);
+
   return (
     <article
-      className="flex flex-col gap-3 rounded-xl border border-card-border bg-navy-card p-4 hover-elevate"
+      className={`flex flex-col gap-3 rounded-xl border bg-navy-card p-4 hover-elevate ${grade?.pulse ? "animate-pulse" : ""} ${grade ? "" : "border-card-border"}`}
+      style={grade ? { borderColor: grade.borderColor, borderWidth: 2 } : undefined}
       data-testid={`pick-card-${pick.gameId}`}
     >
+      {/* Graded status badge (W/L/P/live) */}
+      {grade && (
+        <div
+          className="rounded px-2 py-1 text-[11px] font-bold uppercase tracking-wider"
+          style={{ color: "#0A1628", backgroundColor: grade.badgeColor }}
+          data-testid={`grade-badge-${pick.gameId}`}
+        >
+          {grade.badgeText}
+        </div>
+      )}
+      {grade?.scoreLine && (
+        <div className="text-xs font-medium text-foreground/90" data-testid={`grade-score-${pick.gameId}`}>
+          {grade.scoreLine}
+        </div>
+      )}
+
       {/* 1. Tier pill */}
       <div className="flex items-center gap-1.5">
         <TierPill tier={pick.verdictTier} />

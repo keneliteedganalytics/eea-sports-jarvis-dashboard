@@ -8,6 +8,8 @@ import { getNbaSlate, getNbaPick } from "../sports/nba/slate";
 import { getSoccerSlate, getSoccerPick } from "../sports/soccer/slate";
 import { BANKROLL_USD, type BuiltPick } from "../sports/mlb/picksEngine";
 import { applyExposureCap } from "../core/sizing";
+import { persistPicks } from "../jobs/persistPicks";
+import { picksForDate, pickId, type GradedPick } from "../gradedBook";
 
 export interface SportSlate {
   picks: BuiltPick[];
@@ -71,6 +73,11 @@ export async function getDailySlate(bankroll = BANKROLL_USD, dateIso?: string): 
   // common factor when the combined board exceeds 18% of bankroll.
   applySlateExposureCap([mlb, nhl, nba, soccer], bankroll);
 
+  // Persist actionable picks into the graded book (post-cap sizing) so the
+  // live-scoring job can settle them later. Pending rows are refreshed; graded
+  // rows are never overwritten.
+  persistPicks([mlb, nhl, nba, soccer].flatMap((s) => s.picks));
+
   // Operating day taken from whichever sport resolved (prefer MLB).
   // Top-level isDemo is true only if every sport is in demo mode (all keys absent).
   const resolved = [mlbR, nhlR, nbaR, soccerR].find((r) => r.status === "fulfilled") as
@@ -79,13 +86,40 @@ export async function getDailySlate(bankroll = BANKROLL_USD, dateIso?: string): 
 
   const allDemo = [mlb, nhl, nba, soccer].every((s) => s.isDemo ?? false);
 
+  const day = resolved?.value.operatingDay ?? operatingDay();
+  attachGradedStatus([mlb, nhl, nba, soccer], day);
+
   return {
-    operatingDay: resolved?.value.operatingDay ?? operatingDay(),
+    operatingDay: day,
     isDemo: allDemo,
     bankroll,
     generatedAt: Date.now(),
     sports: { mlb, nhl, nba, soccer },
   };
+}
+
+// Decorate the day's picks with their graded-book status (W/L/P, live + final
+// scores) so the cards can color-code. Picks not in the book stay unannotated.
+function attachGradedStatus(slates: SportSlate[], day: string): void {
+  const rows = picksForDate(day);
+  if (rows.length === 0) return;
+  const byId = new Map<string, GradedPick>();
+  for (const r of rows) byId.set(r.id, r);
+  for (const s of slates) {
+    for (const p of s.picks) {
+      const row = byId.get(pickId(p.gameId, p.pickType, p.pickSide));
+      if (!row) continue;
+      p.gradeStatus = row.status;
+      p.gradeResult = row.result;
+      p.gradePl = row.pl;
+      p.clvPct = row.clvPct;
+      p.liveAwayScore = row.liveAwayScore;
+      p.liveHomeScore = row.liveHomeScore;
+      p.liveStatusDetail = row.liveStatusDetail;
+      p.finalAwayScore = row.finalAwayScore;
+      p.finalHomeScore = row.finalHomeScore;
+    }
+  }
 }
 
 // Look up a single pick across all four sports (for /pick/:id detail + briefs).

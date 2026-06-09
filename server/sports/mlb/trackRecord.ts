@@ -1,78 +1,15 @@
-// Track Record + hit-rate cache. Seeds illustrative 30/60/90-day tier hit
-// rates and a bet log so the /#/track-record route and per-card hit-rate
-// footer render shell data on first boot. Real settlement would populate
-// outcomes via the ESPN scoreboard adapter.
+// Track Record + hit-rate views, computed entirely from the graded book — the
+// desk's real, settled picks. There is no seed/sample data: an empty book yields
+// empty arrays and zero KPIs, and the UI shows "No graded picks yet". Hit rates
+// by tier are aggregated over rolling 30/60/90-day windows of graded picks.
 
-import { storage } from "../../storage";
+import { gradedPicks, type GradedPick } from "../../gradedBook";
 
 export const HIT_RATE_WINDOWS = [30, 60, 90];
-
-interface SeedRow {
-  tier: string;
-  byWindow: Record<number, { wins: number; losses: number; pushes: number; unitsWon: number }>;
-}
-
-// Illustrative seed data — descending hit rate by window, by tier strength.
-const SEED: SeedRow[] = [
-  { tier: "BONUS", byWindow: { 30: { wins: 9, losses: 4, pushes: 0, unitsWon: 6.8 }, 60: { wins: 17, losses: 9, pushes: 1, unitsWon: 11.2 }, 90: { wins: 24, losses: 15, pushes: 1, unitsWon: 13.5 } } },
-  { tier: "SNIPER", byWindow: { 30: { wins: 12, losses: 7, pushes: 0, unitsWon: 5.1 }, 60: { wins: 22, losses: 15, pushes: 1, unitsWon: 7.4 }, 90: { wins: 31, losses: 24, pushes: 1, unitsWon: 8.9 } } },
-  { tier: "EDGE", byWindow: { 30: { wins: 15, losses: 11, pushes: 1, unitsWon: 3.2 }, 60: { wins: 28, losses: 22, pushes: 1, unitsWon: 4.6 }, 90: { wins: 40, losses: 34, pushes: 2, unitsWon: 5.5 } } },
-  { tier: "RECON", byWindow: { 30: { wins: 10, losses: 9, pushes: 0, unitsWon: 1.1 }, 60: { wins: 19, losses: 18, pushes: 1, unitsWon: 1.8 }, 90: { wins: 27, losses: 27, pushes: 1, unitsWon: 1.4 } } },
-  { tier: "VALUE", byWindow: { 30: { wins: 8, losses: 8, pushes: 0, unitsWon: 0.4 }, 60: { wins: 15, losses: 16, pushes: 0, unitsWon: -0.3 }, 90: { wins: 22, losses: 23, pushes: 1, unitsWon: 0.2 } } },
-];
-
-export function seedHitRates(sport = "MLB"): void {
-  const existing = storage.hitRates(sport);
-  if (existing.length > 0) return;
-  for (const row of SEED) {
-    for (const w of HIT_RATE_WINDOWS) {
-      const cell = row.byWindow[w];
-      storage.upsertHitRate({
-        sport,
-        tier: row.tier,
-        windowDays: w,
-        wins: cell.wins,
-        losses: cell.losses,
-        pushes: cell.pushes,
-        unitsWon: cell.unitsWon,
-      });
-    }
-  }
-}
 
 export interface TierHitRate {
   tier: string;
   windows: { windowDays: number; pct: number; wins: number; losses: number; pushes: number; unitsWon: number }[];
-}
-
-export function hitRatesByTier(sport = "MLB"): TierHitRate[] {
-  const rows = storage.hitRates(sport);
-  const byTier = new Map<string, TierHitRate>();
-  for (const r of rows) {
-    if (!byTier.has(r.tier)) byTier.set(r.tier, { tier: r.tier, windows: [] });
-    const decided = r.wins + r.losses;
-    const pct = decided > 0 ? Math.round((r.wins / decided) * 100) : 0;
-    byTier.get(r.tier)!.windows.push({
-      windowDays: r.windowDays,
-      pct,
-      wins: r.wins,
-      losses: r.losses,
-      pushes: r.pushes,
-      unitsWon: r.unitsWon,
-    });
-  }
-  for (const t of byTier.values()) t.windows.sort((a, b) => a.windowDays - b.windowDays);
-  return [...byTier.values()];
-}
-
-export interface TrackRecordSummary {
-  clvPct: number;
-  evRealizedUnits: number;
-  roiPct: number;
-  maxDrawdownUnits: number;
-  totalBets: number;
-  record: { wins: number; losses: number; pushes: number };
-  betLog: BetLogEntry[];
 }
 
 export interface BetLogEntry {
@@ -86,38 +23,116 @@ export interface BetLogEntry {
   unitsWon: number;
 }
 
-// Aggregate the 90-day window into headline track-record stats + a shell log.
+export interface TrackRecordSummary {
+  clvPct: number;
+  evRealizedUnits: number;
+  roiPct: number;
+  maxDrawdownUnits: number;
+  totalBets: number;
+  record: { wins: number; losses: number; pushes: number };
+  betLog: BetLogEntry[];
+}
+
+function daysAgoIso(days: number, now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(now.getTime() - days * 86_400_000));
+}
+
+// Hit rate by tier across the 30/60/90-day windows, from graded picks only.
+export function hitRatesByTier(sport = "MLB", now: Date = new Date()): TierHitRate[] {
+  const rows = gradedPicks(sport);
+  const byTier = new Map<string, TierHitRate>();
+  for (const w of HIT_RATE_WINDOWS) {
+    const cutoff = daysAgoIso(w, now);
+    for (const r of rows) {
+      if (r.gameDate < cutoff) continue;
+      if (!byTier.has(r.tier)) byTier.set(r.tier, { tier: r.tier, windows: [] });
+      const t = byTier.get(r.tier)!;
+      let cell = t.windows.find((x) => x.windowDays === w);
+      if (!cell) {
+        cell = { windowDays: w, pct: 0, wins: 0, losses: 0, pushes: 0, unitsWon: 0 };
+        t.windows.push(cell);
+      }
+      if (r.result === "W") cell.wins++;
+      else if (r.result === "L") cell.losses++;
+      else if (r.result === "P") cell.pushes++;
+      cell.unitsWon = Math.round((cell.unitsWon + (r.pl ?? 0)) * 100) / 100;
+    }
+  }
+  for (const t of byTier.values()) {
+    for (const c of t.windows) {
+      const decided = c.wins + c.losses;
+      c.pct = decided > 0 ? Math.round((c.wins / decided) * 100) : 0;
+    }
+    t.windows.sort((a, b) => a.windowDays - b.windowDays);
+  }
+  return [...byTier.values()];
+}
+
+function toBetLog(rows: GradedPick[]): BetLogEntry[] {
+  return rows.map((r) => ({
+    date: r.gameDate,
+    matchup: `${r.awayTeam} @ ${r.homeTeam}`,
+    pick: `${r.pickTeam} ${r.pickType} ${r.pickMl !== null ? (r.pickMl > 0 ? `+${r.pickMl}` : r.pickMl) : ""}`.trim(),
+    tier: r.tier,
+    units: r.units,
+    result: (r.result ?? "P") as "W" | "L" | "P",
+    clv: r.clvPct !== null ? `${r.clvPct.toFixed(1)}%` : "—",
+    unitsWon: r.pl ?? 0,
+  }));
+}
+
+// Headline track-record stats + full graded bet log. All from real grades; an
+// empty book returns zeroes and an empty log.
 export function trackRecord(sport = "MLB"): TrackRecordSummary {
-  const rows = storage.hitRates(sport).filter((r) => r.windowDays === 90);
+  const rows = gradedPicks(sport);
   let wins = 0;
   let losses = 0;
   let pushes = 0;
-  let unitsWon = 0;
+  let netUnits = 0;
+  let staked = 0;
+  let clvSum = 0;
+  let clvN = 0;
   for (const r of rows) {
-    wins += r.wins;
-    losses += r.losses;
-    pushes += r.pushes;
-    unitsWon += r.unitsWon;
+    if (r.result === "W") wins++;
+    else if (r.result === "L") losses++;
+    else pushes++;
+    netUnits += r.pl ?? 0;
+    staked += r.units;
+    if (r.clvPct !== null) {
+      clvSum += r.clvPct;
+      clvN++;
+    }
   }
   const totalBets = wins + losses + pushes;
-  const staked = totalBets * 1.5; // ~1.5u average stake
-  const roiPct = staked > 0 ? Math.round((unitsWon / staked) * 1000) / 10 : 0;
+  const roiPct = staked > 0 ? Math.round((netUnits / staked) * 1000) / 10 : 0;
 
   return {
-    clvPct: 2.3,
-    evRealizedUnits: Math.round(unitsWon * 10) / 10,
+    clvPct: clvN > 0 ? Math.round((clvSum / clvN) * 10) / 10 : 0,
+    evRealizedUnits: Math.round(netUnits * 10) / 10,
     roiPct,
-    maxDrawdownUnits: 6.4,
+    maxDrawdownUnits: maxDrawdown(rows),
     totalBets,
     record: { wins, losses, pushes },
-    betLog: SAMPLE_LOG,
+    betLog: toBetLog(rows),
   };
 }
 
-const SAMPLE_LOG: BetLogEntry[] = [
-  { date: "2026-06-06", matchup: "LAD @ SF", pick: "LAD ML -135", tier: "BONUS", units: 2.5, result: "W", clv: "-128", unitsWon: 1.85 },
-  { date: "2026-06-06", matchup: "NYY @ BOS", pick: "NYY ML -165", tier: "SNIPER", units: 2.0, result: "W", clv: "-172", unitsWon: 1.21 },
-  { date: "2026-06-05", matchup: "HOU @ SEA", pick: "SEA ML -110", tier: "EDGE", units: 1.5, result: "L", clv: "-105", unitsWon: -1.5 },
-  { date: "2026-06-05", matchup: "ATL @ NYM", pick: "ATL ML -148", tier: "EDGE", units: 1.5, result: "W", clv: "-152", unitsWon: 1.01 },
-  { date: "2026-06-04", matchup: "ARI @ COL", pick: "ARI ML -180", tier: "RECON", units: 1.0, result: "P", clv: "-178", unitsWon: 0 },
-];
+// Largest peak-to-trough drop of the running net-units curve (≥ 0), in units.
+function maxDrawdown(rows: GradedPick[]): number {
+  const chron = [...rows].sort((a, b) => a.gameDate.localeCompare(b.gameDate));
+  let peak = 0;
+  let cum = 0;
+  let maxDd = 0;
+  for (const r of chron) {
+    cum += r.pl ?? 0;
+    if (cum > peak) peak = cum;
+    const dd = peak - cum;
+    if (dd > maxDd) maxDd = dd;
+  }
+  return Math.round(maxDd * 100) / 100;
+}

@@ -40,5 +40,22 @@ NODE_ENV=production
 ## Auto-deploy
 Push to `master` → Railway rebuilds and deploys within ~90s. Mirror of how horse-jarvis works.
 
+## Graded book (live scoring + auto-grading)
+The desk's settled record lives in a SQLite file, path configurable via
+`GRADED_BOOK_PATH` (defaults to `data/graded_book.db`). Every actionable pick the
+slate surfaces is written here; a background job polls the public ESPN scoreboard
+every 15 minutes, attaches live scores, and grades each pick (W/L/P + P/L) when its
+game goes final. There is no seed data — Track Record / Analytics / Yesterday are
+empty until real picks settle against real final scores.
+
+- Manual grade pass: `POST /api/admin/poll-now?date=YYYY-MM-DD` (no auth).
+- Backfill a past day locally: `tsx server/scripts/backfillYesterday.ts YYYY-MM-DD`.
+
+> **Follow-up (Railway ephemeral disk):** Railway's container filesystem is
+> ephemeral, so `data/graded_book.db` resets on each redeploy. Add a Railway
+> **Volume** mounted at `/app/data` and set `GRADED_BOOK_PATH=/app/data/graded_book.db`
+> so the graded history survives deploys. Tracked as a follow-up; the file path is
+> already env-configurable for this.
+
 ## Health check
 `GET /api/slate?date=YYYY-MM-DD` returns 200 with the day's picks JSON. Point Railway's Healthcheck Path at `/api/slate` if desired.

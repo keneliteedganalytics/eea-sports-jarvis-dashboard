@@ -87,6 +87,16 @@ export interface BuiltPick {
   homeGoalie?: { available: boolean; name: string | null; svPct: number | null; gaa: number | null; gp: number | null } | null;
   awayGoalie?: { available: boolean; name: string | null; svPct: number | null; gaa: number | null; gp: number | null } | null;
   modelNotes: string[];
+  // Graded-book status (attached when the slate is served). Drives card color.
+  gradeStatus?: "pending" | "in_progress" | "final";
+  gradeResult?: "W" | "L" | "P" | null;
+  gradePl?: number | null;
+  clvPct?: number | null;
+  liveAwayScore?: number | null;
+  liveHomeScore?: number | null;
+  liveStatusDetail?: string | null;
+  finalAwayScore?: number | null;
+  finalHomeScore?: number | null;
   // Soccer-only fields (undefined on other sports)
   leagueName?: string | null;
   leagueId?: number | null;

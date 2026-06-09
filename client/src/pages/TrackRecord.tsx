@@ -66,6 +66,12 @@ export default function TrackRecord() {
         </div>
       )}
 
+      {summary && summary.totalBets === 0 && (
+        <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="empty-track-record">
+          No graded picks yet. Results populate here as the desk's picks settle against final scores.
+        </div>
+      )}
+
       {summary && summary.betLog.length > 0 && (
         <div className="rounded-xl border border-card-border bg-navy-card p-4">
           <div className="mb-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Graded book</div>
