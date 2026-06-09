@@ -81,18 +81,26 @@ export default {
           busy: "rgb(239 68 68)",
           offline: "rgb(156 163 175)",
         },
-        // Brand palette (EEA re-theme §9)
+        // Brand Board v3 palette
         gold: {
-          DEFAULT: "#F4D77A",
-          light: "#F8E3A0",
-          dark: "#C9A227",
+          DEFAULT: "#C9A227",
+          light: "#E8C14A",
+          dark: "#9A7B1E",
         },
         navy: {
-          bg: "#0A1628",
-          card: "#0E1D34",
+          black: "#020810",
+          deep: "#060E1C",
+          mid: "#0A1628",
+          panel: "#0F1F3D",
+          bg: "#020810",
+          card: "#060E1C",
         },
+        silver: "#DCE8F0",
+        slate: "#6B7A99",
         trap: "#FF8A47",
         poly: "#5BC0EB",
+        win: "#4ADE80",
+        loss: "#EF4444",
         // Tier colors (NEVER change)
         tier: {
           bonus: "#4ADE80",
@@ -106,8 +114,13 @@ export default {
       },
       fontFamily: {
         sans: ["var(--font-sans)"],
+        display: ["var(--font-display)"],
         serif: ["var(--font-serif)"],
         mono: ["var(--font-mono)"],
+      },
+      backgroundImage: {
+        "brand-gradient": "linear-gradient(135deg, #9A7B1E, #C9A227, #E8C14A)",
+        "bg-gradient": "linear-gradient(135deg, #020810, #0A1628)",
       },
       keyframes: {
         "accordion-down": {

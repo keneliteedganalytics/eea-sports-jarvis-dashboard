@@ -9,7 +9,7 @@ export interface GradeVisual {
   borderColor: string;
   badgeText: string;
   badgeColor: string;
-  pulse: boolean;
+  live: boolean;
   scoreLine: string | null;
 }
 
@@ -33,12 +33,12 @@ export function gradeVisual(pick: BuiltPick): GradeVisual | null {
       ? `Final: ${away} ${a} — ${home} ${h}`
       : null;
     if (pick.gradeResult === "W") {
-      return { borderColor: "#4ADE80", badgeText: `WON +${fmtPl(pick.gradePl)}u`, badgeColor: "#4ADE80", pulse: false, scoreLine };
+      return { borderColor: "#4ADE80", badgeText: `WON +${fmtPl(pick.gradePl)}u`, badgeColor: "#4ADE80", live: false, scoreLine };
     }
     if (pick.gradeResult === "L") {
-      return { borderColor: "#EF4444", badgeText: `LOST -${fmtPl(pick.gradePl)}u`, badgeColor: "#EF4444", pulse: false, scoreLine };
+      return { borderColor: "#EF4444", badgeText: `LOST -${fmtPl(pick.gradePl)}u`, badgeColor: "#EF4444", live: false, scoreLine };
     }
-    return { borderColor: "#6B7A99", badgeText: "PUSH", badgeColor: "#6B7A99", pulse: false, scoreLine };
+    return { borderColor: "#6B7A99", badgeText: "PUSH", badgeColor: "#6B7A99", live: false, scoreLine };
   }
 
   if (status === "in_progress") {
@@ -50,7 +50,7 @@ export function gradeVisual(pick: BuiltPick): GradeVisual | null {
       borderColor: "#E8C14A",
       badgeText: `LIVE · ${away} ${score} ${home}${detail}`,
       badgeColor: "#E8C14A",
-      pulse: true,
+      live: true,
       scoreLine: pick.liveStatusDetail ? `Live: ${away} ${score} ${home} · ${pick.liveStatusDetail}` : `Live: ${away} ${score} ${home}`,
     };
   }

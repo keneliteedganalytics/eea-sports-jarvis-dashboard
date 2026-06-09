@@ -1,9 +1,10 @@
 import { Link } from "wouter";
 import { TierPill } from "./TierPill";
+import { ScopeFull } from "./ScopeFull";
 import { SignalBars } from "./SignalBars";
 import { SpreadRow } from "./SpreadRow";
 import { TotalRow } from "./TotalRow";
-import { fmtGameDate, fmtGameTime, fmtLine } from "@/lib/format";
+import { fmtGameDate, fmtGameTime, fmtLine, TIER_LABEL } from "@/lib/format";
 import { gradeVisual } from "@/lib/grade";
 import type { BuiltPick } from "@/lib/types";
 
@@ -61,95 +62,132 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
 
   return (
     <article
-      className={`flex flex-col gap-2 rounded-xl border bg-navy-card p-3 ${grade ? "" : "border-card-border"} ${
+      className={`flex flex-col overflow-hidden rounded-xl border bg-navy-deep ${grade ? "" : "border-card-border"} ${
         hardPass && !grade ? "opacity-55" : ""
-      } ${grade?.pulse ? "animate-pulse" : ""}`}
+      }`}
       style={grade ? { borderColor: grade.borderColor, borderWidth: 2 } : undefined}
       data-testid={`compact-card-${pick.gameId}`}
     >
-      {grade && (
-        <div
-          className="rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
-          style={{ color: "#0A1628", backgroundColor: grade.badgeColor }}
-          data-testid={`grade-badge-${pick.gameId}`}
-        >
-          {grade.badgeText}
+      {/* Brand header row: scope mark + tier wordmark + tier badge */}
+      <div className="flex items-center justify-between gap-2 border-b border-gold/10 bg-gold/[0.03] px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <span className="overflow-hidden rounded-full">
+            <ScopeFull uid={`ch-${pick.gameId}`} size={20} />
+          </span>
+          <span className="font-display text-[10px] font-extrabold uppercase tracking-[0.2em] text-gold-dark">
+            {TIER_LABEL[pick.verdictTier]}
+          </span>
         </div>
-      )}
-      {grade?.scoreLine && (
-        <div className="text-[11px] font-medium text-foreground/90" data-testid={`grade-score-${pick.gameId}`}>
-          {grade.scoreLine}
+        <div className="flex items-center gap-1.5">
+          {grade?.live && (
+            <span className="inline-flex items-center gap-1" data-testid={`live-indicator-${pick.gameId}`}>
+              <span className="live-dot h-2 w-2 rounded-full bg-[#E8C14A]" />
+              <span className="font-display text-[9px] font-bold uppercase tracking-[0.18em] text-[#E8C14A]">LIVE</span>
+            </span>
+          )}
+          <TierPill tier={pick.verdictTier} />
         </div>
-      )}
+      </div>
 
-      {/* Header: tier pill + sport label */}
-      <div className="flex items-center justify-between gap-2">
-        <TierPill tier={pick.verdictTier} />
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-          {pick.sport}
+      <div className="flex flex-col gap-2 p-3">
+        {grade && (
+          <div
+            className="rounded px-2 py-0.5 font-display text-[10px] font-bold uppercase tracking-wider"
+            style={{ color: "#020810", backgroundColor: grade.badgeColor }}
+            data-testid={`grade-badge-${pick.gameId}`}
+          >
+            {grade.badgeText}
+          </div>
+        )}
+        {grade?.scoreLine && (
+          <div className="text-[11px] font-medium text-foreground/90" data-testid={`grade-score-${pick.gameId}`}>
+            {grade.scoreLine}
+          </div>
+        )}
+
+        {/* Sport label */}
+        <div className="flex items-center justify-end">
+          <span className="font-display text-[10px] uppercase tracking-wider text-muted-foreground">
+            {pick.sport}
+          </span>
+        </div>
+
+        {/* Matchup link + date/time */}
+        <div>
+          <Link href={`/pick/${pick.gameId}`} className="text-sm font-medium text-foreground hover:text-gold-light">
+            {pick.awayTeam} @ {pick.homeTeam}
+          </Link>
+          <div className="mt-0.5 text-[11px] tabular-nums text-muted-foreground" data-testid="card-datetime">
+            {[fmtGameDate(pick.gameDate), fmtGameTime(pick.gameTimeEt)].filter(Boolean).join(" · ") || "Time TBD"}
+          </div>
+        </div>
+
+        {/* MLB pitcher row */}
+        {showPitcherRow && (
+          <div className="text-xs text-slate" data-testid="pitcher-row">
+            SP: {awaySpName ?? "TBD"}{awaySpEra ? ` (${awaySpEra} ERA)` : ""} vs {homeSpName ?? "TBD"}{homeSpEra ? ` (${homeSpEra} ERA)` : ""}
+          </div>
+        )}
+
+        {/* Soccer league + form row */}
+        {isSoccer && (
+          <div className="text-xs text-slate" data-testid="soccer-league-row">
+            {leaguePrefix}
+            {(homeFormStr || awayFormStr) && (
+              <span> Form: {awayFormStr ?? "—"} vs {homeFormStr ?? "—"}</span>
+            )}
+          </div>
+        )}
+
+        {/* NHL goalie row */}
+        {showGoalieRow && (
+          <div className="text-xs text-slate" data-testid="goalie-row">
+            G: {awayGoalieName ?? "TBD"}{awayGoalieSvPct ? ` (${awayGoalieSvPct})` : ""} vs {homeGoalieName ?? "TBD"}{homeGoalieSvPct ? ` (${homeGoalieSvPct})` : ""}
+          </div>
+        )}
+
+        {/* Projected score */}
+        {showProjScore && (
+          <div className="text-xs text-slate" data-testid="proj-score">
+            Projected: {pick.awayTeam} {pick.projAwayScore.toFixed(1)} — {pick.homeTeam} {pick.projHomeScore.toFixed(1)}
+          </div>
+        )}
+
+        {/* Spread + total markets — always rendered ("No market" when unposted) */}
+        <div className="flex flex-col gap-1 rounded-lg border border-card-border bg-background/40 px-2.5 py-2" data-testid="markets-block">
+          <SpreadRow market={pick.markets.spread} label={SPREAD_LABEL[pick.sport] ?? "SPR"} />
+          <TotalRow market={pick.markets.total} />
+        </div>
+
+        {/* Public / Sharp / PRISM bars — always rendered */}
+        <SignalBars publicPct={publicPct} sharpPct={sharpPct} prismPct={prismPct} prismReason={prismReason} />
+
+        {/* Reason text */}
+        {hardPass ? (
+          <div className="text-[11px] text-muted-foreground" data-testid="hard-pass-reason">
+            Hard pass — {pick.hardPassReason?.replace(/_/g, " ")}
+          </div>
+        ) : (
+          <div className="text-[11px] text-muted-foreground">
+            No edge — fair price{pick.pickMl !== null ? ` (${pick.pickTeam} ${fmtLine(pick.pickMl)})` : ""}
+          </div>
+        )}
+      </div>
+
+      {/* Brand footer: scope mark + wordmark */}
+      <div className="flex items-center justify-between gap-2 border-t border-gold/10 px-3 py-1.5">
+        <div className="flex items-center gap-1.5">
+          <span className="overflow-hidden rounded-full">
+            <ScopeFull uid={`cf-${pick.gameId}`} size={14} />
+          </span>
+          <span className="font-display text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+            Elite Edge Analytics
+          </span>
+        </div>
+        <span className="text-[9px] tabular-nums text-muted-foreground">
+          {fmtGameDate(pick.gameDate) || ""}
         </span>
       </div>
-
-      {/* Matchup link + date/time */}
-      <div>
-        <Link href={`/pick/${pick.gameId}`} className="text-sm font-medium text-foreground hover:text-gold">
-          {pick.awayTeam} @ {pick.homeTeam}
-        </Link>
-        <div className="mt-0.5 text-[11px] tabular-nums text-muted-foreground" data-testid="card-datetime">
-          {[fmtGameDate(pick.gameDate), fmtGameTime(pick.gameTimeEt)].filter(Boolean).join(" · ") || "Time TBD"}
-        </div>
-      </div>
-
-      {/* MLB pitcher row */}
-      {showPitcherRow && (
-        <div className="text-xs text-zinc-400" data-testid="pitcher-row">
-          SP: {awaySpName ?? "TBD"}{awaySpEra ? ` (${awaySpEra} ERA)` : ""} vs {homeSpName ?? "TBD"}{homeSpEra ? ` (${homeSpEra} ERA)` : ""}
-        </div>
-      )}
-
-      {/* Soccer league + form row */}
-      {isSoccer && (
-        <div className="text-xs text-zinc-400" data-testid="soccer-league-row">
-          {leaguePrefix}
-          {(homeFormStr || awayFormStr) && (
-            <span> Form: {awayFormStr ?? "—"} vs {homeFormStr ?? "—"}</span>
-          )}
-        </div>
-      )}
-
-      {/* NHL goalie row */}
-      {showGoalieRow && (
-        <div className="text-xs text-zinc-400" data-testid="goalie-row">
-          G: {awayGoalieName ?? "TBD"}{awayGoalieSvPct ? ` (${awayGoalieSvPct})` : ""} vs {homeGoalieName ?? "TBD"}{homeGoalieSvPct ? ` (${homeGoalieSvPct})` : ""}
-        </div>
-      )}
-
-      {/* Projected score */}
-      {showProjScore && (
-        <div className="text-xs text-zinc-400" data-testid="proj-score">
-          Projected: {pick.awayTeam} {pick.projAwayScore.toFixed(1)} — {pick.homeTeam} {pick.projHomeScore.toFixed(1)}
-        </div>
-      )}
-
-      {/* Spread + total markets — always rendered ("No market" when unposted) */}
-      <div className="flex flex-col gap-1 rounded-lg border border-card-border bg-background/40 px-2.5 py-2" data-testid="markets-block">
-        <SpreadRow market={pick.markets.spread} label={SPREAD_LABEL[pick.sport] ?? "SPR"} />
-        <TotalRow market={pick.markets.total} />
-      </div>
-
-      {/* Public / Sharp / PRISM bars — always rendered */}
-      <SignalBars publicPct={publicPct} sharpPct={sharpPct} prismPct={prismPct} prismReason={prismReason} />
-
-      {/* Reason text */}
-      {hardPass ? (
-        <div className="text-[11px] text-muted-foreground" data-testid="hard-pass-reason">
-          Hard pass — {pick.hardPassReason?.replace(/_/g, " ")}
-        </div>
-      ) : (
-        <div className="text-[11px] text-muted-foreground">
-          No edge — fair price{pick.pickMl !== null ? ` (${pick.pickTeam} ${fmtLine(pick.pickMl)})` : ""}
-        </div>
-      )}
     </article>
   );
 }

@@ -15,52 +15,61 @@
   --elevate-1: rgba(255, 255, 255, 0.04);
   --elevate-2: rgba(255, 255, 255, 0.09);
 
-  /* Brand palette (EEA re-theme §9) — raw hex for direct use */
-  --bg: #0a1628;
-  --card-bg: #0e1d34;
-  --gold: #f4d77a;
-  --gold-light: #f8e3a0;
+  /* Brand Board v3 palette — raw hex for direct use */
+  --navy-black: #020810;          /* primary BG */
+  --navy-deep: #060e1c;           /* cards & surfaces */
+  --navy-mid: #0a1628;            /* section fills */
+  --navy-panel: #0f1f3d;          /* raised panels, borders */
+  --gold: #c9a227;                /* primary brand */
+  --gold-light: #e8c14a;          /* hover / active / SNIPER */
+  --gold-dark: #9a7b1e;           /* RECON / muted gold */
+  --silver: #dce8f0;              /* primary text */
+  --slate: #6b7a99;               /* secondary text / PASS */
+  --muted-text: #8892a0;          /* tertiary text */
+  --win-green: #4ade80;
+  --loss-red: #ef4444;
   --trap: #ff8a47;
   --poly: #5bc0eb;
-  --text-primary: #e8eef7;
-  --text-muted: #8892a0;
+  --brand-gradient: linear-gradient(135deg, #9a7b1e, #c9a227, #e8c14a);
+  --bg-gradient: linear-gradient(135deg, #020810, #0a1628);
 
-  /* shadcn semantic tokens mapped onto the brand palette (H S% L%) */
-  --background: 214 52% 10%;      /* #0A1628 */
-  --foreground: 213 47% 94%;      /* #E8EEF7 */
-  --border: 214 40% 20%;
-  --card: 214 52% 13%;            /* #0E1D34 */
-  --card-foreground: 213 47% 94%;
-  --card-border: 214 40% 22%;
-  --sidebar: 214 56% 8%;
-  --sidebar-foreground: 213 47% 94%;
-  --sidebar-border: 214 40% 20%;
-  --sidebar-primary: 45 84% 72%;  /* gold */
-  --sidebar-primary-foreground: 214 52% 10%;
-  --sidebar-accent: 214 40% 20%;
-  --sidebar-accent-foreground: 213 47% 94%;
-  --sidebar-ring: 45 84% 72%;
-  --popover: 214 52% 12%;
-  --popover-foreground: 213 47% 94%;
-  --popover-border: 214 40% 22%;
-  --primary: 45 84% 72%;          /* #F4D77A gold */
-  --primary-foreground: 214 52% 10%;
-  --secondary: 214 40% 20%;
-  --secondary-foreground: 213 47% 94%;
-  --muted: 214 30% 20%;
-  --muted-foreground: 213 12% 60%; /* #8892A0 */
-  --accent: 214 40% 22%;
-  --accent-foreground: 213 47% 94%;
-  --destructive: 0 84% 60%;
+  /* shadcn semantic tokens mapped onto the Brand Board v3 palette (H S% L%) */
+  --background: 213 60% 4%;       /* #020810 Navy Black */
+  --foreground: 205 45% 90%;      /* #DCE8F0 Silver */
+  --border: 218 60% 15%;          /* #0F1F3D Navy Panel */
+  --card: 213 65% 6%;             /* #060E1C Navy Deep */
+  --card-foreground: 205 45% 90%;
+  --card-border: 218 50% 18%;
+  --sidebar: 213 65% 6%;
+  --sidebar-foreground: 205 45% 90%;
+  --sidebar-border: 218 60% 15%;
+  --sidebar-primary: 45 69% 47%;  /* gold #C9A227 */
+  --sidebar-primary-foreground: 213 60% 4%;
+  --sidebar-accent: 218 60% 15%;
+  --sidebar-accent-foreground: 205 45% 90%;
+  --sidebar-ring: 45 69% 47%;
+  --popover: 213 65% 7%;
+  --popover-foreground: 205 45% 90%;
+  --popover-border: 218 50% 18%;
+  --primary: 45 69% 47%;          /* #C9A227 gold */
+  --primary-foreground: 213 60% 4%;
+  --secondary: 218 60% 15%;
+  --secondary-foreground: 205 45% 90%;
+  --muted: 218 40% 14%;
+  --muted-foreground: 220 12% 59%; /* #8892A0 */
+  --accent: 218 50% 18%;
+  --accent-foreground: 205 45% 90%;
+  --destructive: 0 84% 60%;       /* #EF4444 */
   --destructive-foreground: 0 0% 98%;
-  --input: 214 35% 24%;
-  --ring: 45 84% 72%;
-  --chart-1: 45 84% 72%;
+  --input: 218 45% 20%;
+  --ring: 45 69% 47%;
+  --chart-1: 45 69% 47%;          /* gold */
   --chart-2: 197 76% 64%;         /* poly blue */
   --chart-3: 142 69% 58%;         /* green */
   --chart-4: 22 100% 64%;         /* trap orange */
   --chart-5: 234 89% 74%;         /* value indigo */
-  --font-sans: "DejaVu Sans", "DM Sans", "Inter", system-ui, sans-serif;
+  --font-sans: "Montserrat", "DM Sans", "Inter", system-ui, sans-serif;
+  --font-display: "Barlow Condensed", "Montserrat", system-ui, sans-serif;
   --font-serif: "DejaVu Serif", "Lora", Georgia, serif;
   --font-mono: "DejaVu Sans Mono", "IBM Plex Mono", "Geist Mono", Menlo, monospace;
   --radius: 0.625rem;
@@ -88,22 +97,27 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
     background-image:
+      linear-gradient(135deg, #020810, #0a1628),
       radial-gradient(ellipse 80% 50% at 20% -10%, rgba(201, 162, 39, 0.06), transparent),
-      radial-gradient(ellipse 70% 50% at 90% 110%, rgba(91, 192, 235, 0.05), transparent);
+      radial-gradient(ellipse 70% 50% at 90% 110%, rgba(91, 192, 235, 0.04), transparent);
     background-attachment: fixed;
   }
 
   h1, h2, h3, h4, h5, h6 {
-    @apply font-sans font-bold tracking-tight;
+    @apply font-display font-bold tracking-tight;
   }
 }
 
 @layer utilities {
   .gold-gradient-text {
-    background: linear-gradient(135deg, var(--gold-light), var(--gold));
+    background: var(--brand-gradient);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
+  }
+
+  .font-display {
+    font-family: var(--font-display);
   }
 
   .tabular-nums {
@@ -120,12 +134,9 @@
     animation: wave-bounce 0.9s ease-in-out infinite;
   }
 
-  @keyframes scope-pulse {
-    0%, 100% { opacity: 0.5; }
-    50% { opacity: 1; }
-  }
-  .scope-pulse {
-    animation: scope-pulse 2s ease-in-out infinite;
+  /* Static gold glow for the LIVE indicator — no pulse, no fade. */
+  .live-dot {
+    box-shadow: 0 0 8px rgba(232, 193, 74, 0.4);
   }
 
   input[type='search']::-webkit-search-cancel-button {

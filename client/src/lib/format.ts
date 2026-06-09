@@ -7,6 +7,14 @@ export const TIER_META: Record<Verdict, { label: string; hex: string }> = {
   PASS: { label: "PASS", hex: "#6B7A99" },
 };
 
+// Brand Board v3 header wordmark per tier (card header row, left side).
+export const TIER_LABEL: Record<Verdict, string> = {
+  SNIPER: "EE SNIPER",
+  EDGE: "EE EDGE",
+  RECON: "EE RECON",
+  PASS: "EE RECON",
+};
+
 export function fmtLine(ml: number | null | undefined): string {
   if (ml === null || ml === undefined) return "—";
   return ml > 0 ? `+${ml}` : `${ml}`;

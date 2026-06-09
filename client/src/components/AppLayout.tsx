@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
-import { Activity } from "lucide-react";
 import { AlertsPanel } from "./AlertsPanel";
+import { ScopeFull } from "./ScopeFull";
 
 const SPORTS = [
   { key: "mlb", label: "MLB", href: "/", live: true },
@@ -19,12 +19,19 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-40 border-b border-card-border bg-navy-bg/80 backdrop-blur-md">
+      <header className="sticky top-0 z-40 border-b border-gold/12 bg-navy-deep/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
-          <Link href="/" className="flex items-center gap-2" data-testid="link-home">
-            <Activity className="h-5 w-5 text-gold" />
-            <span className="text-sm font-bold tracking-tight">
-              Sports <span className="gold-gradient-text">Jarvis</span>
+          <Link href="/" className="flex items-center gap-2.5" data-testid="link-home">
+            <span className="overflow-hidden rounded-lg border border-gold/25">
+              <ScopeFull uid="nav" size={34} />
+            </span>
+            <span className="hidden flex-col leading-none sm:flex">
+              <span className="gold-gradient-text font-display text-sm font-extrabold uppercase tracking-[0.22em]">
+                Elite Edge
+              </span>
+              <span className="font-display text-[9px] font-bold uppercase tracking-[0.3em] text-muted-foreground">
+                Analytics
+              </span>
             </span>
           </Link>
 
