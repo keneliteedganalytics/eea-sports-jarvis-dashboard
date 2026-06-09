@@ -9,20 +9,36 @@ import { hasOddsKey } from "../../adapters/oddsApi";
 import { getOperatingDay, operatingDayAnchor } from "./operatingDay";
 import { DEMO_GAMES } from "./demoSlate";
 import { umpireAdjustmentForGame, NEUTRAL_UMPIRE, type UmpireAdjustment } from "./umpires";
+import { absAdjustmentForPitcher, NEUTRAL_ABS, type AbsAdjustment } from "./abs";
+
+interface PitcherLike {
+  pitcher?: string;
+  pitcherId?: number | null;
+}
+
+async function safeAbs(sp: PitcherLike | undefined): Promise<AbsAdjustment> {
+  try {
+    return await absAdjustmentForPitcher(sp?.pitcher, sp?.pitcherId ?? null);
+  } catch {
+    return NEUTRAL_ABS;
+  }
+}
 
 async function runEngine(games: GameInput[], bankroll = BANKROLL_USD): Promise<BuiltPick[]> {
-  // Best-effort umpire lookups in parallel; any failure degrades to neutral so
+  // Best-effort external lookups in parallel; any failure degrades to neutral so
   // the slate is never blocked.
-  const umpires = await Promise.all(
-    games.map(async (g): Promise<UmpireAdjustment> => {
-      try {
-        return await umpireAdjustmentForGame(g.gamePk);
-      } catch {
-        return NEUTRAL_UMPIRE;
-      }
+  const enrichments = await Promise.all(
+    games.map(async (g) => {
+      const [umpire, homeAbs, awayAbs] = await Promise.all([
+        umpireAdjustmentForGame(g.gamePk).catch(() => NEUTRAL_UMPIRE),
+        safeAbs(g.homeSpStats as PitcherLike | undefined),
+        safeAbs(g.awaySpStats as PitcherLike | undefined),
+      ]);
+      return { umpire, homeAbs, awayAbs };
     }),
   );
   const picks = games.map((g, i) => {
+    const e = enrichments[i];
     const model = predictGame({
       homeTeam: g.homeTeam,
       awayTeam: g.awayTeam,
@@ -35,7 +51,9 @@ async function runEngine(games: GameInput[], bankroll = BANKROLL_USD): Promise<B
       venueTriCode: g.homeTeam,
       homeFairProb: g.homeFairProb,
       awayFairProb: g.awayFairProb,
-      umpireAdjustment: umpires[i],
+      umpireAdjustment: e.umpire,
+      homeAbs: e.homeAbs,
+      awayAbs: e.awayAbs,
     });
     return buildPick(g, model, bankroll);
   });

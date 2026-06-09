@@ -12,6 +12,7 @@ import { bullpenRunAdjustment, type BullpenStats } from "./bullpen";
 import { isElitePitcher, dataQualityTier, type PitcherStats } from "./pitchers";
 import { pythagenpatWinPct, LG_AVG_RPG, type TeamOffense } from "./ratings";
 import { umpireShortName, type UmpireAdjustment } from "./umpires";
+import { type AbsAdjustment } from "./abs";
 
 // ── Tunable constants (SPEC §4) ───────────────────────────────────
 export const MLB_LG_ERA = 4.2;
@@ -45,6 +46,8 @@ export interface ModelContext {
   weatherRaw?: { windRunAdj?: number | null } | null;
   starterIpShare?: number;
   umpireAdjustment?: UmpireAdjustment | null; // HP umpire run/zone profile
+  homeAbs?: AbsAdjustment | null; // home SP ABS framing exposure
+  awayAbs?: AbsAdjustment | null; // away SP ABS framing exposure
 }
 
 export interface ModelResult {
@@ -75,6 +78,8 @@ export interface ModelResult {
   parkFactor: number;
   umpireName: string | null;
   umpireRunAdj: number;
+  absPenaltyHome: number;
+  absPenaltyAway: number;
   method: string;
   modelNotes: string[];
 }
@@ -146,8 +151,20 @@ export function predictGame(ctx: ModelContext): ModelResult {
   }
 
   // Step A: starter quality
-  const homeSpProxy = starterProxy(homeSp as unknown as Record<string, unknown>, warnings, "home");
-  const awaySpProxy = starterProxy(awaySp as unknown as Record<string, unknown>, warnings, "away");
+  const homeSpBase = starterProxy(homeSp as unknown as Record<string, unknown>, warnings, "home");
+  const awaySpBase = starterProxy(awaySp as unknown as Record<string, unknown>, warnings, "away");
+
+  // Step A2: ABS framing penalty. A framing-dependent starter loses called
+  // strikes under the robo-zone, so we nudge their effective FIP up. Neutral/
+  // missing exposure is a 0-run no-op.
+  const homeAbsPenalty = ctx.homeAbs?.found ? ctx.homeAbs.fipPenalty : 0;
+  const awayAbsPenalty = ctx.awayAbs?.found ? ctx.awayAbs.fipPenalty : 0;
+  const homeSpProxy = homeSpBase + homeAbsPenalty;
+  const awaySpProxy = awaySpBase + awayAbsPenalty;
+  if (homeAbsPenalty > 0)
+    methodLog.push(`abs(${homeSp.pitcher ?? "home SP"} +${round2(homeAbsPenalty)}fip)`);
+  if (awayAbsPenalty > 0)
+    methodLog.push(`abs(${awaySp.pitcher ?? "away SP"} +${round2(awayAbsPenalty)}fip)`);
 
   // Step B: team offense
   const homeRpg = teamRpg(ctx.homeOffStats as Record<string, unknown>, warnings, "home");
@@ -291,6 +308,8 @@ export function predictGame(ctx: ModelContext): ModelResult {
     parkFactor: round2(parkF),
     umpireName: ump?.name ?? null,
     umpireRunAdj: round2(umpRunAdj),
+    absPenaltyHome: round2(homeAbsPenalty),
+    absPenaltyAway: round2(awayAbsPenalty),
     method: methodLog.join(" | "),
     modelNotes: warnings,
   };
