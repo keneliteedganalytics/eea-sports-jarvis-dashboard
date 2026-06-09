@@ -185,6 +185,13 @@ export interface BuiltPick {
   liveStatusDetail?: string | null;
   finalAwayScore?: number | null;
   finalHomeScore?: number | null;
+  // Bet lock-in: true once the user confirmed the bet. lockedTier/Stake/Odds are
+  // the frozen values the card must display (greyed-out, no edit controls).
+  locked?: boolean;
+  lockedAt?: string | null;
+  lockedTier?: string | null;
+  lockedStake?: number | null;
+  lockedOdds?: number | null;
 }
 
 // 7-component confidence with elite-fade & sparse penalties (MLB variant).

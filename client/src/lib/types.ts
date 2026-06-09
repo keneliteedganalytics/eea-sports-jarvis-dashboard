@@ -97,6 +97,13 @@ export interface BuiltPick {
   liveStatusDetail?: string | null;
   finalAwayScore?: number | null;
   finalHomeScore?: number | null;
+  // Bet lock-in. locked=true once the user confirmed the bet; lockedTier/Stake/Odds
+  // are the frozen values to display (edit controls greyed out).
+  locked?: boolean;
+  lockedAt?: string | null;
+  lockedTier?: string | null;
+  lockedStake?: number | null;
+  lockedOdds?: number | null;
   // Soccer-only fields (undefined on other sports)
   leagueName?: string | null;
   leagueId?: number | null;

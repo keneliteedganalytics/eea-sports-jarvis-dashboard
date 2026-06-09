@@ -15,10 +15,20 @@ import { getAlerts } from "./pollers/alerts";
 import { startOddsPoller } from "./pollers/oddsPoller";
 import { startScratchPoller } from "./pollers/scratchPoller";
 import { startLiveScoring, pollEspnAndUpdate } from "./jobs/liveScoring";
+import { confirmBet } from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 
 const STUB_SPORTS = ["ncaaf", "ncaab", "nfl"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Admin actions (bet lock-in) are gated behind a PIN supplied via x-admin-pin.
+// Override with ADMIN_PIN; defaults to the desk PIN.
+const ADMIN_PIN = process.env.ADMIN_PIN || "5811";
+function requireAdminPin(req: Request, res: Response): boolean {
+  if (req.header("x-admin-pin") === ADMIN_PIN) return true;
+  res.status(401).json({ message: "admin pin required" });
+  return false;
+}
 
 function bankroll(): number {
   const n = Number(process.env.BANKROLL_USD);
@@ -107,6 +117,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }).format(new Date());
     const summary = await pollEspnAndUpdate(date);
     res.json(summary);
+  });
+
+  // Confirm a bet was placed: freezes the pick's tier/stake/odds so no downstream
+  // recompute can re-tier it. Admin-PIN gated. Idempotent — a second call returns
+  // the same frozen row.
+  app.post("/api/picks/:id/confirm-bet", (req: Request, res: Response) => {
+    if (!requireAdminPin(req, res)) return;
+    const frozen = confirmBet(String(req.params.id));
+    if (!frozen) return res.status(404).json({ message: "pick not found" });
+    res.json(frozen);
   });
 
   // Analytics dashboard aggregation. Optional ?sport= ?tier= ?since= filters.
