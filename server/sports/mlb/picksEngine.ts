@@ -1,7 +1,7 @@
 // Picks engine — ported from sports-engine sports/mlb/picks_engine.py.
 // Confidence (7-component), Kelly sizing, verdict tier, daily 6-pick cap.
 
-import { assignTier } from "../../core/tier";
+import { assignTier, downgradeTier } from "../../core/tier";
 import { convictionUnits, applyJuicePenalty, unitsToStake, computeUnit } from "../../core/sizing";
 import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
 import { buildTwoWayMarket } from "../../core/markets";
@@ -17,6 +17,13 @@ import {
   NEUTRAL_MOVEMENT,
   type SharpSignal,
 } from "../../adapters/lineMovement";
+import {
+  lineupConfidenceDelta,
+  lineupForcesDowngrade,
+  PENDING_LINEUP,
+  type LineupResult,
+  type LineupStatus,
+} from "./lineups";
 
 export const ELITE_FADE_PP = 12.0;
 export const MAX_PICKS_PER_DAY = 6;
@@ -63,6 +70,9 @@ export interface GameInput {
   // Raw Odds API event, retained so the line-movement signal can be derived per
   // pick side after the pick is chosen (set by data.ts; undefined on demo).
   _oddsEvent?: OddsEvent | null;
+  // Per-side lineup status, resolved in the slate after the pick side is known.
+  _lineupHome?: LineupResult | null;
+  _lineupAway?: LineupResult | null;
 }
 
 export interface PolymarketData {
@@ -153,6 +163,8 @@ export interface BuiltPick {
   clvLive?: number | null;      // currentLine − openingLine, in cents (signed)
   sharpSignal?: SharpSignal;    // Pinnacle vs pick side
   steam?: boolean;              // a fast line move inside the steam window
+  lineupStatus?: LineupStatus;  // confirmed / pending / star_out / star_questionable
+  lineupMissingStar?: string | null; // the absent star, when status is star_out
   modelNotes: string[];
   // Graded-book status, attached when a slate is served (undefined until the
   // pick is persisted; "pending" once in the book). Drives the colored cards.
@@ -464,14 +476,25 @@ export function buildPick(
   const movement = game._oddsEvent
     ? movementForPick(game._oddsEvent, pickSide, pickFairMkt)
     : NEUTRAL_MOVEMENT;
+
+  // Lineup confirmation: a star out on our side cuts confidence and downgrades
+  // the tier one rung; a confirmed lineup with our stars in is a small bump.
+  const lineup: LineupResult =
+    (pickSide === "home" ? game._lineupHome : game._lineupAway) ?? PENDING_LINEUP;
+
   const confidence = Math.max(
     0,
-    Math.min(99, baseConfidence + sharpConfidenceDelta(movement.sharpSignal)),
+    Math.min(
+      99,
+      baseConfidence +
+        sharpConfidenceDelta(movement.sharpSignal) +
+        lineupConfidenceDelta(lineup.status),
+    ),
   );
 
   const polyPct = orientedPoly?.found ? (orientedPoly.pct ?? null) : null;
 
-  const tier = assignTier({
+  let tier = assignTier({
     edgePp: pickEdge,
     confidence,
     polyPct,
@@ -481,6 +504,9 @@ export function buildPick(
     oddsAmerican: pickMl,
     winProb: pickWp,
   });
+  if (lineupForcesDowngrade(lineup.status) && tier !== "PASS") {
+    tier = downgradeTier(tier);
+  }
 
   // EEA flat-unit sizing (SPEC §4): conviction units → juice penalty → stake.
   let verdictTier = tier;
@@ -621,6 +647,8 @@ export function buildPick(
     clvLive: movement.clvCents,
     sharpSignal: movement.sharpSignal,
     steam: movement.steam,
+    lineupStatus: lineup.status,
+    lineupMissingStar: lineup.missingStar,
     modelNotes: model.modelNotes,
   };
 }

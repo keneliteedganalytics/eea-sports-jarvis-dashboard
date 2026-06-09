@@ -10,6 +10,7 @@ import { getOperatingDay, operatingDayAnchor } from "./operatingDay";
 import { DEMO_GAMES } from "./demoSlate";
 import { umpireAdjustmentForGame, NEUTRAL_UMPIRE, type UmpireAdjustment } from "./umpires";
 import { absAdjustmentForPitcher, NEUTRAL_ABS, type AbsAdjustment } from "./abs";
+import { fetchLineups, lineupStatusForSide, PENDING_LINEUP, type LineupResult } from "./lineups";
 
 interface PitcherLike {
   pitcher?: string;
@@ -24,7 +25,13 @@ async function safeAbs(sp: PitcherLike | undefined): Promise<AbsAdjustment> {
   }
 }
 
-async function runEngine(games: GameInput[], bankroll = BANKROLL_USD): Promise<BuiltPick[]> {
+async function runEngine(games: GameInput[], bankroll = BANKROLL_USD, dateStr?: string): Promise<BuiltPick[]> {
+  // Posted batting orders for the date (one call covers every game). Best-effort:
+  // an empty map means lineups haven't posted, so every side stays "pending".
+  const lineups: Record<string, { home: string[]; away: string[] }> = dateStr
+    ? await fetchLineups(dateStr).catch(() => ({}))
+    : {};
+
   // Best-effort external lookups in parallel; any failure degrades to neutral so
   // the slate is never blocked.
   const enrichments = await Promise.all(
@@ -34,7 +41,16 @@ async function runEngine(games: GameInput[], bankroll = BANKROLL_USD): Promise<B
         safeAbs(g.homeSpStats as PitcherLike | undefined),
         safeAbs(g.awaySpStats as PitcherLike | undefined),
       ]);
-      return { umpire, homeAbs, awayAbs };
+      // Star lists are not yet wired (needs per-player wRC+); with none supplied
+      // lineupStatusForSide reports confirmed/pending only — a no-op for sizing.
+      const posted = g.gamePk ? lineups[String(g.gamePk)] : undefined;
+      const homeLineup: LineupResult = posted
+        ? lineupStatusForSide(posted.home, [])
+        : PENDING_LINEUP;
+      const awayLineup: LineupResult = posted
+        ? lineupStatusForSide(posted.away, [])
+        : PENDING_LINEUP;
+      return { umpire, homeAbs, awayAbs, homeLineup, awayLineup };
     }),
   );
   const picks = games.map((g, i) => {
@@ -55,7 +71,7 @@ async function runEngine(games: GameInput[], bankroll = BANKROLL_USD): Promise<B
       homeAbs: e.homeAbs,
       awayAbs: e.awayAbs,
     });
-    return buildPick(g, model, bankroll);
+    return buildPick({ ...g, _lineupHome: e.homeLineup, _lineupAway: e.awayLineup }, model, bankroll);
   });
   return applyDailyCap(picks);
 }
@@ -72,7 +88,7 @@ export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promi
   if (hasOddsKey()) {
     const { operatingDay, games } = await buildSlate(now);
     if (games.length > 0) {
-      return { operatingDay, isDemo: false, bankroll, picks: await runEngine(games, bankroll) };
+      return { operatingDay, isDemo: false, bankroll, picks: await runEngine(games, bankroll, operatingDay) };
     }
     // Odds key is present but no games found (e.g. future date / off-day).
     // Return a live (non-demo) empty slate rather than falling through to demo.
@@ -84,7 +100,7 @@ export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promi
     operatingDay: opDay,
     isDemo: true,
     bankroll,
-    picks: await runEngine(DEMO_GAMES(opDay), bankroll),
+    picks: await runEngine(DEMO_GAMES(opDay), bankroll, opDay),
   };
 }
 
