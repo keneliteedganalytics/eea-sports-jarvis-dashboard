@@ -495,6 +495,11 @@ export function buildPick(
   const recentForm: RecentForm =
     (pickSide === "home" ? game._recentFormHome : game._recentFormAway) ?? NEUTRAL_FORM;
 
+  // Umpire-aligned bonus (MLB): a meaningful assigned-plate-umpire profile the
+  // model already folded into the run line is a small confirmation. Neutral or
+  // missing umpire data (|runAdj| ≤ 0.15) is a no-op.
+  const umpireAlignedBonus = Math.abs(model.umpireRunAdj ?? 0) > 0.15 ? 3 : 0;
+
   const confidence = Math.max(
     0,
     Math.min(
@@ -502,7 +507,8 @@ export function buildPick(
       baseConfidence +
         sharpConfidenceDelta(movement.sharpSignal) +
         lineupConfidenceDelta(lineup.status) +
-        recentFormConfidenceDelta(recentForm),
+        recentFormConfidenceDelta(recentForm) +
+        umpireAlignedBonus,
     ),
   );
 
