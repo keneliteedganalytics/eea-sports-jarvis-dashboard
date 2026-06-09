@@ -5,7 +5,7 @@ import { CompactCard } from "@/components/CompactCard";
 import { fmtUnits } from "@/lib/format";
 import type { DailySlate, BuiltPick, Verdict } from "@/lib/types";
 
-const QUALIFYING: Verdict[] = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE", "LEAN"];
+const QUALIFYING: Verdict[] = ["SNIPER", "EDGE", "RECON"];
 
 function yesterdayEt(): string {
   const fmt = new Intl.DateTimeFormat("en-CA", {

@@ -43,22 +43,16 @@ test("flat unit is 1.5% of bankroll = $375 at $25k", () => {
 });
 
 test("conviction unit ladder maps to exact counts", () => {
-  assert.equal(convictionUnits("BONUS"), 3.0);
   assert.equal(convictionUnits("SNIPER"), 2.5);
   assert.equal(convictionUnits("EDGE"), 2.0);
-  assert.equal(convictionUnits("RECON"), 1.5);
-  assert.equal(convictionUnits("VALUE"), 1.0);
-  assert.equal(convictionUnits("LEAN"), 1.0);
+  assert.equal(convictionUnits("RECON"), 1.0);
   assert.equal(convictionUnits("PASS"), 0);
 });
 
 test("dollar stakes per tier at $25k bankroll", () => {
-  assert.equal(unitsToStake(convictionUnits("BONUS"), BANK), 1125); // 3.0u
   assert.equal(unitsToStake(convictionUnits("SNIPER"), BANK), 938); // 2.5u → 937.5 → 938
   assert.equal(unitsToStake(convictionUnits("EDGE"), BANK), 750); // 2.0u
-  assert.equal(unitsToStake(convictionUnits("RECON"), BANK), 563); // 1.5u → 562.5 → 563
-  assert.equal(unitsToStake(convictionUnits("VALUE"), BANK), 375); // 1.0u
-  assert.equal(unitsToStake(convictionUnits("LEAN"), BANK), 375); // 1.0u
+  assert.equal(unitsToStake(convictionUnits("RECON"), BANK), 375); // 1.0u
 });
 
 test("juice penalty halves units beyond -180", () => {
@@ -80,7 +74,7 @@ test("exposure cap leaves a small board untouched", () => {
 });
 
 test("exposure cap scales down an over-exposed board", () => {
-  // cap = 18% of 25k = 4500. Six BONUS plays = 6 * 1125 = 6750 > 4500.
+  // cap = 18% of 25k = 4500. Six 3u plays = 6 * 1125 = 6750 > 4500.
   const stakes = Array.from({ length: 6 }, () => ({ units: 3, stakeDollars: 1125 }));
   const out = applyExposureCap(stakes, BANK);
   assert.ok(out.every((s) => s.trimmed), "all plays trimmed");

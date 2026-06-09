@@ -152,12 +152,9 @@ export function sanitizeForTTS(text: string): string {
   s = s.replace(/\b(\d+)u\b/g, (_m, n) => `${intToWords(Number(n))} units`);
 
   // Tier names → Title case for natural prosody.
-  s = s.replace(/\bBONUS\b/g, "Bonus");
   s = s.replace(/\bSNIPER\b/g, "Sniper");
   s = s.replace(/\bEDGE\b/g, "Edge");
   s = s.replace(/\bRECON\b/g, "Recon");
-  s = s.replace(/\bVALUE\b/g, "Value");
-  s = s.replace(/\bLEAN\b/g, "Lean");
   s = s.replace(/\bPASS\b/g, "pass");
 
   s = s.replace(/\s+/g, " ").trim();

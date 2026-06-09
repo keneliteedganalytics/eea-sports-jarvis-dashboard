@@ -11,7 +11,9 @@ import type { BuiltPick } from "../mlb/picksEngine";
 import type { SoccerModelResult } from "./model";
 
 export const BANKROLL_USD = 25000;
-export const MAX_PICKS_PER_DAY = 6;
+export const MAX_PICKS_PER_DAY = 5;
+// Soccer is noisier than the US majors — require a higher edge floor to play.
+export const SOCCER_MIN_EDGE_PP = 7.0;
 const GOAL_MARGIN_SCALE = 1.8;
 const TOTAL_SCALE = 2.2;
 
@@ -304,11 +306,16 @@ export function buildPick(
     winProb: pickWp,
   });
 
+  // Soccer edge floor (v5): below 7pp → PASS regardless of confidence.
+  if (!hardPass && (pickEdge === null || Math.abs(pickEdge) < SOCCER_MIN_EDGE_PP)) {
+    tier = "PASS";
+  }
+
   // Soccer caps (§6):
-  // Draw bets → cap at RECON (no SNIPER/BONUS for draws)
+  // Draw bets → cap at RECON (no SNIPER/EDGE for draws)
   // Friendly → cap at RECON
   // WC group stage matchday 1 → cap at RECON
-  const ABOVE_RECON: Verdict[] = ["BONUS", "SNIPER", "EDGE"];
+  const ABOVE_RECON: Verdict[] = ["SNIPER", "EDGE"];
   const isCapped = isDraw || game.isFriendly || game.isWorldCupMatchday1;
   if (isCapped && ABOVE_RECON.includes(tier as Verdict)) {
     tier = "RECON";
@@ -331,12 +338,8 @@ export function buildPick(
 
   if (phantomEdge) { units = 0; stakeDollars = 0; verdictTier = "PASS"; }
 
-  const qualifies = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE"].includes(verdictTier);
-  let verdict: "PLAY" | "PASS" | "LEAN";
-  if (hardPass || verdictTier === "PASS") verdict = "PASS";
-  else if (verdictTier === "LEAN") verdict = "LEAN";
-  else if (qualifies) verdict = "PLAY";
-  else verdict = "PASS";
+  const qualifies = verdictTier !== "PASS" && !hardPass;
+  const verdict: "PLAY" | "PASS" = qualifies ? "PLAY" : "PASS";
 
   const leaguePrefix = computeLeaguePrefix(game.leagueName, game.isFriendly);
 
@@ -457,7 +460,7 @@ function computeEv(modelProb: number, americanOdds: number, stake = 100.0): numb
 }
 
 const TIER_RANK: Record<Verdict, number> = {
-  BONUS: 0, SNIPER: 1, EDGE: 2, RECON: 3, VALUE: 4, LEAN: 5, PASS: 6,
+  SNIPER: 0, EDGE: 1, RECON: 2, PASS: 3,
 };
 
 export function applyDailyCap(picks: SoccerPick[], maxPicks = MAX_PICKS_PER_DAY): SoccerPick[] {
@@ -470,8 +473,9 @@ export function applyDailyCap(picks: SoccerPick[], maxPicks = MAX_PICKS_PER_DAY)
   for (const p of sorted) {
     if (p.qualifies) {
       if (actionableCount >= maxPicks) {
-        (p as SoccerPick & { verdictTier: Verdict }).verdictTier = "LEAN";
-        p.verdict = "LEAN";
+        (p as SoccerPick & { verdictTier: Verdict }).verdictTier = "PASS";
+        p.tier = "PASS";
+        p.verdict = "PASS";
         p.qualifies = false;
         p.units = 0;
         p.kellyStakeDollars = 0;

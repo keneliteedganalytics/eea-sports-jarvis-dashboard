@@ -137,7 +137,7 @@ test("Asian handicap: zero line", () => {
 });
 
 // ── §6: Draw cap at RECON ────────────────────────────────────────────────────
-test("Draw pick: even with edge≥8 and conf≥80, capped at RECON not SNIPER/BONUS", () => {
+test("Draw pick: even with edge≥8 and conf≥80, capped at RECON not SNIPER/EDGE", () => {
   // Build a model that strongly favors the draw
   const model = predictGame({
     homeTeam: "AAA", awayTeam: "BBB",
@@ -161,8 +161,8 @@ test("Draw pick: even with edge≥8 and conf≥80, capped at RECON not SNIPER/BO
   if (pick.isDraw) {
     const tier = pick.verdictTier;
     assert.ok(
-      !["BONUS", "SNIPER"].includes(tier),
-      `draw tier=${tier} should not be BONUS or SNIPER`,
+      !["SNIPER", "EDGE"].includes(tier),
+      `draw tier=${tier} should not be SNIPER or EDGE`,
     );
   }
 });
@@ -188,8 +188,8 @@ test("Friendly match: tier capped at RECON (no BONUS/SNIPER/EDGE)", () => {
   const pick = buildPick(game, model);
   const tier = pick.verdictTier;
   assert.ok(
-    !["BONUS", "SNIPER", "EDGE"].includes(tier),
-    `friendly tier=${tier} should not be BONUS/SNIPER/EDGE`,
+    !["SNIPER", "EDGE"].includes(tier),
+    `friendly tier=${tier} should not be SNIPER/EDGE`,
   );
 });
 

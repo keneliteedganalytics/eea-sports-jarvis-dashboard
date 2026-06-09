@@ -106,7 +106,7 @@ export interface BuiltPick {
   subSampleDetails: string | null;
   alignmentSignalRaw: number | null;
   topPlay: boolean;
-  verdict: "PLAY" | "PASS" | "LEAN";
+  verdict: "PLAY" | "PASS";
   verdictTier: Verdict;
   qualifies: boolean;
   trapSignal: boolean;
@@ -484,12 +484,8 @@ export function buildPick(
     if (!model.modelNotes.includes(PHANTOM_NOTE)) model.modelNotes.unshift(PHANTOM_NOTE);
   }
 
-  const qualifies = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE"].includes(verdictTier);
-  let verdict: "PLAY" | "PASS" | "LEAN";
-  if (hardPass || verdictTier === "PASS") verdict = "PASS";
-  else if (verdictTier === "LEAN") verdict = "LEAN";
-  else if (qualifies) verdict = "PLAY";
-  else verdict = "PASS";
+  const qualifies = verdictTier !== "PASS" && !hardPass;
+  const verdict: "PLAY" | "PASS" = qualifies ? "PLAY" : "PASS";
 
   // 6-signal TOP PLAY badge (SPEC §8) — computed separately from tier.
   const ourSp = pickSide === "home" ? homeSp : awaySp;
@@ -592,15 +588,13 @@ export function buildPick(
   };
 }
 
-// Daily 6-pick cap: sort by tier rank then edge; surplus actionable → LEAN.
+// Daily cap: sort by edge desc (within tier rank), take the top N actionable
+// plays; surplus actionable picks fall to PASS (not displayed in plays-only).
 const TIER_RANK: Record<Verdict, number> = {
-  BONUS: 0,
-  SNIPER: 1,
-  EDGE: 2,
-  RECON: 3,
-  VALUE: 4,
-  LEAN: 5,
-  PASS: 6,
+  SNIPER: 0,
+  EDGE: 1,
+  RECON: 2,
+  PASS: 3,
 };
 
 export function applyDailyCap(picks: BuiltPick[], maxPicks = MAX_PICKS_PER_DAY): BuiltPick[] {
@@ -614,9 +608,8 @@ export function applyDailyCap(picks: BuiltPick[], maxPicks = MAX_PICKS_PER_DAY):
   for (const p of sorted) {
     if (p.qualifies) {
       if (actionableCount >= maxPicks) {
-        // downgrade surplus to LEAN
-        p.verdictTier = "LEAN";
-        p.verdict = "LEAN";
+        p.verdictTier = "PASS";
+        p.verdict = "PASS";
         p.qualifies = false;
         p.units = 0;
         p.kellyStakeDollars = 0;

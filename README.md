@@ -54,9 +54,9 @@ stale-line trap detector, and an elite-pitcher fade. Stakes use EEA flat-unit
 sizing — one unit is 1.5% of bankroll, each conviction tier maps to an exact unit
 count, lines worse than -180 are half-staked, and a slate-wide 18% exposure cap
 trims the board. A phantom-edge detector forces PASS when a fat edge is a pricing
-artifact from missing data. Picks are graded into a tier ladder (BONUS → SNIPER →
-EDGE → RECON → VALUE → LEAN → PASS) with a 7-component confidence score and a
-6-pick daily cap (surplus downgraded to LEAN).
+artifact from missing data. Picks are graded into a four-tier ladder (SNIPER →
+EDGE → RECON → PASS) with a confidence score and per-sport daily caps (MLB 6,
+NHL/NBA 3, soccer 5); surplus actionable plays fall to PASS.
 
 ## Routes
 
@@ -68,5 +68,5 @@ EDGE → RECON → VALUE → LEAN → PASS) with a 7-component confidence score 
 ## Tests
 
 `npm test` asserts the locked invariants: `americanToProb(-150) ≈ 0.60`,
-`assignTier` returns `BONUS` at edge 8.5pp / conf 82 / poly 65, `kellyFraction`
+`assignTier` returns `SNIPER` at edge 8.5pp / conf 82, `kellyFraction`
 is positive on a real edge, and the quarter-Kelly 3% cap holds on an oversized edge.

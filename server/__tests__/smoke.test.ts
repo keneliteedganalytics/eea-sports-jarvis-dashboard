@@ -46,7 +46,7 @@ function assertPick(p: BuiltPick, label: string) {
   assert.equal(p.gameDate, DATE, `${label}: game dated ${DATE}`);
   assert.ok(p.matchup.includes("@"), `${label}: matchup formatted`);
   assert.ok(p.pickTeamFull, `${label}: has pick team`);
-  assert.ok(["PLAY", "PASS", "LEAN"].includes(p.verdict), `${label}: valid verdict`);
+  assert.ok(["PLAY", "PASS"].includes(p.verdict), `${label}: valid verdict`);
   assert.ok(p.confidence >= 0 && p.confidence <= 100, `${label}: confidence in range`);
   assert.ok(p.homeWinProb >= 0.15 && p.homeWinProb <= 0.85, `${label}: home prob clamped`);
   assertMarketSet(p.markets, label);
@@ -79,11 +79,12 @@ async function run() {
     assert.ok(total > 0, "board produced at least one pick");
   });
 
-  await test("daily cap holds — at most 6 qualifying plays per sport", async () => {
+  await test("daily cap holds — per-sport actionable cap (MLB 6, NHL/NBA 3, soccer 5)", async () => {
     const slate = await getDailySlate(undefined, DATE);
+    const caps: Record<string, number> = { mlb: 6, nhl: 3, nba: 3, soccer: 5 };
     for (const sport of ["mlb", "nhl", "nba", "soccer"] as const) {
       const qualifying = slate.sports[sport].picks.filter((p) => p.qualifies).length;
-      assert.ok(qualifying <= 6, `${sport}: ${qualifying} qualifying ≤ 6`);
+      assert.ok(qualifying <= caps[sport], `${sport}: ${qualifying} qualifying ≤ ${caps[sport]}`);
     }
   });
 

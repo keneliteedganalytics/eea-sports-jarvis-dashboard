@@ -28,9 +28,21 @@ test("americanToProb(-150) ≈ 0.60", () => {
   assert.ok(Math.abs((p as number) - 0.6) < 0.001, `got ${p}`);
 });
 
-test("assignTier(edge=8.5, conf=82, poly=65) → BONUS", () => {
-  const tier = assignTier({ edgePp: 8.5, confidence: 82, polyPct: 65 });
-  assert.equal(tier, "BONUS");
+test("assignTier(edge=8.5, conf=82) → SNIPER", () => {
+  const tier = assignTier({ edgePp: 8.5, confidence: 82 });
+  assert.equal(tier, "SNIPER");
+});
+
+test("assignTier(edge=5.5, conf=60) → EDGE", () => {
+  assert.equal(assignTier({ edgePp: 5.5, confidence: 60 }), "EDGE");
+});
+
+test("assignTier(edge=3.5, conf=52) → RECON", () => {
+  assert.equal(assignTier({ edgePp: 3.5, confidence: 52 }), "RECON");
+});
+
+test("assignTier(edge=2.0, conf=80) → PASS (below RECON edge floor)", () => {
+  assert.equal(assignTier({ edgePp: 2.0, confidence: 80 }), "PASS");
 });
 
 test("kellyFraction(0.55, -110) > 0", () => {

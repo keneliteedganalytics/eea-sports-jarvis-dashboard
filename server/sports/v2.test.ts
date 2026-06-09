@@ -275,11 +275,9 @@ test("sizing: 1 unit = 1.5% of $35,800 = $537", () => {
 });
 
 test("sizing: conviction units per tier", () => {
-  assert.equal(convictionUnits("BONUS"), 3.0);
   assert.equal(convictionUnits("SNIPER"), 2.5);
   assert.equal(convictionUnits("EDGE"), 2.0);
-  assert.equal(convictionUnits("RECON"), 1.5);
-  assert.equal(convictionUnits("VALUE"), 1.0);
+  assert.equal(convictionUnits("RECON"), 1.0);
   assert.equal(convictionUnits("PASS"), 0);
 });
 
@@ -307,7 +305,7 @@ test("exposure: under-cap board is untouched", () => {
 });
 
 test("exposure: over-cap board scales down to 18% and flags trimmed", () => {
-  // Cap = 0.18 × 35,800 = $6,444. Eight 3-unit BONUS plays = 8 × $1,611 = $12,888.
+  // Cap = 0.18 × 35,800 = $6,444. Eight 3-unit plays = 8 × $1,611 = $12,888.
   const stakes = Array.from({ length: 8 }, () => ({ units: 3, stakeDollars: 1611 }));
   const out = applyExposureCap(stakes, 35800);
   const total = out.reduce((s, x) => s + x.stakeDollars, 0);

@@ -60,7 +60,7 @@ export function buildTwoWayMarket(
         });
 
   // EEA flat-unit sizing (SPEC §4): conviction units per tier, juice half-cut.
-  const qualifies = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE"].includes(tier);
+  const qualifies = tier !== "PASS";
   let units = 0;
   if (qualifies && modelProb !== null) {
     units = applyJuicePenalty(convictionUnits(tier), sidePrice).units;

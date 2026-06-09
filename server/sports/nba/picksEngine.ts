@@ -11,7 +11,7 @@ import type { BuiltPick, PolymarketData } from "../mlb/picksEngine";
 import type { NbaModelResult, TeamHoopStats } from "./model";
 
 export const BANKROLL_USD = 25000;
-export const MAX_PICKS_PER_DAY = 6;
+export const MAX_PICKS_PER_DAY = 3;
 const SPREAD_MARGIN_SCALE = 6.5; // points-diff → cover prob scale
 const TOTAL_SCALE = 9.0;
 
@@ -163,12 +163,8 @@ export function buildPick(game: NbaGameInput, model: NbaModelResult, bankroll = 
     if (!model.modelNotes.includes(PHANTOM_NOTE)) model.modelNotes.unshift(PHANTOM_NOTE);
   }
 
-  const qualifies = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE"].includes(verdictTier);
-  let verdict: "PLAY" | "PASS" | "LEAN";
-  if (hardPass || verdictTier === "PASS") verdict = "PASS";
-  else if (verdictTier === "LEAN") verdict = "LEAN";
-  else if (qualifies) verdict = "PLAY";
-  else verdict = "PASS";
+  const qualifies = verdictTier !== "PASS" && !hardPass;
+  const verdict: "PLAY" | "PASS" = qualifies ? "PLAY" : "PASS";
 
   const hardPassOrPhantom = hardPass || phantomEdge;
   const markets = buildMarkets(game, model, pickSide, pickTeam, pickEdge, pickMl, pickBook, verdictTier, units, hardPassOrPhantom);
@@ -307,7 +303,7 @@ function buildMarkets(
 }
 
 const TIER_RANK: Record<Verdict, number> = {
-  BONUS: 0, SNIPER: 1, EDGE: 2, RECON: 3, VALUE: 4, LEAN: 5, PASS: 6,
+  SNIPER: 0, EDGE: 1, RECON: 2, PASS: 3,
 };
 
 export function applyDailyCap(picks: BuiltPick[], maxPicks = MAX_PICKS_PER_DAY): BuiltPick[] {
@@ -320,8 +316,8 @@ export function applyDailyCap(picks: BuiltPick[], maxPicks = MAX_PICKS_PER_DAY):
   for (const p of sorted) {
     if (p.qualifies) {
       if (count >= maxPicks) {
-        p.verdictTier = "LEAN";
-        p.verdict = "LEAN";
+        p.verdictTier = "PASS";
+        p.verdict = "PASS";
         p.qualifies = false;
         p.units = 0;
         p.kellyStakeDollars = 0;

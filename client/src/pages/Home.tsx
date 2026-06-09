@@ -17,9 +17,9 @@ const SPORT_CHIPS: { key: SportFilter; label: string; disabled?: boolean }[] = [
 const SOON_CHIPS = ["NFL soon", "NCAAF soon", "NCAAB soon"];
 
 const TIER_RANK: Record<Verdict, number> = {
-  BONUS: 0, SNIPER: 1, EDGE: 2, RECON: 3, VALUE: 4, LEAN: 5, PASS: 6,
+  SNIPER: 0, EDGE: 1, RECON: 2, PASS: 3,
 };
-const QUALIFYING: Verdict[] = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE", "LEAN"];
+const QUALIFYING: Verdict[] = ["SNIPER", "EDGE", "RECON"];
 
 function todayEt(): string {
   // Operating-day date in YYYY-MM-DD (America/New_York).

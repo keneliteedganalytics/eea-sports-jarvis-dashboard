@@ -1,12 +1,9 @@
 import type { Verdict } from "./types";
 
 export const TIER_META: Record<Verdict, { label: string; hex: string }> = {
-  BONUS: { label: "★ BONUS PLAY", hex: "#4ADE80" },
   SNIPER: { label: "SNIPER PLAY", hex: "#E8C14A" },
   EDGE: { label: "EDGE PLAY", hex: "#C9A227" },
   RECON: { label: "RECON PLAY", hex: "#9A7B1E" },
-  VALUE: { label: "VALUE PLAY", hex: "#A5B4FC" },
-  LEAN: { label: "LEAN", hex: "#8892A0" },
   PASS: { label: "PASS", hex: "#6B7A99" },
 };
 

@@ -8,7 +8,7 @@
 
 import { hitRatesByTier, trackRecord, type BetLogEntry } from "./sports/mlb/trackRecord";
 
-const TIER_ORDER = ["BONUS", "SNIPER", "EDGE", "RECON", "VALUE", "LEAN"];
+const TIER_ORDER = ["SNIPER", "EDGE", "RECON"];
 const SPORTS = ["MLB", "NHL", "NBA", "SOCCER"];
 
 export interface AnalyticsFilters {

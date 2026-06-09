@@ -1,14 +1,9 @@
 // Shared engine types — ported from sports-engine/core/types.py
 
 export type Sport = "MLB" | "NBA" | "NHL" | "NCAAF" | "NCAAB" | "NFL";
-export type Verdict =
-  | "BONUS"
-  | "SNIPER"
-  | "EDGE"
-  | "RECON"
-  | "VALUE"
-  | "LEAN"
-  | "PASS";
+// Collapsed tier ladder (v5): exactly four tiers. PASS is non-actionable and is
+// not shown in plays-only views.
+export type Verdict = "SNIPER" | "EDGE" | "RECON" | "PASS";
 export type Side = "home" | "away";
 
 export interface StarterInfo {

@@ -1,5 +1,5 @@
 // Confidence scoring — ported from sports-engine core/confidence.py.
-// 7-component additive score, base 30, clamped 0–99. VALUE cap 72.
+// 7-component additive score, base 30, clamped 0–99. Underdog directional cap 72.
 
 import type { ConfidenceSignals } from "./types";
 
@@ -40,11 +40,11 @@ export function computeConfidence(s: ConfidenceSignals): number {
     score -= 10.0 * sev;
   }
 
-  // 8. Directional penalty for VALUE plays (model thinks our side is dog)
+  // 8. Directional penalty when the model thinks our side is the underdog.
   if (s.modelProb !== null && s.modelProb !== undefined && s.modelProb < 0.5) {
     const directionalPenalty = (0.5 - s.modelProb) * 50.0; // max 25 at p=0
     score -= directionalPenalty;
-    score = Math.min(score, 72.0); // VALUE cap
+    score = Math.min(score, 72.0);
   }
 
   return Math.max(0, Math.min(99, Math.round(score)));

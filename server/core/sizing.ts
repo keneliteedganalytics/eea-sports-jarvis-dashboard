@@ -15,22 +15,15 @@ export function computeUnit(bankroll: number): number {
   return Math.round(bankroll * FLAT_UNIT_PCT * 100) / 100;
 }
 
-// Conviction-based unit count per verdict tier. Engine FINALIZES the exact
-// number (Ken's locked answer 2026-06-07): BONUS 3, SNIPER 2.5, EDGE 2,
-// RECON 1.5, VALUE/LEAN 1, PASS 0.
+// Conviction-based unit count per verdict tier (v5 collapsed ladder):
+// SNIPER 2.5, EDGE 2.0, RECON 1.0, PASS 0.
 export function convictionUnits(tier: Verdict): number {
   switch (tier) {
-    case "BONUS":
-      return 3.0;
     case "SNIPER":
       return 2.5;
     case "EDGE":
       return 2.0;
     case "RECON":
-      return 1.5;
-    case "VALUE":
-      return 1.0;
-    case "LEAN":
       return 1.0;
     case "PASS":
       return 0;

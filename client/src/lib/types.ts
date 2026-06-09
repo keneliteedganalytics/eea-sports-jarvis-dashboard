@@ -1,7 +1,7 @@
 // Client-side mirror of the API payload shapes returned by the server. Kept
 // minimal — only the fields the UI reads.
 
-export type Verdict = "BONUS" | "SNIPER" | "EDGE" | "RECON" | "VALUE" | "LEAN" | "PASS";
+export type Verdict = "SNIPER" | "EDGE" | "RECON" | "PASS";
 
 export interface Market {
   available: boolean;
@@ -58,7 +58,7 @@ export interface BuiltPick {
   subSampleDetails: string | null;
   alignmentSignalRaw: number | null;
   topPlay: boolean;
-  verdict: "PLAY" | "PASS" | "LEAN";
+  verdict: "PLAY" | "PASS";
   verdictTier: Verdict;
   qualifies: boolean;
   trapSignal: boolean;
