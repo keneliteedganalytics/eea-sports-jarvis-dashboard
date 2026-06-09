@@ -10,6 +10,13 @@ import { emptyMarket } from "../../core/types";
 import type { ModelResult } from "./model";
 import { SOLID_IP_MIN, type PitcherStats } from "./pitchers";
 import type { TeamOffense } from "./ratings";
+import type { OddsEvent } from "../../adapters/oddsApi";
+import {
+  movementForPick,
+  sharpConfidenceDelta,
+  NEUTRAL_MOVEMENT,
+  type SharpSignal,
+} from "../../adapters/lineMovement";
 
 export const ELITE_FADE_PP = 12.0;
 export const MAX_PICKS_PER_DAY = 6;
@@ -53,6 +60,9 @@ export interface GameInput {
   _publicPct?: number | null;
   _sharpPct?: number | null;
   _polymarketData?: PolymarketData;
+  // Raw Odds API event, retained so the line-movement signal can be derived per
+  // pick side after the pick is chosen (set by data.ts; undefined on demo).
+  _oddsEvent?: OddsEvent | null;
 }
 
 export interface PolymarketData {
@@ -137,6 +147,12 @@ export interface BuiltPick {
   sharpPct: number | null;   // implied prob from sharp books (0-100)
   umpireName?: string | null;   // assigned HP umpire (MLB), null when unknown
   umpireRunAdj?: number;        // per-game run adjustment from umpire profile
+  // Line movement + Pinnacle oracle (set when an Odds API event is available)
+  openingLine?: number | null;  // pick-side American odds at first capture
+  currentLine?: number | null;  // pick-side American odds now
+  clvLive?: number | null;      // currentLine − openingLine, in cents (signed)
+  sharpSignal?: SharpSignal;    // Pinnacle vs pick side
+  steam?: boolean;              // a fast line move inside the steam window
   modelNotes: string[];
   // Graded-book status, attached when a slate is served (undefined until the
   // pick is persisted; "pending" once in the book). Drives the colored cards.
@@ -428,7 +444,7 @@ export function buildPick(
     orientedPoly = { ...resolvedPoly, pct: Math.round((100 - resolvedPoly.pct) * 10) / 10 };
   }
 
-  const confidence = computeConfidence({
+  const baseConfidence = computeConfidence({
     edgePp: pickEdge,
     evPer100: ev,
     isSparseModel: model.isSparseModel,
@@ -441,6 +457,17 @@ export function buildPick(
     pickWinProb: pickWp,
     polymarket: orientedPoly,
   });
+
+  // Line movement + Pinnacle oracle. Best-effort: NEUTRAL when no Odds API event
+  // / history is available (e.g. demo slate). Pinnacle confirming the pick side
+  // nudges confidence up; fading it cuts confidence.
+  const movement = game._oddsEvent
+    ? movementForPick(game._oddsEvent, pickSide, pickFairMkt)
+    : NEUTRAL_MOVEMENT;
+  const confidence = Math.max(
+    0,
+    Math.min(99, baseConfidence + sharpConfidenceDelta(movement.sharpSignal)),
+  );
 
   const polyPct = orientedPoly?.found ? (orientedPoly.pct ?? null) : null;
 
@@ -589,6 +616,11 @@ export function buildPick(
     sharpPct: resolvedSharpPct,
     umpireName: model.umpireName,
     umpireRunAdj: model.umpireRunAdj,
+    openingLine: movement.openingLine,
+    currentLine: movement.currentLine,
+    clvLive: movement.clvCents,
+    sharpSignal: movement.sharpSignal,
+    steam: movement.steam,
     modelNotes: model.modelNotes,
   };
 }

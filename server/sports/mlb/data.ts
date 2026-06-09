@@ -8,6 +8,7 @@ import { consensusSnhl, bestPrice, type Bookmaker } from "../../core/odds";
 import { computePublicSharp, type RawBookmaker } from "../../core/consensus";
 import { fetchPolymarketForGame, type PolymarketResult } from "../../adapters/polymarket";
 import { getOperatingDay, inOperatingWindow, utcIsoToEtClock } from "./operatingDay";
+import { captureSnapshot } from "../../adapters/lineMovement";
 import { classifyPitcher } from "./pitchers";
 import type { GameInput, PolymarketData } from "./picksEngine";
 import type { PitcherStats } from "./pitchers";
@@ -133,8 +134,13 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       _publicPct: publicPct,
       _sharpPct: sharpPct,
       _polymarketData: polyData,
+      _oddsEvent: ev,
     });
   }
+
+  // Capture a moneyline snapshot for the in-window events so the line-movement
+  // history accrues across slate builds. Best-effort — never blocks the slate.
+  captureSnapshot(inWindow, "mlb");
 
   return { operatingDay: opDay, games };
 }

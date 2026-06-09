@@ -164,6 +164,24 @@ function umpirePhrase(pick: BuiltPick): string {
   return `${surname} is behind the plate with ${dir} by about ${spellNumber(tenths)} runs a game.`;
 }
 
+// Spoken line-movement note. When Pinnacle (the sharpest book) confirms or
+// fades the pick side, we say so, framing the consensus drift from opening to
+// current line. Returns "" when there's no signal.
+function sharpPhrase(pick: BuiltPick): string {
+  const signal = pick.sharpSignal;
+  if (!signal || signal === "neutral") return "";
+  const open = pick.openingLine ?? null;
+  const cur = pick.currentLine ?? null;
+  const drift =
+    open !== null && cur !== null && open !== cur
+      ? `The line has moved from ${spellMoneyLine(open)} to ${spellMoneyLine(cur)}, and `
+      : "";
+  if (signal === "sharp_confirms_pick") {
+    return `${drift}Pinnacle is on our side — sharp money confirming.`;
+  }
+  return `${drift}Pinnacle is leaning the other way, so the sharp money is fading us here.`;
+}
+
 // Build the deterministic spoken brief from pick fields. This is the canonical
 // script: fully humanized, no digits, no acronyms, no double commas. The Claude
 // path falls back to this when no key is set.
@@ -201,6 +219,8 @@ export function buildBriefScript(pick: BuiltPick, bankroll: number, now: Date = 
 
   const ump = umpirePhrase(pick);
   if (ump) sentences.splice(3, 0, ump);
+  const sharp = sharpPhrase(pick);
+  if (sharp) sentences.splice(sentences.length - 1, 0, sharp);
 
   // Spell any stat acronyms the team names or drivers may still carry, then
   // collapse any incidental double commas/spaces into a single clean pause.
@@ -243,6 +263,7 @@ export async function generateBrief(
     `Fair value / closing line: ${spellMoneyLine(pick.fairMl)}`,
     `Projected ${v.scoreUnit}: away ${spellNumber(away)}, home ${spellNumber(home)}, total ${spellNumber(Math.round((away + home) * 10) / 10)}`,
     ...(umpirePhrase(pick) ? [`Umpire note (work in naturally): ${umpirePhrase(pick)}`] : []),
+    ...(sharpPhrase(pick) ? [`Line-movement note (work in naturally): ${sharpPhrase(pick)}`] : []),
   ].join("\n");
 
   const text = await generate(SYSTEM, `Write the spoken brief for this pick:\n${facts}`);
