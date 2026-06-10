@@ -125,6 +125,18 @@ export function gradedDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_picks_gameDate ON picks(gameDate);
     CREATE INDEX IF NOT EXISTS idx_picks_status ON picks(status);
     CREATE INDEX IF NOT EXISTS idx_picks_sport ON picks(sport);
+    CREATE TABLE IF NOT EXISTS pick_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pickId TEXT,
+      action TEXT,
+      fromTier TEXT,
+      toTier TEXT,
+      fromOdds REAL,
+      toOdds REAL,
+      reason TEXT,
+      createdAt TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_pick_audit_pickId ON pick_audit(pickId);
   `);
   // Migrate pre-lock databases in place (CREATE TABLE IF NOT EXISTS skips the new
   // columns on an existing table). Mirror of migrations/0001_pick_lock.sql.
@@ -285,6 +297,86 @@ export function confirmBet(id: string): GradedPick | undefined {
     updatedAt: now,
   });
   return getPick(id);
+}
+
+export interface PickAuditRow {
+  id: number;
+  pickId: string;
+  action: string;
+  fromTier: string | null;
+  toTier: string | null;
+  fromOdds: number | null;
+  toOdds: number | null;
+  reason: string;
+  createdAt: string;
+}
+
+export interface AdminLockOverride {
+  tier: string;
+  odds?: number;
+  stake?: number;
+  reason: string;
+}
+
+export interface AdminLockResult {
+  pick: GradedPick;
+  audit: PickAuditRow;
+}
+
+// Admin recovery path: override a pick's tier/odds/stake on the raw row, then
+// snapshot+lock it via confirmBet, and record the change in pick_audit. Used to
+// repair a pick whose stored tier was clobbered by a recompute before the user
+// got to lock it (the original tier/odds are authoritative, not the recompute).
+// Returns undefined when the pick id doesn't exist.
+export function adminLockWithOverride(id: string, override: AdminLockOverride): AdminLockResult | undefined {
+  const db = gradedDb();
+  const before = getRawPick(id);
+  if (!before) return undefined;
+
+  const sets: string[] = [];
+  const params: Record<string, unknown> = { id };
+  if (override.tier !== undefined) {
+    sets.push("tier=@tier");
+    params.tier = override.tier;
+  }
+  if (override.odds !== undefined) {
+    sets.push("pickMl=@pickMl");
+    params.pickMl = override.odds;
+  }
+  if (override.stake !== undefined) {
+    sets.push("stakeDollars=@stakeDollars");
+    params.stakeDollars = override.stake;
+  }
+  if (sets.length > 0) {
+    const now = new Date().toISOString();
+    sets.push("updatedAt=@updatedAt");
+    params.updatedAt = now;
+    db.prepare(`UPDATE picks SET ${sets.join(", ")} WHERE id=@id`).run(params);
+  }
+
+  const pick = confirmBet(id)!;
+
+  const auditAt = new Date().toISOString();
+  const info = db
+    .prepare(
+      `INSERT INTO pick_audit (pickId, action, fromTier, toTier, fromOdds, toOdds, reason, createdAt)
+       VALUES (@pickId, @action, @fromTier, @toTier, @fromOdds, @toOdds, @reason, @createdAt)`,
+    )
+    .run({
+      pickId: id,
+      action: "admin-lock",
+      fromTier: before.tier,
+      toTier: override.tier ?? before.tier,
+      fromOdds: before.pickMl,
+      toOdds: override.odds ?? before.pickMl,
+      reason: override.reason,
+      createdAt: auditAt,
+    });
+  const audit = db
+    .prepare("SELECT * FROM pick_audit WHERE id = ?")
+    .get(Number(info.lastInsertRowid)) as PickAuditRow;
+
+  return { pick, audit };
 }
 
 // Open picks for a date that still need a live/score update (not yet final and
