@@ -13,7 +13,7 @@
 // settled pick), so a graded result is never disturbed.
 
 import {
-  activePropPicksForDate,
+  undecidedPropPicksForDay,
   getPropPick,
   updatePropPickEval,
   markPropPickPass,
@@ -24,8 +24,13 @@ import {
 import { buildMlbPropPicks, type BuildDeps } from "../sports/props/buildPropPicks";
 import { getOperatingDay } from "../sports/mlb/operatingDay";
 
-export const RECOMPUTE_FLAG = "recompute_v676_completed";
-export const RECOMPUTE_AT = "recompute_v676_completed_at";
+// Flag is suffixed -r2 because the first cut snapshotted picks via the
+// prop_offers game_date join (activePropPicksForDate), which returned zero rows
+// on the live board (offer rows lacked a matching game_date) — so nothing was
+// re-tiered. The corrected job snapshots straight off prop_picks by posted_at;
+// bumping the flag lets it run once more on the deploy that ships the fix.
+export const RECOMPUTE_FLAG = "recompute_v676_completed_r2";
+export const RECOMPUTE_AT = "recompute_v676_completed_at_r2";
 
 function log(message: string): void {
   const t = new Date().toLocaleTimeString("en-US", {
@@ -54,7 +59,7 @@ export interface RecomputeDeps {
 
 const DEFAULT_DEPS: RecomputeDeps = {
   build: buildMlbPropPicks,
-  activePicks: activePropPicksForDate,
+  activePicks: undecidedPropPicksForDay,
   getPick: getPropPick,
   markPass: markPropPickPass,
   getState: getSystemState,

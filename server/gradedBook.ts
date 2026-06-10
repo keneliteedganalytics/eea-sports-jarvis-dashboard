@@ -885,7 +885,9 @@ export function getPropPick(id: string): PropPickRow | undefined {
 }
 
 // Active (ungraded) prop picks for a sport+date. Mirrors the slate board shape.
-export function propBoard(opts: { sport?: string | null; date?: string | null } = {}): PropPickRow[] {
+export function propBoard(
+  opts: { sport?: string | null; date?: string | null; tier?: string | null } = {},
+): PropPickRow[] {
   const db = gradedDb();
   const clauses = ["result IS NULL"];
   const params: Record<string, unknown> = {};
@@ -896,6 +898,30 @@ export function propBoard(opts: { sport?: string | null; date?: string | null } 
   if (opts.date) {
     clauses.push("substr(posted_at, 1, 10) = @date");
     params.date = opts.date;
+  }
+  // PASS picks are demoted survivors (e.g. the v6.7.6 recompute stamped them when
+  // they no longer cleared the tightened gates). Hide them from the default board
+  // but keep them queryable with ?tier=ALL so the filtered set stays auditable.
+  if (!opts.tier || opts.tier.toUpperCase() !== "ALL") {
+    clauses.push("tier != 'PASS'");
+  }
+  return db
+    .prepare(`SELECT * FROM prop_picks WHERE ${clauses.join(" AND ")} ORDER BY posted_at DESC`)
+    .all(params) as PropPickRow[];
+}
+
+// Undecided prop picks for a single operating day, selected the SAME way the
+// board does (directly off prop_picks by posted_at, NOT via the prop_offers
+// game_date join). The recompute job needs this: activePropPicksForDate's offer
+// join silently returns nothing when an offer row lacks a matching game_date, so
+// using it to snapshot the board would scan zero picks and demote nothing.
+export function undecidedPropPicksForDay(date: string, sport?: string | null): PropPickRow[] {
+  const db = gradedDb();
+  const clauses = ["result IS NULL", "substr(posted_at, 1, 10) = @date"];
+  const params: Record<string, unknown> = { date };
+  if (sport && sport.toUpperCase() !== "ALL") {
+    clauses.push("sport = @sport");
+    params.sport = sport.toLowerCase();
   }
   return db
     .prepare(`SELECT * FROM prop_picks WHERE ${clauses.join(" AND ")} ORDER BY posted_at DESC`)

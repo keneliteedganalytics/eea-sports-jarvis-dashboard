@@ -88,6 +88,17 @@ await test("propBoard returns ungraded picks; gradedPropPicks excludes them", ()
   assert.ok(!graded.some((r) => r.pick_id === "p1"));
 });
 
+await test("propBoard hides PASS-tier picks by default, surfaces them with tier=ALL", () => {
+  upsertPropPick({
+    pick_id: "pPASS", sport: "nba", game_id: "gPASS", player_name: "Demoted Player",
+    market_type: "points", line: 20.5, side: "over", posted_odds: -110, tier: "PASS",
+  });
+  const def = propBoard();
+  assert.ok(!def.some((r) => r.pick_id === "pPASS"), "PASS hidden from default board");
+  const all = propBoard({ tier: "ALL" });
+  assert.ok(all.some((r) => r.pick_id === "pPASS"), "PASS surfaced with tier=ALL");
+});
+
 // ── Grading W/L/P ───────────────────────────────────────────────────────────
 await test("gradePropPick W: over hits, +odds payout, settles the row", () => {
   upsertPropPick({

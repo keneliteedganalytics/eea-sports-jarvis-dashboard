@@ -427,9 +427,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/props/board", (req: Request, res: Response) => {
     const sport = typeof req.query.sport === "string" ? req.query.sport : null;
     const date = parseDateParam(req.query.date) ?? null;
+    const tier = typeof req.query.tier === "string" ? req.query.tier : null;
     // Surface the live-tracking fields on the FIRST render (camelCased like the
     // rest of the API) so cards can color without waiting for the /live poll.
-    const items = propBoard({ sport, date }).map((row) => ({
+    const items = propBoard({ sport, date, tier }).map((row) => ({
       ...row,
       liveState: row.live_state ?? "pending",
       currentValue: row.live_value,
