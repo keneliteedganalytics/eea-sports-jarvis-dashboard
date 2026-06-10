@@ -203,9 +203,13 @@ await test("statusForPick resolves the game via offer event_home/away when pick.
     stake_units: 0.5,
   });
   const db = gb.gradedDb();
+  // Mirror the exact prod corruption shape: team NULL, opponent a STALE bogus
+  // constant ("Boston Red Sox" — not in this game). The reconciliation must
+  // prefer the offer's event_home/away over this junk and still resolve the game.
   db.prepare(
-    `UPDATE prop_picks SET result='W', actual_value=0, pl_units=0.98, pl_dollars=367.5,
-       graded_at=@now, live_state='paid', live_value=0, live_status='scheduled'
+    `UPDATE prop_picks SET team=NULL, opponent='Boston Red Sox', result='W', actual_value=0,
+       pl_units=0.98, pl_dollars=367.5, graded_at=@now, live_state='paid',
+       live_value=0, live_status='scheduled'
      WHERE pick_id='offerteams-pick'`,
   ).run({ now: new Date().toISOString() });
   db.prepare(

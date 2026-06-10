@@ -70,16 +70,14 @@ async function statusForPick(
   fetchLiveFeed: typeof DEFAULT_LIVE_DEPS.fetchLiveFeed,
   feedCache: Map<string, GameStatus | null>,
 ): Promise<GameStatus | null> {
-  // prop_picks.team/opponent are usually null (set only when lineup resolution
-  // succeeded), so fall back to the offer-side event_home/event_away for the
-  // pick's game_id — that's what lets resolveGamePk find the MLB game.
-  let team = pick.team ?? null;
-  let opponent = pick.opponent ?? null;
-  if (!team && !opponent) {
-    const offerTeams = getEventTeamsForGame(pick.game_id);
-    team = offerTeams.home;
-    opponent = offerTeams.away;
-  }
+  // The offer-side event_home/event_away are the authoritative two clubs for the
+  // pick's game. prop_picks.team/opponent are unreliable (team is null unless
+  // lineup resolution succeeded, and opponent can carry a stale constant), so
+  // PREFER the offer teams whenever the offer row carries them; only fall back to
+  // the pick's own fields when the offer lookup comes up empty.
+  const offerTeams = getEventTeamsForGame(pick.game_id);
+  const team = offerTeams.home ?? pick.team ?? null;
+  const opponent = offerTeams.away ?? pick.opponent ?? null;
   const eventTeams: EventTeams = { team, opponent };
   const gamePk = resolveGamePk(eventTeams, schedule);
   if (!gamePk) return null;
