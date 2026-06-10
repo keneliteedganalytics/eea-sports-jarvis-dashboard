@@ -60,12 +60,21 @@ function parseDateParam(raw: unknown): string | undefined {
   return Number.isNaN(t) ? undefined : raw;
 }
 
-export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
-  initSchema();
+// Kick off every timer-driven background worker. Each start* fires one run
+// immediately (so a fresh container repopulates live scores + CLV without waiting
+// for the first interval tick) then settles into its cadence; all are idempotent.
+// Called from the HTTP listen callback so the immediate run happens after the
+// port is bound and never delays health checks. Each immediate run is internally
+// void+catch-guarded, so a worker throwing on boot can't crash the process.
+export function startBackgroundWorkers(): void {
   startOddsPoller();
   startScratchPoller();
   startLiveScoring();
   startLockWorker();
+}
+
+export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  initSchema();
 
   // Unified cross-sport board (MLB + NHL + NBA). ?date=YYYY-MM-DD overrides the
   // operating day so historical/forward slates can be inspected.

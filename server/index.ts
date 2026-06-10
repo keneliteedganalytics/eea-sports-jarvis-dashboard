@@ -1,7 +1,7 @@
 import "dotenv/config";
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
-import { registerRoutes } from "./routes";
+import { registerRoutes, startBackgroundWorkers } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 
@@ -100,6 +100,9 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      // Start timer-driven workers only after the port is bound so their
+      // immediate first run can't delay the health check on a fresh container.
+      startBackgroundWorkers();
     },
   );
 })();

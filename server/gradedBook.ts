@@ -4,8 +4,9 @@
 // There is NO seed data: an empty book renders empty KPIs and "No graded picks
 // yet" until a real pick settles against a real final score.
 //
-// File path is configurable via GRADED_BOOK_PATH (default data/graded_book.db).
-// Railway has ephemeral disk — see DEPLOY.md for the volume-mount follow-up.
+// File path resolves via dbPath(): GRADED_BOOK_PATH override, else a mounted
+// Railway persistent volume (RAILWAY_VOLUME_MOUNT_PATH) so live scores + CLV
+// survive deploys, else the local data/graded_book.db fallback.
 
 import Database from "better-sqlite3";
 import fs from "node:fs";
@@ -80,8 +81,18 @@ export interface GradedPick {
   lockedOdds: number | null;
 }
 
-function dbPath(): string {
-  return process.env.GRADED_BOOK_PATH || path.join(process.cwd(), "data", "graded_book.db");
+// Resolve the SQLite file path. Precedence:
+//   1. GRADED_BOOK_PATH        — explicit override (tests, manual ops).
+//   2. RAILWAY_VOLUME_MOUNT_PATH — a mounted persistent volume; the book lives on
+//      it so live scores + CLV state survive every deploy (container fs is wiped).
+//   3. <cwd>/data/graded_book.db — local dev / CI fallback, unchanged from before.
+export function dbPath(): string {
+  if (process.env.GRADED_BOOK_PATH) return process.env.GRADED_BOOK_PATH;
+  const volRoot = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+  if (volRoot && volRoot.trim().length > 0) {
+    return path.join(volRoot, "graded_book.db");
+  }
+  return path.join(process.cwd(), "data", "graded_book.db");
 }
 
 let _db: Database.Database | null = null;
@@ -90,6 +101,7 @@ export function gradedDb(): Database.Database {
   if (_db) return _db;
   const file = dbPath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  console.log(`[gradedBook] using SQLite at ${file}`);
   const sqlite = new Database(file);
   sqlite.pragma("journal_mode = WAL");
   sqlite.exec(`
