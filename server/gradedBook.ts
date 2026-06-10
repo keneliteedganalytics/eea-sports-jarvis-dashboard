@@ -1570,7 +1570,11 @@ export function getPropPickLiveStates(date: string, sport?: string | null): Prop
 // tracker polls. Joins offers for the slate date the same way as the counters.
 export function activePropPicksForDate(date: string, sport?: string | null): PropPickRow[] {
   const db = gradedDb();
-  const clauses = ["o.game_date = @date", "p.result IS NULL"];
+  // HARD SAFETY: never surface PASS rows to the live tracker. A PASS pick is
+  // informational only — it must never be settled or touch bankroll. Without this
+  // guard the tracker would grade a PASS row whose game went final (using any
+  // leftover stake), which is exactly the v6.7.7 bankroll leak.
+  const clauses = ["o.game_date = @date", "p.result IS NULL", "p.tier != 'PASS'"];
   const params: Record<string, unknown> = { date };
   if (sport && sport.toUpperCase() !== "ALL") {
     clauses.push("p.sport = @sport");
@@ -1777,7 +1781,7 @@ export function markPropPickPass(pickId: string, reason = "below_threshold"): vo
 // PASS but left the original stake_units, so a demoted pick could in principle be
 // staked. Naturally idempotent — once every PASS row reads 0 this is a no-op.
 // Only touches ungraded rows (result IS NULL); never disturbs a settled result.
-export function healPassStakes(): { props: number; games: number } {
+export function healPassStakes(): { props: number; games: number; reversed: number } {
   const db = gradedDb();
   const props = db
     .prepare("UPDATE prop_picks SET stake_units = 0 WHERE tier = 'PASS' AND result IS NULL AND stake_units > 0")
@@ -1785,7 +1789,45 @@ export function healPassStakes(): { props: number; games: number } {
   const games = db
     .prepare("UPDATE picks SET units = 0, stakeDollars = 0 WHERE tier = 'PASS' AND status != 'final' AND (units > 0 OR stakeDollars > 0)")
     .run().changes;
-  return { props, games };
+  // A PASS row should never have settled, but a pre-fix tracker could grade one
+  // that still carried a stake — moving bankroll. Reverse each such settlement
+  // exactly (inverse delta + decremented counters), then zero the stake. Idempotent:
+  // once stake_units is 0 the row no longer matches.
+  const leaked = db
+    .prepare(
+      "SELECT pick_id, result, stake_units, posted_odds, pl_units FROM prop_picks WHERE tier = 'PASS' AND result IS NOT NULL AND stake_units > 0",
+    )
+    .all() as Array<{ pick_id: string; result: PickResult; stake_units: number; posted_odds: number | null; pl_units: number | null }>;
+  let reversed = 0;
+  for (const r of leaked) {
+    const stakeDollars = (r.stake_units ?? 0) * PROP_UNIT_DOLLARS;
+    const plUnitsValue = r.pl_units ?? 0;
+    let deltaDollars = 0;
+    if (r.result === "W") {
+      const dec = americanToDecimal(r.posted_odds) ?? 2.0;
+      deltaDollars = stakeDollars * (dec - 1);
+    } else if (r.result === "L") {
+      deltaDollars = -stakeDollars;
+    }
+    const winDec = r.result === "W" ? 1 : 0;
+    const lossDec = r.result === "L" ? 1 : 0;
+    const pushDec = r.result === "P" ? 1 : 0;
+    const now = new Date().toISOString();
+    db.prepare(
+      `UPDATE bankroll_state SET
+         current_bankroll = current_bankroll - @deltaDollars,
+         lifetime_wins = lifetime_wins - @winDec,
+         lifetime_losses = lifetime_losses - @lossDec,
+         lifetime_pushes = lifetime_pushes - @pushDec,
+         lifetime_net_units = lifetime_net_units - @plUnits,
+         lifetime_net_dollars = lifetime_net_dollars - @deltaDollars,
+         last_updated = @now
+       WHERE id = 1`,
+    ).run({ deltaDollars, winDec, lossDec, pushDec, plUnits: plUnitsValue, now });
+    db.prepare("UPDATE prop_picks SET stake_units = 0 WHERE pick_id = @id").run({ id: r.pick_id });
+    reversed++;
+  }
+  return { props, games, reversed };
 }
 
 // All graded prop picks for date IN (today, yesterday) — the candidate set the

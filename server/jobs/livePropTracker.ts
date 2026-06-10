@@ -166,8 +166,8 @@ export function startLivePropTracker(): void {
       // idempotent, so it runs unconditionally on every boot (not flag-guarded).
       try {
         const healed = healPassStakes();
-        if (healed.props || healed.games) {
-          log(`healed PASS stakes: ${healed.props} props, ${healed.games} game-lines zeroed`);
+        if (healed.props || healed.games || healed.reversed) {
+          log(`healed PASS stakes: ${healed.props} props, ${healed.games} game-lines zeroed, ${healed.reversed} bad gradings reversed`);
         }
       } catch {
         // best-effort; never block the tracker on the heal

@@ -16,7 +16,7 @@ import type { BuildDeps } from "../sports/props/buildPropPicks";
 import type { BatterProfile, BatterGameLog } from "../sports/props/mlbStatsProps";
 import type { BuiltPick } from "../sports/mlb/picksEngine";
 
-const { upsertPropOffer, gradedDb, getPropPick, upsertPropPick, markPropPickPass, healPassStakes } = await import("../gradedBook");
+const { upsertPropOffer, gradedDb, getPropPick, upsertPropPick, markPropPickPass, healPassStakes, activePropPicksForDate, settlePropPickWithBankroll } = await import("../gradedBook");
 const { buildMlbPropPicks } = await import("../sports/props/buildPropPicks");
 const { persistPicks } = await import("../jobs/persistPicks");
 
@@ -182,6 +182,56 @@ await test("healPassStakes zeroes any legacy PASS row that still carries a stake
 
   const leak = db.prepare("SELECT COUNT(*) AS n FROM prop_picks WHERE tier='PASS' AND result IS NULL AND stake_units > 0").get() as { n: number };
   assert.equal(leak.n, 0, "no ungraded PASS prop may carry a stake after the heal");
+});
+
+await test("the live tracker never surfaces a PASS row (activePropPicksForDate excludes tier=PASS)", () => {
+  upsertPropOffer({
+    event_id: "trkPass", sport: "mlb", game_date: DATE, player_name: "Tracked Bat",
+    market: "batter_hits", line: 1.5, over_price: -110, under_price: -110, book: "draftkings",
+  });
+  upsertPropPick({
+    pick_id: "trkActionable", sport: "mlb", game_id: "trkPass", player_name: "Tracked Bat",
+    market_type: "batter_hits", line: 1.5, side: "over", posted_odds: -110,
+    tier: "EDGE", edge_pp: 5, stake_units: 0.5, posted_at: "2026-06-10T18:00:00Z",
+  });
+  upsertPropPick({
+    pick_id: "trkPassRow", sport: "mlb", game_id: "trkPass", player_name: "Tracked Bat",
+    market_type: "batter_total_bases", line: 1.5, side: "over", posted_odds: -110,
+    tier: "PASS", edge_pp: 1, stake_units: 0, pass_reason: "below_threshold", posted_at: "2026-06-10T18:00:00Z",
+  });
+  const ids = activePropPicksForDate(DATE, "mlb").map((p) => p.pick_id);
+  assert.ok(ids.includes("trkActionable"), "actionable picks are tracked");
+  assert.ok(!ids.includes("trkPassRow"), "PASS rows are never handed to the tracker");
+});
+
+await test("healPassStakes reverses a PASS row that a pre-fix tracker wrongly settled", () => {
+  const db = gradedDb();
+  // Seed an actionable, staked, *graded* pick, then corrupt it to PASS — exactly the
+  // legacy state where a PASS row carried a stake AND got settled (touching bankroll).
+  upsertPropPick({
+    pick_id: "settledPass", sport: "mlb", game_id: "sp1", player_name: "Settled Bat",
+    market_type: "batter_hits", line: 1.5, side: "over", posted_odds: -110,
+    tier: "SNIPER", edge_pp: 6, stake_units: 0.5, posted_at: "2026-06-10T18:00:00Z",
+  });
+  const start = (db.prepare("SELECT current_bankroll AS b FROM bankroll_state WHERE id = 1").get() as { b: number }).b;
+  // Grade it as a loss: bankroll drops by the staked dollars.
+  const settled = settlePropPickWithBankroll("settledPass", "L", 0, -0.5);
+  assert.ok(settled, "precondition: the staked pick settles");
+  const afterSettle = (db.prepare("SELECT current_bankroll AS b FROM bankroll_state WHERE id = 1").get() as { b: number }).b;
+  assert.ok(afterSettle < start, "precondition: the bad settle moved bankroll");
+  // Now corrupt to PASS while leaving the (now graded) stake in place.
+  db.prepare("UPDATE prop_picks SET tier = 'PASS' WHERE pick_id = 'settledPass'").run();
+
+  const healed = healPassStakes();
+  assert.ok(healed.reversed >= 1, "heal reports the bad gradings it reversed");
+
+  const restored = (db.prepare("SELECT current_bankroll AS b FROM bankroll_state WHERE id = 1").get() as { b: number }).b;
+  assert.ok(Math.abs(restored - start) < 1e-6, `bankroll restored to pre-settle (${start}), got ${restored}`);
+  const row = db.prepare("SELECT stake_units FROM prop_picks WHERE pick_id = 'settledPass'").get() as { stake_units: number };
+  assert.equal(row.stake_units, 0, "the reversed PASS row no longer carries a stake");
+
+  const leak = db.prepare("SELECT COUNT(*) AS n FROM prop_picks WHERE tier='PASS' AND stake_units > 0").get() as { n: number };
+  assert.equal(leak.n, 0, "no PASS prop carries a stake after the heal, graded or not");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
