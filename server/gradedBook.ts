@@ -374,7 +374,10 @@ export type SeedLookup = (id: string) => Promise<SeedBuiltPick | null | undefine
 // imported to avoid a static circular import (orchestrator → gradedBook).
 const defaultSeedLookup: SeedLookup = async (id) => {
   const { getAnyPick } = await import("./slate/orchestrator");
-  return getAnyPick(id);
+  const [gameId, pickType, pickSide] = id.split(":");
+  const pick = await getAnyPick(gameId);
+  if (!pick || pick.pickType !== pickType || pick.pickSide !== pickSide) return null;
+  return pick;
 };
 
 // Map a live BuiltPick into an UpsertPickInput. Mirrors persistPicks exactly,

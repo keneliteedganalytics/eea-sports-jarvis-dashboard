@@ -28,10 +28,19 @@ const adminLockBody = z.object({
   seedFromLive: z.boolean().optional(),
 });
 
-// Stub the live slate engine. Keyed by composite id; returns a known BuiltPick so
-// the seed-from-live path can hydrate a row that persistPicks never wrote.
+// Stub the live slate engine, mirroring defaultSeedLookup's contract exactly: the
+// real getAnyPick matches BuiltPick.gameId (not the composite id), so the resolver
+// must split the composite id, look up by bare gameId, and reject when the
+// returned pick's market (pickType/pickSide) doesn't match the requested id parts.
 const livePicks = new Map<string, SeedBuiltPick>();
-const seedLookup: SeedLookup = async (id) => livePicks.get(id) ?? null;
+let lastSeedGameId: string | null = null;
+const seedLookup: SeedLookup = async (id) => {
+  const [gameId, pickType, pickSide] = id.split(":");
+  lastSeedGameId = gameId;
+  const pick = livePicks.get(gameId);
+  if (!pick || pick.pickType !== pickType || pick.pickSide !== pickSide) return null;
+  return pick;
+};
 
 const app = express();
 app.use(express.json());
@@ -140,8 +149,9 @@ await test("missing id + seedFromLive omitted → still 404 (no behavior change)
 await test("missing id + seedFromLive=true → hydrates from live, inserts with override, locks, audits", async () => {
   const seedId = pickId("wasGame1", "ML", "away");
   // The live engine now scores this PASS at 0 units, so persistPicks never wrote
-  // it. The original locked-in bet was DUAL at +120.
-  livePicks.set(seedId, {
+  // it. The original locked-in bet was DUAL at +120. Keyed by bare gameId, matching
+  // the real getAnyPick contract.
+  livePicks.set("wasGame1", {
     gameId: "wasGame1", sport: "mlb", gameDate: "2026-06-09", gameTimeEt: "7:05 PM ET",
     matchup: "WSH @ NYM", homeTeam: "NYM", awayTeam: "WSH",
     homeTeamFull: "New York Mets", awayTeamFull: "Washington Nationals",
@@ -157,6 +167,9 @@ await test("missing id + seedFromLive=true → hydrates from live, inserts with 
   });
   assert.equal(res.status, 200);
   const body = await res.json();
+
+  // The resolver parsed the composite id and looked up by the bare gameId.
+  assert.equal(lastSeedGameId, "wasGame1");
 
   // Row was inserted and locked with the override applied on top of live values.
   assert.equal(body.pick.locked, 1);
@@ -179,6 +192,29 @@ await test("missing id + seedFromLive=true → hydrates from live, inserts with 
   assert.equal(row.tier, "DUAL");
   assert.equal(row.locked, 1);
   assert.equal(row.pickLine, null);
+});
+
+await test("seedFromLive=true but live pick's market mismatches the id → 404", async () => {
+  // The slate has a live pick for this game, but on the home/ML market. Requesting
+  // the away side must not silently lock the wrong market — resolver returns null.
+  livePicks.set("balGame1", {
+    gameId: "balGame1", sport: "mlb", gameDate: "2026-06-09", gameTimeEt: "7:05 PM ET",
+    matchup: "BAL @ TOR", homeTeam: "TOR", awayTeam: "BAL",
+    homeTeamFull: "Toronto Blue Jays", awayTeamFull: "Baltimore Orioles",
+    pickSide: "home", pickTeam: "TOR", pickTeamFull: "Toronto Blue Jays", pickType: "ML",
+    pickMl: -120, pickBook: "FD", verdictTier: "EDGE", units: 1, kellyStakeDollars: 200,
+    pickWinProb: 0.55, pickImpliedProb: 0.545, edgePp: 0.5, evPer100: 1, confidence: 60, fairMl: -130,
+  });
+  const mismatchId = pickId("balGame1", "ML", "away");
+  const res = await fetch(`${base}/api/picks/${encodeURIComponent(mismatchId)}/admin-lock`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-admin-pin": "5811" },
+    body: JSON.stringify({ tier: "EDGE", odds: -110, seedFromLive: true, reason: "wrong market" }),
+  });
+  assert.equal(res.status, 404);
+  // Nothing inserted for the mismatched market.
+  const row = gradedDb().prepare("SELECT * FROM picks WHERE id = ?").get(mismatchId);
+  assert.equal(row, undefined);
 });
 
 await test("400 when the body is invalid (bad tier)", async () => {
