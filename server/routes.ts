@@ -15,8 +15,9 @@ import { getAlerts } from "./pollers/alerts";
 import { startOddsPoller } from "./pollers/oddsPoller";
 import { startScratchPoller } from "./pollers/scratchPoller";
 import { startLiveScoring, pollEspnAndUpdate } from "./jobs/liveScoring";
-import { confirmBet } from "./gradedBook";
+import { confirmBet, adminLockWithOverride } from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
+import { z } from "zod";
 
 const STUB_SPORTS = ["ncaaf", "ncaab", "nfl"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -29,6 +30,21 @@ function requireAdminPin(req: Request, res: Response): boolean {
   res.status(401).json({ message: "admin pin required" });
   return false;
 }
+
+// Stricter gate for the destructive admin-override path: a bad/absent PIN is a
+// forbidden action (403) rather than a "please authenticate" (401).
+function requireAdminPinForbidden(req: Request, res: Response): boolean {
+  if (req.header("x-admin-pin") === ADMIN_PIN) return true;
+  res.status(403).json({ message: "admin pin required" });
+  return false;
+}
+
+const adminLockBody = z.object({
+  tier: z.enum(["SNIPER", "EDGE", "DUAL", "RECON", "PASS"]),
+  odds: z.number().optional(),
+  stake: z.number().optional(),
+  reason: z.string().min(1),
+});
 
 function bankroll(): number {
   const n = Number(process.env.BANKROLL_USD);
@@ -127,6 +143,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const frozen = confirmBet(String(req.params.id));
     if (!frozen) return res.status(404).json({ message: "pick not found" });
     res.json(frozen);
+  });
+
+  // Admin recovery: override a pick's tier/odds/stake, then snapshot+lock it.
+  // For repairing a pick whose stored tier was clobbered by a recompute before
+  // the user locked it. Records the change in pick_audit. PIN-gated (403 on
+  // failure). Returns the frozen pick + the audit row.
+  app.post("/api/picks/:id/admin-lock", (req: Request, res: Response) => {
+    if (!requireAdminPinForbidden(req, res)) return;
+    const parsed = adminLockBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "invalid body", issues: parsed.error.issues });
+    const result = adminLockWithOverride(String(req.params.id), parsed.data);
+    if (!result) return res.status(404).json({ message: "pick not found" });
+    res.json(result);
   });
 
   // Analytics dashboard aggregation. Optional ?sport= ?tier= ?since= filters.
