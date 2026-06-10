@@ -79,6 +79,8 @@ export interface GradedPick {
   lockedTier: string | null;
   lockedStake: number | null;
   lockedOdds: number | null;
+  // v6.7.7: reason an evaluated game-line pick was passed (tier='PASS'). NULL when actionable.
+  pass_reason: string | null;
 }
 
 // Resolve the SQLite file path. Precedence:
@@ -157,7 +159,8 @@ export function gradedDb(): Database.Database {
       lockedAt TEXT,
       lockedTier TEXT,
       lockedStake REAL,
-      lockedOdds INTEGER
+      lockedOdds INTEGER,
+      pass_reason TEXT DEFAULT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_picks_gameDate ON picks(gameDate);
     CREATE INDEX IF NOT EXISTS idx_picks_status ON picks(status);
@@ -244,7 +247,8 @@ export function gradedDb(): Database.Database {
       confidence INTEGER,
       edge_pp REAL,
       data_quality_tier TEXT,
-      clv_pct REAL
+      clv_pct REAL,
+      pass_reason TEXT DEFAULT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_prop_picks_sport ON prop_picks(sport);
     CREATE INDEX IF NOT EXISTS idx_prop_picks_market ON prop_picks(market_type);
@@ -297,6 +301,9 @@ export function gradedDb(): Database.Database {
     clvPoints: "REAL",
     clvPercent: "REAL",
     lockStatus: "TEXT NOT NULL DEFAULT 'open'",
+    // v6.7.7: a game-line pick the engine evaluated but did NOT play (tier='PASS')
+    // is now persisted too, with the reason it was passed. NULL on actionable rows.
+    pass_reason: "TEXT DEFAULT NULL",
   });
   // Migrate pre-archive pick_history rows (v6.5): the archive + final-score
   // columns. Mirror of migrations/0004_archive_props.sql.
@@ -338,6 +345,11 @@ export function gradedDb(): Database.Database {
     // v6.7.4: persist the game's coarse status (scheduled | live | final |
     // unknown) so the board can surface gameStatus without a live HTTP read.
     live_status: "TEXT",
+    // v6.7.7: a prop the engine evaluated (edge computed) but did NOT surface as
+    // an actionable pick is now persisted with tier='PASS' and the reason it was
+    // passed (outlier | model_outlier_v676 | below_threshold | low_data_quality |
+    // daily_cap | other). NULL on actionable rows.
+    pass_reason: "TEXT DEFAULT NULL",
   });
   // v6.7.3: store the Odds API event's home/away team names on each offer so the
   // event→MLB-gamePk mapper can locate the game by team (the Odds event id is a
@@ -717,6 +729,330 @@ export function archivedPicks(q: ArchiveQuery = {}): ArchivePage {
   return { items, total, limit, offset };
 }
 
+// ── Unified archive / passes (v6.7.7) ───────────────────────────────────────
+// One read model over BOTH ledgers — game-line (picks / pick_history) and player
+// props (prop_picks) — so the Archive page can show every evaluated pick: graded
+// plays AND the picks the desk passed on. A PASS row is informational only
+// (units=0, never settled), so it carries no result/pl but does carry the reason.
+
+export interface UnifiedItem {
+  kind: "game" | "prop";
+  pick_id: string;
+  sport: string;
+  date: string | null; // the day this pick belongs to (graded_at or posted day)
+  market_label: string;
+  line: number | null;
+  side: string | null;
+  posted_odds: number | null;
+  edge_pp: number | null;
+  tier: string;
+  pass_reason: string | null;
+  result: PickResult | null;
+  pl_units: number | null;
+  pl_dollars: number | null;
+  graded_at: string | null;
+  posted_at: string | null;
+  clv_pct: number | null;
+  player_name: string | null; // props only
+  team: string | null;
+  opponent: string | null;
+  final_score: string | null; // game-line only
+}
+
+export interface UnifiedQuery {
+  type?: string | null; // "ALL" | "game" | "prop"
+  sport?: string | null; // "ALL" | mlb/nhl/nba/soccer
+  date?: string | null; // YYYY-MM-DD — the pick's day (graded_at/posted_at day)
+  result?: string | null; // "ALL" | W | L | P
+  tier?: string | null; // "ALL" | SNIPER | EDGE | RECON | PASS
+  reason?: string | null; // "ALL" | a pass_reason value (PASS rows only)
+  since?: string | null; // YYYY-MM-DD inclusive lower bound
+  limit?: number;
+  offset?: number;
+}
+
+export interface UnifiedPage {
+  items: UnifiedItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// Game-line rows as unified items. Graded plays come from pick_history (the
+// permanent ledger); PASS / ungraded rows come from the live picks table (they
+// never enter pick_history because they never settle). Which source(s) we read
+// depends on the tier filter.
+function gameUnifiedRows(q: UnifiedQuery): UnifiedItem[] {
+  const db = gradedDb();
+  const wantPass = (q.tier ?? "").toUpperCase() === "PASS";
+  const wantAllTiers = !q.tier || q.tier.toUpperCase() === "ALL";
+  const out: UnifiedItem[] = [];
+
+  // Graded plays from the permanent ledger (skip when the caller asked only for PASS).
+  if (!wantPass) {
+    const clauses: string[] = [];
+    const params: Record<string, unknown> = {};
+    if (q.sport && q.sport.toUpperCase() !== "ALL") {
+      clauses.push("sport = @sport");
+      params.sport = q.sport.toLowerCase();
+    }
+    if (q.result && q.result.toUpperCase() !== "ALL") {
+      clauses.push("result = @result");
+      params.result = q.result.toUpperCase();
+    }
+    if (q.tier && !wantAllTiers) {
+      clauses.push("tier = @tier");
+      params.tier = q.tier.toUpperCase();
+    }
+    if (q.since) {
+      clauses.push("graded_at >= @since");
+      params.since = q.since;
+    }
+    if (q.date) {
+      clauses.push("substr(graded_at, 1, 10) = @date");
+      params.date = q.date;
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = db.prepare(`SELECT * FROM pick_history ${where}`).all(params) as PickHistoryRow[];
+    for (const r of rows) {
+      out.push({
+        kind: "game",
+        pick_id: r.pick_id,
+        sport: r.sport,
+        date: r.graded_at ? r.graded_at.slice(0, 10) : null,
+        market_label: r.pick_label,
+        line: null,
+        side: null,
+        posted_odds: r.posted_odds,
+        edge_pp: null,
+        tier: r.tier,
+        pass_reason: null,
+        result: r.result,
+        pl_units: r.pl_units,
+        pl_dollars: r.pl_dollars,
+        graded_at: r.graded_at,
+        posted_at: r.graded_at,
+        clv_pct: r.clv_pct,
+        player_name: null,
+        team: null,
+        opponent: null,
+        final_score: composeFinalScore(r),
+      });
+    }
+  }
+
+  // PASS / ungraded game-line rows from the live picks table — only when the
+  // caller explicitly wants the PASS pile. ALL / a specific actionable tier is
+  // satisfied by the graded ledger above (an ungraded actionable pick is still
+  // on the board, not in the archive).
+  if (wantPass) {
+    const clauses = ["tier = 'PASS'"];
+    const params: Record<string, unknown> = {};
+    if (q.sport && q.sport.toUpperCase() !== "ALL") {
+      clauses.push("sport = @sport");
+      params.sport = q.sport.toLowerCase();
+    }
+    if (q.reason && q.reason.toUpperCase() !== "ALL") {
+      clauses.push("pass_reason = @reason");
+      params.reason = q.reason;
+    }
+    if (q.since) {
+      clauses.push("substr(createdAt, 1, 10) >= @since");
+      params.since = q.since;
+    }
+    if (q.date) {
+      clauses.push("substr(createdAt, 1, 10) = @date");
+      params.date = q.date;
+    }
+    const rows = db
+      .prepare(`SELECT * FROM picks WHERE ${clauses.join(" AND ")}`)
+      .all(params) as GradedPick[];
+    for (const r of rows) {
+      out.push({
+        kind: "game",
+        pick_id: r.id,
+        sport: r.sport,
+        date: r.createdAt ? r.createdAt.slice(0, 10) : r.gameDate,
+        market_label: `${r.pickTeam} ${r.pickType}`.trim(),
+        line: r.pickLine,
+        side: r.pickSide,
+        posted_odds: r.pickMl,
+        edge_pp: r.edgePp,
+        tier: r.tier,
+        pass_reason: r.pass_reason,
+        result: null,
+        pl_units: 0,
+        pl_dollars: 0,
+        graded_at: null,
+        posted_at: r.postedAt ?? r.createdAt,
+        clv_pct: r.clvPct,
+        player_name: null,
+        team: r.pickTeam,
+        opponent: null,
+        final_score: null,
+      });
+    }
+  }
+  return out;
+}
+
+// Prop rows as unified items, straight off prop_picks (the ledger holds both
+// graded and ungraded/PASS rows). Dates by graded_at when graded, else posted_at.
+function propUnifiedRows(q: UnifiedQuery): UnifiedItem[] {
+  const db = gradedDb();
+  const wantPass = (q.tier ?? "").toUpperCase() === "PASS";
+  const wantAllTiers = !q.tier || q.tier.toUpperCase() === "ALL";
+
+  const clauses: string[] = [];
+  const params: Record<string, unknown> = {};
+  if (q.sport && q.sport.toUpperCase() !== "ALL") {
+    clauses.push("sport = @sport");
+    params.sport = q.sport.toLowerCase();
+  }
+  if (q.result && q.result.toUpperCase() !== "ALL") {
+    clauses.push("result = @result");
+    params.result = q.result.toUpperCase();
+  }
+  if (wantPass) {
+    clauses.push("tier = 'PASS'");
+  } else if (!wantAllTiers && q.tier) {
+    clauses.push("tier = @tier");
+    params.tier = q.tier.toUpperCase();
+  } else {
+    // ALL / unspecified tier means every *actionable* tier — PASS is the pile,
+    // surfaced only via tier='PASS'. Keep the default archive graded-only.
+    clauses.push("tier != 'PASS'");
+  }
+  if (q.reason && q.reason.toUpperCase() !== "ALL") {
+    clauses.push("pass_reason = @reason");
+    params.reason = q.reason;
+  }
+  if (q.since) {
+    clauses.push("substr(COALESCE(graded_at, posted_at), 1, 10) >= @since");
+    params.since = q.since;
+  }
+  if (q.date) {
+    clauses.push("substr(COALESCE(graded_at, posted_at), 1, 10) = @date");
+    params.date = q.date;
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = db.prepare(`SELECT * FROM prop_picks ${where}`).all(params) as PropPickRow[];
+  return rows.map((r) => ({
+    kind: "prop" as const,
+    pick_id: r.pick_id,
+    sport: r.sport,
+    date: (r.graded_at ?? r.posted_at)?.slice(0, 10) ?? null,
+    market_label: r.market_label ?? r.market_type,
+    line: r.line,
+    side: r.side,
+    posted_odds: r.posted_odds,
+    edge_pp: r.edge_pp,
+    tier: r.tier,
+    pass_reason: r.pass_reason,
+    result: r.result,
+    pl_units: r.pl_units,
+    pl_dollars: r.pl_dollars,
+    graded_at: r.graded_at,
+    posted_at: r.posted_at,
+    clv_pct: r.clv_pct,
+    player_name: r.player_name,
+    team: r.team,
+    opponent: r.opponent,
+    final_score: null,
+  }));
+}
+
+// Sort graded-first (graded_at DESC), then ungraded by posted_at DESC.
+function sortUnified(items: UnifiedItem[]): UnifiedItem[] {
+  return items.sort((a, b) => {
+    if (a.graded_at && b.graded_at) return b.graded_at.localeCompare(a.graded_at);
+    if (a.graded_at) return -1;
+    if (b.graded_at) return 1;
+    return (b.posted_at ?? "").localeCompare(a.posted_at ?? "");
+  });
+}
+
+// Combined archive over game-line + prop ledgers. Default (no tier) returns the
+// graded plays of both kinds (back-compat with the old archive); tier='PASS'
+// returns the passed-on pile. type=game|prop narrows to one kind.
+export function unifiedArchive(q: UnifiedQuery = {}): UnifiedPage {
+  const type = (q.type ?? "ALL").toUpperCase();
+  let items: UnifiedItem[] = [];
+  if (type === "ALL" || type === "GAME") items = items.concat(gameUnifiedRows(q));
+  if (type === "ALL" || type === "PROP") items = items.concat(propUnifiedRows(q));
+  sortUnified(items);
+  const total = items.length;
+  const limit = Math.min(Math.max(Number(q.limit ?? 50) || 50, 1), 200);
+  const offset = Math.max(Number(q.offset ?? 0) || 0, 0);
+  return { items: items.slice(offset, offset + limit), total, limit, offset };
+}
+
+// The passed-on pile: every evaluated pick the desk did NOT play (tier='PASS'),
+// across both ledgers, newest-first, with an optional reason filter.
+export function passPicks(q: UnifiedQuery = {}): UnifiedPage {
+  return unifiedArchive({ ...q, tier: "PASS" });
+}
+
+export interface PassSummary {
+  totalEvaluated: number; // every recorded pick (any tier), props + game-line
+  passed: number; // tier='PASS' rows
+  passReasonBreakdown: Record<string, number>;
+}
+
+// Roll PASS rows from both ledgers into a reason breakdown plus a count of every
+// recorded pick (the denominator: actionable + PASS). Optional sport/since window.
+export function passSummary(opts: { sport?: string | null; since?: string | null } = {}): PassSummary {
+  const db = gradedDb();
+  const breakdown: Record<string, number> = {};
+  let passed = 0;
+  let totalEvaluated = 0;
+
+  const sport = opts.sport && opts.sport.toUpperCase() !== "ALL" ? opts.sport.toLowerCase() : null;
+
+  // Props (prop_picks): date by COALESCE(graded_at, posted_at).
+  {
+    const clauses: string[] = [];
+    const params: Record<string, unknown> = {};
+    if (sport) { clauses.push("sport = @sport"); params.sport = sport; }
+    if (opts.since) {
+      clauses.push("substr(COALESCE(graded_at, posted_at), 1, 10) >= @since");
+      params.since = opts.since;
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    totalEvaluated += (db.prepare(`SELECT COUNT(*) AS n FROM prop_picks ${where}`).get(params) as { n: number }).n;
+    const passClauses = [...clauses, "tier = 'PASS'"];
+    const rows = db
+      .prepare(`SELECT pass_reason AS r, COUNT(*) AS n FROM prop_picks WHERE ${passClauses.join(" AND ")} GROUP BY pass_reason`)
+      .all(params) as { r: string | null; n: number }[];
+    for (const row of rows) {
+      const key = row.r ?? "other";
+      breakdown[key] = (breakdown[key] ?? 0) + row.n;
+      passed += row.n;
+    }
+  }
+
+  // Game-line (picks): date by createdAt.
+  {
+    const clauses: string[] = [];
+    const params: Record<string, unknown> = {};
+    if (sport) { clauses.push("sport = @sport"); params.sport = sport; }
+    if (opts.since) { clauses.push("substr(createdAt, 1, 10) >= @since"); params.since = opts.since; }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    totalEvaluated += (db.prepare(`SELECT COUNT(*) AS n FROM picks ${where}`).get(params) as { n: number }).n;
+    const passClauses = [...clauses, "tier = 'PASS'"];
+    const rows = db
+      .prepare(`SELECT pass_reason AS r, COUNT(*) AS n FROM picks WHERE ${passClauses.join(" AND ")} GROUP BY pass_reason`)
+      .all(params) as { r: string | null; n: number }[];
+    for (const row of rows) {
+      const key = row.r ?? "other";
+      breakdown[key] = (breakdown[key] ?? 0) + row.n;
+      passed += row.n;
+    }
+  }
+
+  return { totalEvaluated, passed, passReasonBreakdown: breakdown };
+}
+
 // Set of archived pick ids for a date's slate exclusion. A pick whose graded
 // row is archived (always true once final) must drop off the in-flight board.
 export function archivedPickIds(): Set<string> {
@@ -756,6 +1092,8 @@ export interface PropPickRow {
   edge_pp: number | null;
   data_quality_tier: string | null;
   clv_pct: number | null;
+  // v6.7.7: reason an evaluated prop was passed (tier='PASS'). NULL when actionable.
+  pass_reason: string | null;
   // v6.7 simulation + line-shopping fields.
   model_prob: number | null;
   sim_median: number | null;
@@ -808,6 +1146,7 @@ export interface UpsertPropInput {
   market_label?: string | null;
   stake_units?: number | null;
   hundred_club?: boolean | number | null;
+  pass_reason?: string | null;
 }
 
 // Insert or refresh a prop pick. A prop already graded (result set) is sacred and
@@ -826,14 +1165,14 @@ export function upsertPropPick(input: UpsertPropInput): string {
        tier, confidence, edge_pp, data_quality_tier,
        model_prob, sim_median, sim_p25, sim_p75, sim_mean, sim_trials,
        hit_rates_json, matchup_json, best_book, best_price, market_label,
-       stake_units, hundred_club
+       stake_units, hundred_club, pass_reason
      ) VALUES (
        @pick_id, @sport, @game_id, @player_name, @player_id, @team, @opponent,
        @market_type, @line, @side, @posted_odds, @posted_at,
        @tier, @confidence, @edge_pp, @data_quality_tier,
        @model_prob, @sim_median, @sim_p25, @sim_p75, @sim_mean, @sim_trials,
        @hit_rates_json, @matchup_json, @best_book, @best_price, @market_label,
-       @stake_units, @hundred_club
+       @stake_units, @hundred_club, @pass_reason
      )
      ON CONFLICT(pick_id) DO UPDATE SET
        line=@line, side=@side, posted_odds=@posted_odds,
@@ -843,7 +1182,7 @@ export function upsertPropPick(input: UpsertPropInput): string {
        sim_p75=@sim_p75, sim_mean=@sim_mean, sim_trials=@sim_trials,
        hit_rates_json=@hit_rates_json, matchup_json=@matchup_json,
        best_book=@best_book, best_price=@best_price, market_label=@market_label,
-       stake_units=@stake_units, hundred_club=@hundred_club`,
+       stake_units=@stake_units, hundred_club=@hundred_club, pass_reason=@pass_reason`,
   ).run({
     pick_id: input.pick_id,
     sport: input.sport.toLowerCase(),
@@ -874,6 +1213,7 @@ export function upsertPropPick(input: UpsertPropInput): string {
     market_label: input.market_label ?? null,
     stake_units: input.stake_units ?? null,
     hundred_club: input.hundred_club ? 1 : 0,
+    pass_reason: input.pass_reason ?? null,
   });
   return input.pick_id;
 }
@@ -1421,10 +1761,13 @@ export function updatePropPickEval(e: PropPickEval): void {
 
 // Mark an ungraded pick as PASS in place (no re-sim) — used when the recompute
 // can't produce an edge for it any more (e.g. profile no longer available).
-export function markPropPickPass(pickId: string): void {
+// Stamps a pass_reason (default 'below_threshold') so the demotion is auditable.
+export function markPropPickPass(pickId: string, reason = "below_threshold"): void {
   gradedDb()
-    .prepare("UPDATE prop_picks SET tier = 'PASS' WHERE pick_id = @id AND result IS NULL")
-    .run({ id: pickId });
+    .prepare(
+      "UPDATE prop_picks SET tier = 'PASS', pass_reason = @reason WHERE pick_id = @id AND result IS NULL",
+    )
+    .run({ id: pickId, reason });
 }
 
 // All graded prop picks for date IN (today, yesterday) — the candidate set the
@@ -1522,6 +1865,8 @@ export interface UpsertPickInput {
   evPer100: number | null;
   confidence: number | null;
   fairMl: number | null;
+  // v6.7.7: set on a PASS row (informational, units=0); NULL/omitted on actionable.
+  pass_reason?: string | null;
 }
 
 // Insert a pick, or refresh its pre-game fields if it's still pending. Once a
@@ -1552,9 +1897,9 @@ export function upsertPick(input: UpsertPickInput): boolean {
         gameStartIso=@gameStartIso,
         tier=@tier, units=@units, stakeDollars=@stakeDollars,
         pickWinProb=@pickWinProb, pickImpliedProb=@pickImpliedProb, edgePp=@edgePp, evPer100=@evPer100,
-        confidence=@confidence, fairMl=@fairMl, updatedAt=@updatedAt
+        confidence=@confidence, fairMl=@fairMl, pass_reason=@pass_reason, updatedAt=@updatedAt
        WHERE id=@id`,
-    ).run({ ...input, id, updatedAt: now });
+    ).run({ ...input, pass_reason: input.pass_reason ?? null, id, updatedAt: now });
     return true;
   }
 
@@ -1576,16 +1921,16 @@ export function forceInsertPick(input: UpsertPickInput): string {
       pickSide, pickTeam, pickTeamFull, pickType, pickLine, pickMl, pickBook,
       gameStartIso, postedOddsAmerican, postedAt, lockStatus,
       tier, units, stakeDollars, pickWinProb, pickImpliedProb, edgePp, evPer100,
-      confidence, fairMl, status, createdAt, updatedAt
+      confidence, fairMl, pass_reason, status, createdAt, updatedAt
     ) VALUES (
       @id, @gameId, @sport, @gameDate, @gameTimeEt, @matchup,
       @homeTeam, @awayTeam, @homeTeamFull, @awayTeamFull,
       @pickSide, @pickTeam, @pickTeamFull, @pickType, @pickLine, @pickMl, @pickBook,
       @gameStartIso, @postedOddsAmerican, @postedAt, 'open',
       @tier, @units, @stakeDollars, @pickWinProb, @pickImpliedProb, @edgePp, @evPer100,
-      @confidence, @fairMl, 'pending', @createdAt, @updatedAt
+      @confidence, @fairMl, @pass_reason, 'pending', @createdAt, @updatedAt
     )`,
-  ).run({ ...input, id, postedOddsAmerican: input.pickMl, postedAt: now, createdAt: now, updatedAt: now });
+  ).run({ ...input, pass_reason: input.pass_reason ?? null, id, postedOddsAmerican: input.pickMl, postedAt: now, createdAt: now, updatedAt: now });
   return id;
 }
 

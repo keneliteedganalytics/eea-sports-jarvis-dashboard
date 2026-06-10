@@ -77,10 +77,13 @@ await test("a phantom-edge over is PASSed and audited as model_outlier", async (
   const summary = await buildMlbPropPicks(DATE, deps);
   assert.equal(summary.written, 0, `outlier should be filtered, got ${summary.written} written`);
 
+  // Post v6.7.6 the sim-guard clamps a monster's hits/PA into a sane band, so the
+  // median/σ test of the edge>20 gate may not trip; the tighter v676 divergence
+  // gate then catches the same phantom edge. Either flavor is a model-outlier PASS.
   const audits = gradedDb()
-    .prepare("SELECT * FROM pick_audit WHERE reason = 'model_outlier'")
+    .prepare("SELECT * FROM pick_audit WHERE reason IN ('model_outlier', 'model_outlier_v676')")
     .all() as Array<{ reason: string }>;
-  assert.ok(audits.length >= 1, "expected a model_outlier audit row");
+  assert.ok(audits.length >= 1, "expected a model-outlier audit row (model_outlier or model_outlier_v676)");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

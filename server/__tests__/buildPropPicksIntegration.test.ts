@@ -65,17 +65,18 @@ console.log("build prop picks — end-to-end with id resolver");
 
 await test("resolver + profile in the chain writes ≥1 pick from a clearing offer", async () => {
   // Seed one offer (player_id null, as the Odds API delivers it) on two books so
-  // the line-shopping quote set is non-trivial. Over priced at −200 / −195: a
-  // genuine but moderate edge (≈13pp) that clears the gate without tripping the
-  // v6.7.3 model-outlier filter (which rejects edges > 20pp whose median sits
-  // > 0.5σ from the line — see propModelOutlier.test.ts).
+  // the line-shopping quote set is non-trivial. Over priced at −260 / −255: after
+  // the v6.7.6 simulator recalibration the model favors a strong hitter's over
+  // (~0.80) — these prices leave a genuine but moderate edge (~11.5pp) that clears
+  // the surfacing gate WITHOUT tripping the model-outlier filters (edge ≤ 12pp and
+  // model/market divergence ≤ 0.15 — see propModelOutlier.test.ts).
   upsertPropOffer({
     event_id: "evtA", sport: "mlb", game_date: DATE, player_name: "Aaron Judge",
-    market: "batter_hits", line: 0.5, over_price: -200, under_price: 170, book: "draftkings",
+    market: "batter_hits", line: 0.5, over_price: -260, under_price: 210, book: "draftkings",
   });
   upsertPropOffer({
     event_id: "evtA", sport: "mlb", game_date: DATE, player_name: "Aaron Judge",
-    market: "batter_hits", line: 0.5, over_price: -195, under_price: 165, book: "fanduel",
+    market: "batter_hits", line: 0.5, over_price: -255, under_price: 205, book: "fanduel",
   });
 
   let resolveCalls = 0;

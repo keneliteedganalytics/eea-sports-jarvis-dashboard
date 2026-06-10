@@ -28,6 +28,7 @@ import {
 import { getOperatingDay } from "../sports/mlb/operatingDay";
 import { validateGradesTick, reconcileFalseGradesV675 } from "./reconcileFalseGrades";
 import { recomputePropsV676 } from "./recomputeProps";
+import { recordPassesV677 } from "./recordPassesV677";
 
 function log(message: string, source = "live-props"): void {
   const t = new Date().toLocaleTimeString("en-US", {
@@ -152,9 +153,12 @@ export function startLivePropTracker(): void {
   //   • reconcileFalseGradesV675 — heal v6.7.3 false grades
   //   • recomputePropsV676 — re-tier today's undecided picks against the fixed
   //     simulator (stale-edge cleanup) before the first live tick runs.
+  //   • recordPassesV677 — backfill today's passed-on props (tier='PASS') that the
+  //     pre-v6.7.7 pipeline dropped before any DB write. Additive, never re-grades.
   void reconcileFalseGradesV675()
     .catch(() => undefined)
     .then(() => recomputePropsV676().catch(() => undefined))
+    .then(() => recordPassesV677().catch(() => undefined))
     .finally(() => void runLiveTrackTick().catch(() => undefined));
   if (timer) clearInterval(timer);
   timer = setInterval(() => {

@@ -7,7 +7,7 @@
 // Filters (sport / tier / since-date) are applied to the bet log.
 
 import { hitRatesByTier, trackRecord, type BetLogEntry } from "./sports/mlb/trackRecord";
-import { clvAggregate, type ClvAggregate } from "./gradedBook";
+import { clvAggregate, gradedPropPicks, passSummary, type ClvAggregate, type PassSummary } from "./gradedBook";
 
 const TIER_ORDER = ["SNIPER", "EDGE", "RECON"];
 const SPORTS = ["MLB", "NHL", "NBA", "SOCCER"];
@@ -57,6 +57,24 @@ export interface HeatCell {
   decided: number;
 }
 
+// v6.7.7: graded record split by pick kind (game-line vs player-prop), so the
+// unified Analytics page can show each stream's contribution to the totals.
+export interface KindBreakdown {
+  kind: "game" | "prop";
+  bets: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  netUnits: number;
+  roiPct: number;
+}
+
+// Count of PLAYED (graded) picks per actionable tier across both kinds.
+export interface PlayedTier {
+  tier: string;
+  bets: number;
+}
+
 export interface AnalyticsPayload {
   filters: { sport: string; tier: string; since: string | null };
   available: { sports: string[]; tiers: string[] };
@@ -66,6 +84,10 @@ export interface AnalyticsPayload {
   trend: TrendPoint[];
   heatmap: HeatCell[];
   clv: ClvAggregate;
+  // v6.7.7 unified additions
+  byKind: KindBreakdown[];
+  byTier: PlayedTier[];
+  passSummary: PassSummary;
 }
 
 function num(v: string): number | null {
@@ -210,6 +232,44 @@ function heatmap(sport: string, tierFilter: string | null): HeatCell[] {
   );
 }
 
+// Graded prop rows → a KindBreakdown. Staked is 1u-equivalent per prop (matching
+// buildPropAnalytics), netUnits from pl_units. Tier filter applied in-memory.
+function propKindBreakdown(rows: { result: string | null; pl_units: number | null; tier: string }[]): KindBreakdown {
+  let wins = 0, losses = 0, pushes = 0, netUnits = 0, staked = 0;
+  for (const r of rows) {
+    if (r.result === "W") wins++;
+    else if (r.result === "L") losses++;
+    else pushes++;
+    netUnits += r.pl_units ?? 0;
+    staked += 1;
+  }
+  return {
+    kind: "prop",
+    bets: rows.length,
+    wins, losses, pushes,
+    netUnits: Math.round(netUnits * 100) / 100,
+    roiPct: staked > 0 ? Math.round((netUnits / staked) * 1000) / 10 : 0,
+  };
+}
+
+function gameKindBreakdown(log: BetLogEntry[]): KindBreakdown {
+  let wins = 0, losses = 0, pushes = 0, netUnits = 0, staked = 0;
+  for (const e of log) {
+    if (e.result === "W") wins++;
+    else if (e.result === "L") losses++;
+    else pushes++;
+    netUnits += e.unitsWon;
+    staked += e.units;
+  }
+  return {
+    kind: "game",
+    bets: log.length,
+    wins, losses, pushes,
+    netUnits: Math.round(netUnits * 100) / 100,
+    roiPct: staked > 0 ? Math.round((netUnits / staked) * 1000) / 10 : 0,
+  };
+}
+
 export function buildAnalytics(filters: AnalyticsFilters = {}): AnalyticsPayload {
   const sport = (filters.sport ?? "ALL").toUpperCase();
   const tier = (filters.tier ?? "ALL").toUpperCase();
@@ -218,14 +278,52 @@ export function buildAnalytics(filters: AnalyticsFilters = {}): AnalyticsPayload
   const tr = trackRecord("MLB");
   const log = filterLog(tr.betLog, { sport, tier, since });
 
+  // Player-prop graded rows (back-compat /api/props/analytics is unchanged; this
+  // is the unified roll-up). Tier filter narrows to actionable tier when set.
+  const propRows = gradedPropPicks({ sport: sport === "ALL" ? null : sport, since }).filter(
+    (r) => tier === "ALL" || (r.tier ?? "").toUpperCase() === tier,
+  );
+
+  const game = gameKindBreakdown(log);
+  const prop = propKindBreakdown(propRows);
+
+  // Combined headline KPIs across both kinds.
+  const combinedBets = game.bets + prop.bets;
+  const combinedWins = game.wins + prop.wins;
+  const combinedLosses = game.losses + prop.losses;
+  const combinedDecided = combinedWins + combinedLosses;
+  const combinedNet = Math.round((game.netUnits + prop.netUnits) * 100) / 100;
+  const gameStaked = log.reduce((s, e) => s + e.units, 0);
+  const combinedStaked = gameStaked + prop.bets; // props 1u-equivalent
+  const baseKpis = computeKpis(log, tr.clvPct);
+  const kpis: KpiCards = {
+    ...baseKpis,
+    totalBets: combinedBets,
+    winRatePct: combinedDecided > 0 ? Math.round((combinedWins / combinedDecided) * 1000) / 10 : 0,
+    roiPct: combinedStaked > 0 ? Math.round((combinedNet / combinedStaked) * 1000) / 10 : 0,
+    netUnits: combinedNet,
+  };
+
+  // Played-tier counts across both kinds (actionable tiers only).
+  const tierCounts = new Map<string, number>();
+  for (const e of log) tierCounts.set(e.tier, (tierCounts.get(e.tier) ?? 0) + 1);
+  for (const r of propRows) {
+    const t = (r.tier ?? "").toUpperCase();
+    if (TIER_ORDER.includes(t)) tierCounts.set(t, (tierCounts.get(t) ?? 0) + 1);
+  }
+  const byTier: PlayedTier[] = TIER_ORDER.map((t) => ({ tier: t, bets: tierCounts.get(t) ?? 0 }));
+
   return {
     filters: { sport, tier, since },
     available: { sports: ["ALL", ...SPORTS], tiers: ["ALL", ...TIER_ORDER] },
-    kpis: computeKpis(log, tr.clvPct),
+    kpis,
     winRateByTier: winRateByTier(log),
     roiBySport: roiBySport(log),
     trend: trend(log),
     heatmap: heatmap(sport, tier),
     clv: clvAggregate({ sport, tier, since }),
+    byKind: [game, prop],
+    byTier,
+    passSummary: passSummary({ sport: sport === "ALL" ? null : sport, since }),
   };
 }

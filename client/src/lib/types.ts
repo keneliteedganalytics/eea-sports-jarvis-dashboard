@@ -255,6 +255,28 @@ export interface ClvAggregate {
   byTier: { tier: string; meanPct: number; captured: number }[];
 }
 
+// v6.7.7: graded record split by pick kind + played-tier counts + the pass pile.
+export interface AnalyticsKindBreakdown {
+  kind: "game" | "prop";
+  bets: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  netUnits: number;
+  roiPct: number;
+}
+
+export interface AnalyticsPlayedTier {
+  tier: string;
+  bets: number;
+}
+
+export interface PassSummary {
+  totalEvaluated: number;
+  passed: number;
+  passReasonBreakdown: Record<string, number>;
+}
+
 export interface AnalyticsPayload {
   filters: { sport: string; tier: string; since: string | null };
   available: { sports: string[]; tiers: string[] };
@@ -264,6 +286,42 @@ export interface AnalyticsPayload {
   trend: AnalyticsTrendPoint[];
   heatmap: AnalyticsHeatCell[];
   clv: ClvAggregate;
+  // v6.7.7 unified additions
+  byKind: AnalyticsKindBreakdown[];
+  byTier: AnalyticsPlayedTier[];
+  passSummary: PassSummary;
+}
+
+// v6.7.7: the combined archive/passes item — spans game-line + player-prop.
+export interface UnifiedItem {
+  kind: "game" | "prop";
+  pick_id: string;
+  sport: string;
+  date: string | null;
+  market_label: string;
+  line: number | null;
+  side: string | null;
+  posted_odds: number | null;
+  edge_pp: number | null;
+  tier: string;
+  pass_reason: string | null;
+  result: "W" | "L" | "P" | null;
+  pl_units: number | null;
+  pl_dollars: number | null;
+  graded_at: string | null;
+  posted_at: string | null;
+  clv_pct: number | null;
+  player_name: string | null;
+  team: string | null;
+  opponent: string | null;
+  final_score: string | null;
+}
+
+export interface UnifiedPage {
+  items: UnifiedItem[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface ArchiveItem {

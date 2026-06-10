@@ -34,6 +34,9 @@ import {
   dbPath,
   pickHistoryCount,
   archivedPicks,
+  unifiedArchive,
+  passPicks,
+  passSummary,
   propBoard,
   getPropPick,
   countPropOffersForDate,
@@ -213,6 +216,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     ).map((t) => t.name);
     const countFor = (status: string): number =>
       (db.prepare("SELECT COUNT(*) AS n FROM picks WHERE status = ?").get(status) as { n: number }).n;
+    const scalar = (sql: string): number => (db.prepare(sql).get() as { n: number }).n;
     const bankroll = getBankrollState();
     res.json({
       dbPath: file,
@@ -223,6 +227,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         pending: countFor("pending"),
         in_progress: countFor("in_progress"),
         final: countFor("final"),
+      },
+      // v6.7.7: persistence audit — actionable vs PASS rows in each ledger, so a
+      // deploy can confirm PASS picks are being recorded (and not leaking units).
+      persistence: {
+        gamePicks: {
+          total: scalar("SELECT COUNT(*) AS n FROM picks"),
+          pass: scalar("SELECT COUNT(*) AS n FROM picks WHERE tier='PASS'"),
+          passWithUnits: scalar("SELECT COUNT(*) AS n FROM picks WHERE tier='PASS' AND units > 0"),
+        },
+        propPicks: {
+          total: scalar("SELECT COUNT(*) AS n FROM prop_picks"),
+          pass: scalar("SELECT COUNT(*) AS n FROM prop_picks WHERE tier='PASS'"),
+          passWithUnits: scalar("SELECT COUNT(*) AS n FROM prop_picks WHERE tier='PASS' AND stake_units > 0"),
+        },
       },
       historyCount: pickHistoryCount(),
       bankroll: {
@@ -409,16 +427,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(await getProps(sport, date, bankroll()));
   });
 
-  // Archived (settled + cleared-off-board) picks from the permanent ledger.
-  // Paginated, newest-graded first, with sport / result / tier / since filters.
+  // Archived picks. v6.7.7: the unified archive spans game-line AND player-prop
+  // ledgers. When ?type= or ?date= is present, or an explicit ?tier= (incl PASS),
+  // it routes through unifiedArchive (combined item shape). When only the legacy
+  // sport/result/since/limit/offset params are passed it preserves the old
+  // game-line-only response for back-compat.
   app.get("/api/archive", (req: Request, res: Response) => {
     const sport = typeof req.query.sport === "string" ? req.query.sport : null;
     const result = typeof req.query.result === "string" ? req.query.result : null;
     const tier = typeof req.query.tier === "string" ? req.query.tier : null;
+    const type = typeof req.query.type === "string" ? req.query.type : null;
+    const date = parseDateParam(req.query.date) ?? null;
     const since = parseDateParam(req.query.since) ?? null;
     const limit = Number(req.query.limit ?? 50);
     const offset = Number(req.query.offset ?? 0);
+    if (type || date || tier) {
+      res.json(unifiedArchive({ type, sport, result, tier, date, since, limit, offset }));
+      return;
+    }
     res.json(archivedPicks({ sport, result, tier, since, limit, offset }));
+  });
+
+  // v6.7.7: the passed-on pile — every evaluated pick (game OR prop) the desk did
+  // NOT play (tier='PASS'), across both ledgers, newest-first. ?reason= filters by
+  // pass_reason (outlier | model_outlier_v676 | below_threshold | low_data_quality
+  // | daily_cap | low_win_prob | other). PASS rows are informational only.
+  app.get("/api/passes", (req: Request, res: Response) => {
+    const sport = typeof req.query.sport === "string" ? req.query.sport : null;
+    const type = typeof req.query.type === "string" ? req.query.type : null;
+    const date = parseDateParam(req.query.date) ?? null;
+    const since = parseDateParam(req.query.since) ?? null;
+    const reason = typeof req.query.reason === "string" ? req.query.reason : null;
+    const limit = Number(req.query.limit ?? 100);
+    const offset = Number(req.query.offset ?? 0);
+    res.json(passPicks({ type, sport, date, since, reason, limit, offset }));
   });
 
   // Active (ungraded) player-prop picks for a sport+date — the PROPS board view.

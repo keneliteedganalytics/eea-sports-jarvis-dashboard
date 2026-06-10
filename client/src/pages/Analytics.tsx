@@ -97,6 +97,83 @@ export default function Analytics() {
         </div>
       )}
 
+      {/* v6.7.7: graded record by pick kind (game lines vs player props) */}
+      {data && data.byKind && (
+        <Panel title="By pick kind">
+          <div className="grid grid-cols-2 gap-3" data-testid="analytics-bykind">
+            {data.byKind.map((k) => (
+              <div key={k.kind} className="rounded-lg border border-card-border bg-background/30 p-3" data-testid={`bykind-${k.kind}`}>
+                <div className="font-display text-[11px] font-bold uppercase tracking-wider text-gold-dark">
+                  {k.kind === "game" ? "Game lines" : "Player props"}
+                </div>
+                <div className="mt-1 text-sm text-foreground">
+                  {k.bets} played · {k.wins}-{k.losses}{k.pushes ? `-${k.pushes}` : ""}
+                </div>
+                <div className="mt-0.5 flex items-center gap-3 text-xs">
+                  <span className={k.netUnits >= 0 ? "text-tier-bonus" : "text-trap"}>{fmtUnits(k.netUnits)}</span>
+                  <span className={k.roiPct >= 0 ? "text-tier-bonus" : "text-trap"}>
+                    {k.roiPct >= 0 ? "+" : ""}{k.roiPct.toFixed(1)}% ROI
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {data.byTier && data.byTier.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2" data-testid="analytics-bytier">
+              {data.byTier.map((t) => (
+                <span
+                  key={t.tier}
+                  className="rounded-full border border-card-border bg-background/40 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider"
+                  style={{ color: tierHex(t.tier) }}
+                >
+                  {t.tier} · {t.bets} played
+                </span>
+              ))}
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {/* v6.7.7: the passed-on pile — what the engine evaluated but did not play */}
+      {data && data.passSummary && (
+        <Panel title="Passes breakdown">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3" data-testid="analytics-passes">
+            <Kpi label="Evaluated" value={String(data.passSummary.totalEvaluated)} />
+            <Kpi label="Passed on" value={String(data.passSummary.passed)} />
+            <Kpi
+              label="Pass rate"
+              value={
+                data.passSummary.totalEvaluated > 0
+                  ? `${Math.round((data.passSummary.passed / data.passSummary.totalEvaluated) * 100)}%`
+                  : "—"
+              }
+              good={false}
+            />
+          </div>
+          {Object.keys(data.passSummary.passReasonBreakdown).length > 0 && (
+            <div className="mt-3 space-y-1.5" data-testid="analytics-pass-reasons">
+              {Object.entries(data.passSummary.passReasonBreakdown)
+                .sort((a, b) => b[1] - a[1])
+                .map(([reason, n]) => {
+                  const max = Math.max(...Object.values(data.passSummary.passReasonBreakdown));
+                  const pct = max > 0 ? Math.round((n / max) * 100) : 0;
+                  return (
+                    <div key={reason} className="flex items-center gap-2" data-testid={`pass-reason-${reason}`}>
+                      <span className="w-36 shrink-0 truncate text-[11px] uppercase tracking-wider text-muted-foreground">
+                        {reason.replace(/_/g, " ")}
+                      </span>
+                      <div className="h-3 flex-1 overflow-hidden rounded-full bg-background/40">
+                        <div className="h-full rounded-full bg-gold" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="w-8 shrink-0 text-right text-[11px] tabular-nums text-foreground">{n}</span>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </Panel>
+      )}
+
       {/* Closing Line Value — mean CLV %, positive rate, mean by tier */}
       {data && (
         <Panel title="Closing line value">

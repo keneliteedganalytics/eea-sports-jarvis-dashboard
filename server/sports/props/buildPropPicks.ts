@@ -253,7 +253,8 @@ export interface BuildSummary {
   date: string;
   considered: number;
   written: number;
-  pickIds: string[];
+  passed: number; // v6.7.7: evaluated picks recorded as tier='PASS' (not played)
+  pickIds: string[]; // actionable pick ids only — recompute survivor logic depends on this
 }
 
 // Injectable data adapters so the orchestrator's end-to-end chain (resolve id →
@@ -284,7 +285,71 @@ export async function buildMlbPropPicks(
 ): Promise<BuildSummary> {
   const offers = propOffersForDate(date, "mlb");
   const grouped = groupOffers(offers);
-  if (grouped.length === 0) return { date, considered: 0, written: 0, pickIds: [] };
+  if (grouped.length === 0) return { date, considered: 0, written: 0, passed: 0, pickIds: [] };
+
+  // v6.7.7: every evaluated prop (post-edge-calc) is recorded — actionable picks
+  // as their real tier, rejected picks as tier='PASS' with the reason. PASS rows
+  // are informational only: stake_units 0, never settled, hidden from the default
+  // board. Pre-edge skips (no profile / thin sample / sim failed) are NOT recorded
+  // — no edge was computed, so there's nothing to record without fabricating.
+  let passed = 0;
+  type PassReason =
+    | "outlier"
+    | "model_outlier_v676"
+    | "below_threshold"
+    | "low_data_quality"
+    | "daily_cap";
+  function recordPass(args: {
+    pickId: string;
+    offer: GroupedOffer;
+    side: "over" | "under";
+    price: number;
+    reason: PassReason;
+    edge?: PropEdgeResult;
+    dist?: SimDistribution;
+    dq?: string;
+    hitRates?: HitRates;
+    confidence?: number;
+    team?: string | null;
+    opponent?: string | null;
+  }): void {
+    const { offer, edge, dist, hitRates } = args;
+    try {
+      upsertPropPick({
+        pick_id: args.pickId,
+        sport: "mlb",
+        game_id: offer.eventId,
+        player_name: offer.player,
+        team: args.team ?? null,
+        opponent: args.opponent ?? null,
+        market_type: offer.market,
+        line: offer.line,
+        side: args.side,
+        posted_odds: args.price,
+        tier: "PASS",
+        pass_reason: args.reason,
+        confidence: args.confidence ?? null,
+        edge_pp: edge?.edgePp ?? null,
+        data_quality_tier: args.dq ?? null,
+        model_prob: edge?.modelProb ?? null,
+        sim_median: dist?.median ?? null,
+        sim_p25: dist?.p25 ?? null,
+        sim_p75: dist?.p75 ?? null,
+        sim_mean: dist?.mean ?? null,
+        sim_trials: dist?.trials ?? null,
+        hit_rates_json: hitRates ? JSON.stringify(hitRates) : null,
+        matchup_json: null,
+        best_book: edge?.bestBook ?? null,
+        best_price: edge?.bestPrice ?? args.price,
+        market_label: marketLabel(offer.market),
+        stake_units: 0,
+        hundred_club: hitRates?.hundredClub ?? null,
+      });
+      passed++;
+    } catch {
+      // best-effort; a single failed PASS write never blocks the build
+    }
+  }
 
   // Schedule gives us venue (park factor) + opposing probable pitcher + posted
   // batting orders (for lineup-spot resolution) per event.
@@ -370,20 +435,32 @@ export async function buildMlbPropPicks(
     const edge = computePropEdge(sim.distribution, g.line, g.quotes);
     if (!edge) continue;
 
+    const pickId = `${g.eventId}:${market}:${g.player}:${edge.side}`;
+    const dq = dataQualityTier(market, isBatterMarket(market) ? batterLogs : pitcherStarts, hasSeason);
+    const hitRates = computeHitRates({
+      market,
+      line: g.line,
+      batter: batterProfile ?? undefined,
+      pitcher: pitcherProfile ?? undefined,
+      opponent: matchup?.opponent ?? null,
+    });
+    const team = matchup?.team ?? null;
+    const opponent = matchup?.opponent ?? null;
+
     // Model-outlier sanity gate (v6.7.3). A double-digit-plus edge whose median
     // sits far from the line relative to the simulated spread is almost always a
-    // thin-sample artifact, not a real edge. PASS it and record the reason so the
-    // filtered set is queryable (SELECT * FROM pick_audit WHERE reason='model_outlier').
+    // thin-sample artifact, not a real edge. PASS it (recorded with full metadata)
+    // and audit so the filtered set stays queryable.
     if (
       edge.edgePp > 20 &&
       Math.abs(sim.distribution.median - g.line) > sim.distribution.stdDev * 0.5
     ) {
-      const auditId = `${g.eventId}:${market}:${g.player}:${edge.side}`;
       try {
-        insertPropAudit(auditId, "prop-build", "model_outlier");
+        insertPropAudit(pickId, "prop-build", "model_outlier");
       } catch {
         // audit logging is best-effort; never block the build on it
       }
+      recordPass({ pickId, offer: g, side: edge.side, price: edge.bestPrice, reason: "outlier", edge, dist: sim.distribution, dq, hitRates, team, opponent });
       continue;
     }
 
@@ -393,36 +470,37 @@ export async function buildMlbPropPicks(
     // more than 0.15 is the model disagreeing too violently with a sharp market —
     // almost always a residual model error, not a real edge. PASS it and audit.
     if (edge.edgePp > 12 && Math.abs(edge.modelProb - edge.impliedProb) > 0.15) {
-      const auditId = `${g.eventId}:${market}:${g.player}:${edge.side}`;
       try {
-        insertPropAudit(auditId, "prop-build", "model_outlier_v676");
+        insertPropAudit(pickId, "prop-build", "model_outlier_v676");
       } catch {
         // audit logging is best-effort; never block the build on it
       }
+      recordPass({ pickId, offer: g, side: edge.side, price: edge.bestPrice, reason: "model_outlier_v676", edge, dist: sim.distribution, dq, hitRates, team, opponent });
       continue;
     }
 
-    const dq = dataQualityTier(market, isBatterMarket(market) ? batterLogs : pitcherStarts, hasSeason);
-    if (!qualifiesAsPick(edge, dq)) continue;
-
-    const hitRates = computeHitRates({
-      market,
-      line: g.line,
-      batter: batterProfile ?? undefined,
-      pitcher: pitcherProfile ?? undefined,
-      opponent: matchup?.opponent ?? null,
-    });
+    if (!qualifiesAsPick(edge, dq)) {
+      const reason = dq === "low" || dq === "LOW" ? "low_data_quality" : "below_threshold";
+      recordPass({ pickId, offer: g, side: edge.side, price: edge.bestPrice, reason, edge, dist: sim.distribution, dq, hitRates, team, opponent });
+      continue;
+    }
 
     const tier = assignPropTier({ edgePp: edge.edgePp, side: edge.side, l10: hitRates.l10, l20: hitRates.l20, dataQualityTier: dq });
-    if (tier === "PASS") continue;
+    if (tier === "PASS") {
+      recordPass({ pickId, offer: g, side: edge.side, price: edge.bestPrice, reason: "below_threshold", edge, dist: sim.distribution, dq, hitRates, team, opponent });
+      continue;
+    }
 
     const stake = propStake(edge.bestPrice);
-    if (stake.rejected) continue;
+    if (stake.rejected) {
+      recordPass({ pickId, offer: g, side: edge.side, price: edge.bestPrice, reason: "below_threshold", edge, dist: sim.distribution, dq, hitRates, team, opponent });
+      continue;
+    }
 
     const confidence = propConfidence(edge.edgePp, edge.modelProb);
     const sampleSize = isBatterMarket(market) ? batterLogs : pitcherStarts;
     candidates.push({
-      pickId: `${g.eventId}:${market}:${g.player}:${edge.side}`,
+      pickId,
       offer: g,
       dist: sim.distribution,
       edge,
@@ -431,8 +509,8 @@ export async function buildMlbPropPicks(
       confidence,
       sampleSize,
       dq,
-      team: matchup?.team ?? null,
-      opponent: matchup?.opponent ?? null,
+      team,
+      opponent,
     });
   }
 
@@ -440,6 +518,19 @@ export async function buildMlbPropPicks(
     candidates.map((c) => ({ ...c, edgePp: c.edge.edgePp })),
     PROP_DAILY_CAP,
   );
+
+  // Candidates that cleared every gate but fell outside the daily cap are still
+  // recorded — as tier='PASS' with reason 'daily_cap' — so the desk can see what
+  // was bumped. They are NOT in pickIds (recompute survivor logic = actionable only).
+  const survivingIds = new Set(ranked.map((c) => c.pickId));
+  for (const c of candidates) {
+    if (survivingIds.has(c.pickId)) continue;
+    recordPass({
+      pickId: c.pickId, offer: c.offer, side: c.edge.side, price: c.edge.bestPrice,
+      reason: "daily_cap", edge: c.edge, dist: c.dist, dq: c.dq, hitRates: c.hitRates,
+      confidence: c.confidence, team: c.team, opponent: c.opponent,
+    });
+  }
 
   const pickIds: string[] = [];
   for (const c of ranked) {
@@ -476,7 +567,7 @@ export async function buildMlbPropPicks(
     pickIds.push(c.pickId);
   }
 
-  return { date, considered: candidates.length, written: pickIds.length, pickIds };
+  return { date, considered: candidates.length, written: pickIds.length, passed, pickIds };
 }
 
 // Build matchup context for a market+offer using the schedule. The event→game

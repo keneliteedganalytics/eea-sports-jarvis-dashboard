@@ -82,10 +82,13 @@ await test("lineupSpotFor reads the posted slot for the resolved id", () => {
 await test("builder locates the game by event teams and writes a pick", async () => {
   // Offer carries event_home/event_away (as the ingester now stores them). The
   // builder must match those to the scheduled game (not the hash eventId).
+  // Priced −250 so the model's over (~0.80 vs ~0.71 implied) leaves a moderate
+  // ~14.6pp edge that clears the surfacing + model-outlier gates and writes —
+  // the point of this test is the team-based matchup join, not gate behavior.
   upsertPropOffer({
     event_id: "evt-hash-not-a-gamePk", sport: "mlb", game_date: DATE,
     player_name: "Aaron Judge", market: "batter_hits", line: 0.5,
-    over_price: 110, under_price: -130, book: "draftkings",
+    over_price: -250, under_price: 200, book: "draftkings",
     event_home: "New York Yankees", event_away: "Boston Red Sox",
   });
 
