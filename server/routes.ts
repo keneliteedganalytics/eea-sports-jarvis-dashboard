@@ -5,7 +5,7 @@ import { initSchema } from "./storage";
 import { getSlate } from "./sports/mlb/slate";
 import { getNhlSlate } from "./sports/nhl/slate";
 import { getNbaSlate } from "./sports/nba/slate";
-import { getDailySlate, getAnyPick } from "./slate/orchestrator";
+import { getDailySlate, getAnyPick, decorateSlatePicks } from "./slate/orchestrator";
 import { getProps } from "./props";
 import { hitRatesByTier, trackRecord } from "./sports/mlb/trackRecord";
 import { buildAnalytics } from "./analytics";
@@ -84,18 +84,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(slate);
   });
 
-  // Today's MLB slate (capped, tiered picks).
-  app.get("/api/mlb/slate", async (_req: Request, res: Response) => {
-    const slate = await getSlate(bankroll());
+  // Today's MLB slate (capped, tiered picks). Picks are decorated with their
+  // graded-book status + CLV badge so the cards render grade colors and the
+  // "Lock at first pitch" chip — same enrichment the cross-sport board applies.
+  app.get("/api/mlb/slate", async (req: Request, res: Response) => {
+    const dateIso = parseDateParam(req.query.date);
+    const slate = await getSlate(bankroll(), dateIso);
+    decorateSlatePicks(slate.picks, slate.operatingDay);
     res.json(slate);
   });
 
   // NHL + NBA slates.
-  app.get("/api/nhl/slate", async (_req: Request, res: Response) => {
-    res.json(await getNhlSlate(bankroll()));
+  app.get("/api/nhl/slate", async (req: Request, res: Response) => {
+    const dateIso = parseDateParam(req.query.date);
+    const slate = await getNhlSlate(bankroll(), dateIso);
+    decorateSlatePicks(slate.picks, slate.operatingDay);
+    res.json(slate);
   });
-  app.get("/api/nba/slate", async (_req: Request, res: Response) => {
-    res.json(await getNbaSlate(bankroll()));
+  app.get("/api/nba/slate", async (req: Request, res: Response) => {
+    const dateIso = parseDateParam(req.query.date);
+    const slate = await getNbaSlate(bankroll(), dateIso);
+    decorateSlatePicks(slate.picks, slate.operatingDay);
+    res.json(slate);
   });
 
   // Single pick detail (any sport).

@@ -118,37 +118,61 @@ export async function getDailySlate(bankroll = BANKROLL_USD, dateIso?: string): 
 // Decorate the day's picks with their graded-book status (W/L/P, live + final
 // scores) so the cards can color-code. Picks not in the book stay unannotated.
 function attachGradedStatus(slates: SportSlate[], day: string): void {
+  decorateSlatePicks(slates.flatMap((s) => s.picks), day);
+}
+
+// Open-CLV fallback for a pick with no graded row yet. The lock worker has not
+// run, but the pick already carries a posted price — surface the 'open' badge so
+// the card shows the "Lock at first pitch" chip instead of a blank.
+function openClvFromPick(p: BuiltPick): ClvBadge | null {
+  if (p.pickMl === null || p.pickMl === undefined) return null;
+  return {
+    points: 0,
+    percent: 0,
+    status: "open",
+    postedOdds: p.pickMl,
+    closingOdds: null,
+    closingSource: undefined,
+  };
+}
+
+// Merge graded-book status onto a flat list of board picks (W/L/P, live + final
+// scores, CLV badge, lock overlay). Used by both the cross-sport board and each
+// per-sport slate route so every served pick carries the grade + CLV fields.
+// A pick with no matching graded row still gets the 'open' CLV shape when it has
+// a posted price, so the UI never sees an undefined clv where odds exist.
+export function decorateSlatePicks(picks: BuiltPick[], day: string): void {
   const rows = picksForDate(day);
-  if (rows.length === 0) return;
   const byId = new Map<string, GradedPick>();
   for (const r of rows) byId.set(r.id, r);
-  for (const s of slates) {
-    for (const p of s.picks) {
-      const row = byId.get(pickId(p.gameId, p.pickType, p.pickSide));
-      if (!row) continue;
-      p.gradeStatus = row.status;
-      p.gradeResult = row.result;
-      p.gradePl = row.pl;
-      p.clvPct = row.clvPct;
-      p.clv = buildClvBadge(row);
-      p.liveAwayScore = row.liveAwayScore;
-      p.liveHomeScore = row.liveHomeScore;
-      p.liveStatusDetail = row.liveStatusDetail;
-      p.finalAwayScore = row.finalAwayScore;
-      p.finalHomeScore = row.finalHomeScore;
-      if (row.locked) {
-        p.locked = true;
-        p.lockedAt = row.lockedAt;
-        // row is already lock-overlaid by picksForDate, so tier/stake/odds carry
-        // the frozen values — mirror them onto the board pick so the card and
-        // analytics show the LOCKED tier, not a recompute.
-        p.lockedTier = row.lockedTier;
-        p.lockedStake = row.lockedStake;
-        p.lockedOdds = row.lockedOdds;
-        p.verdictTier = row.tier as typeof p.verdictTier;
-        p.kellyStakeDollars = row.stakeDollars;
-        p.pickMl = row.pickMl;
-      }
+  for (const p of picks) {
+    const row = byId.get(pickId(p.gameId, p.pickType, p.pickSide));
+    if (!row) {
+      p.clv = openClvFromPick(p);
+      continue;
+    }
+    p.gradeStatus = row.status;
+    p.gradeResult = row.result;
+    p.gradePl = row.pl;
+    p.clvPct = row.clvPct;
+    p.clv = buildClvBadge(row) ?? openClvFromPick(p);
+    p.liveAwayScore = row.liveAwayScore;
+    p.liveHomeScore = row.liveHomeScore;
+    p.liveStatusDetail = row.liveStatusDetail;
+    p.finalAwayScore = row.finalAwayScore;
+    p.finalHomeScore = row.finalHomeScore;
+    if (row.locked) {
+      p.locked = true;
+      p.lockedAt = row.lockedAt;
+      // row is already lock-overlaid by picksForDate, so tier/stake/odds carry
+      // the frozen values — mirror them onto the board pick so the card and
+      // analytics show the LOCKED tier, not a recompute.
+      p.lockedTier = row.lockedTier;
+      p.lockedStake = row.lockedStake;
+      p.lockedOdds = row.lockedOdds;
+      p.verdictTier = row.tier as typeof p.verdictTier;
+      p.kellyStakeDollars = row.stakeDollars;
+      p.pickMl = row.pickMl;
     }
   }
 }
