@@ -6,9 +6,15 @@ import { probToAmerican } from "../../core/odds";
 export const NHL_LG_GPG = 3.05; // league goals per game per team (2024-25 baseline)
 export const NHL_HOME_ICE_GOALS = 0.18; // home-ice goals advantage
 export const NHL_LG_SV_PCT = 0.905; // league average save percentage
-export const MODEL_TRUST_WEIGHT = 0.45;
-export const PROB_CLAMP_LO = 0.15;
+// v6.6: ML trust bumped to 0.70, ML floor lowered to 0.02 (kill phantom dog
+// edges). Totals/spreads kept tighter — see MLB model for rationale.
+export const MODEL_TRUST_WEIGHT = 0.7;
+export const MODEL_TRUST_WEIGHT_TOTALS = 0.45;
+export const MODEL_TRUST_WEIGHT_SPREADS = 0.55;
+export const PROB_CLAMP_LO = 0.02;
 export const PROB_CLAMP_HI = 0.85;
+export const PROB_CLAMP_TOTALS: readonly [number, number] = [0.3, 0.7];
+export const PROB_CLAMP_SPREADS: readonly [number, number] = [0.3, 0.7];
 
 export interface GoalieStats {
   available: boolean;

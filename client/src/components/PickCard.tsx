@@ -169,6 +169,16 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
           </div>
         )}
 
+        {/* v6.6 hard-gate PASS reason — compact, audit-visible. */}
+        {pick.verdictTier === "PASS" && pick.passReason && (
+          <div
+            className="rounded border border-[#6B7A99]/30 bg-[#6B7A99]/10 px-2 py-1 text-[11px] font-medium text-[#9FB0C9]"
+            data-testid={`pass-reason-${pick.gameId}`}
+          >
+            PASS: {pick.passReason}
+          </div>
+        )}
+
         {/* Units chip (large, gold) */}
         <div className="flex items-baseline gap-2">
           <span className="font-display text-3xl font-extrabold tabular-nums text-gold" data-testid={`units-${pick.gameId}`}>

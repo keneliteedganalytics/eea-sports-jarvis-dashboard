@@ -56,6 +56,8 @@ export interface BuiltPick {
   fairMl: number | null;
   edgePp: number | null;
   evPer100: number;
+  evPer100Raw?: number;
+  evCapped?: boolean;
   confidence: number;
   units: number;
   kellyStakeDollars: number;
@@ -75,6 +77,7 @@ export interface BuiltPick {
   eliteFadeApplied: boolean;
   dataQualityTier: string;
   hardPassReason: string | null;
+  passReason?: string | null;
   isSparseModel: boolean;
   projHomeScore: number;
   projAwayScore: number;

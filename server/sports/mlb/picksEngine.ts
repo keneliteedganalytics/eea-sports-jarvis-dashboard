@@ -1,8 +1,9 @@
 // Picks engine — ported from sports-engine sports/mlb/picks_engine.py.
 // Confidence (7-component), Kelly sizing, verdict tier, daily 6-pick cap.
 
-import { assignTier, downgradeTier } from "../../core/tier";
+import { assignTier, downgradeTier, evaluateHardGates } from "../../core/tier";
 import { convictionUnits, applyJuicePenalty, unitsToStake, computeUnit } from "../../core/sizing";
+import { taperBigDogStake, capEvPer100, pickRankScore } from "../units";
 import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
 import { buildTwoWayMarket } from "../../core/markets";
 import type { Verdict, Side, Market, MarketSet } from "../../core/types";
@@ -31,7 +32,7 @@ import {
 } from "./recentForm";
 
 export const ELITE_FADE_PP = 12.0;
-export const MAX_PICKS_PER_DAY = 6;
+export const MAX_PICKS_PER_DAY = 4; // v6.6: 6 → 4 (was firing too many marginal spots)
 // June reset (EEA operating rules). Overridable via BANKROLL_USD env at the route.
 export const BANKROLL_USD = 25000;
 
@@ -136,6 +137,8 @@ export interface BuiltPick {
   fairMl: number | null;
   edgePp: number | null;
   evPer100: number;
+  evPer100Raw: number;
+  evCapped: boolean;
   confidence: number;
   units: number;
   kellyStakeDollars: number;
@@ -156,6 +159,9 @@ export interface BuiltPick {
   eliteFadeApplied: boolean;
   dataQualityTier: string;
   hardPassReason: string | null;
+  // v6.6: which hard PASS gate (if any) forced this pick to PASS — surfaced on
+  // the card + API for audit. null when no gate fired.
+  passReason: string | null;
   isSparseModel: boolean;
   projHomeScore: number;
   projAwayScore: number;
@@ -468,7 +474,11 @@ export function buildPick(
     eliteFadeApplied = model.eliteFadeAway;
   }
 
-  const ev = pickWp !== null && pickMl !== null ? computeEv(pickWp, pickMl) : 0.0;
+  const evRaw = pickWp !== null && pickMl !== null ? computeEv(pickWp, pickMl) : 0.0;
+  // v6.6: cap the displayed EV at +30/$100; anything higher is a tail artifact.
+  // Confidence + the EV ceiling tier-gate use the RAW value (we don't want the
+  // cap to hide a calibration blow-up); the card shows the capped value.
+  const { evPer100: ev, evPer100Raw, evCapped } = capEvPer100(evRaw);
 
   // Orient public/sharp pcts to the pick side.
   // data.ts computes them for the home side; away picks need 100 - x.
@@ -489,7 +499,7 @@ export function buildPick(
 
   const baseConfidence = computeConfidence({
     edgePp: pickEdge,
-    evPer100: ev,
+    evPer100: evRaw,
     isSparseModel: model.isSparseModel,
     eliteFadeApplied,
     pickSide,
@@ -537,25 +547,49 @@ export function buildPick(
 
   const polyPct = orientedPoly?.found ? (orientedPoly.pct ?? null) : null;
 
-  let tier = assignTier({
+  const tierInput = {
     edgePp: pickEdge,
     confidence,
     polyPct,
-    evPer100: ev,
+    evPer100: evRaw,
     hardPass,
     trapCapped: model.trapSignal,
     oddsAmerican: pickMl,
     winProb: pickWp,
-  });
+    trapSignal: model.trapSignal,
+    trapGapPp: model.trapGapPp,
+    dataQualityTier: model.dataQualityTier,
+  };
+  // v6.6 hard PASS gate audit string (trap / EV ceiling / max odds / wp floor).
+  const hardGate = evaluateHardGates(tierInput);
+  let passReason: string | null = hardGate.fired ? hardGate.reason : null;
+
+  let tier = assignTier(tierInput);
   if (lineupForcesDowngrade(lineup.status) && tier !== "PASS") {
     tier = downgradeTier(tier);
+  }
+  // v6.6 gate C.E: never an EDGE/SNIPER on LOW-quality data — cap at RECON.
+  if (
+    (model.dataQualityTier ?? "").toUpperCase() === "LOW" &&
+    (tier === "EDGE" || tier === "SNIPER")
+  ) {
+    tier = "RECON";
   }
 
   // EEA flat-unit sizing (SPEC §4): conviction units → juice penalty → stake.
   let verdictTier = tier;
   const baseUnits = hardPass ? 0 : convictionUnits(verdictTier);
   const { units: juicedUnits, halfCut } = applyJuicePenalty(baseUnits, pickMl);
-  let units = juicedUnits;
+  // v6.6 big-dog taper: shrink Kelly/conviction units as the price climbs; a
+  // +1001-or-longer dog is tapered to 0 (and gated to PASS below). Applied
+  // AFTER sizing, BEFORE the verdict is finalized.
+  let units = pickMl !== null ? taperBigDogStake(juicedUnits, pickMl) : juicedUnits;
+  if (units === 0 && juicedUnits > 0 && verdictTier !== "PASS") {
+    // Taper zeroed the stake (price too long to play) — force PASS to match.
+    verdictTier = "PASS";
+    tier = "PASS";
+    if (!passReason) passReason = `+${pickMl} exceeds max odds policy`;
+  }
   let stakeDollars = unitsToStake(units, bankroll);
 
   // Sub-25 IP warning (SPEC §7): judgment-only flag, no auto tier/size change.
@@ -648,6 +682,8 @@ export function buildPick(
     fairMl: pickSide === "home" ? model.fairHomeMl : model.fairAwayMl,
     edgePp: pickEdge !== null ? round2(pickEdge) : null,
     evPer100: ev,
+    evPer100Raw,
+    evCapped,
     confidence,
     units,
     kellyStakeDollars: stakeDollars,
@@ -667,6 +703,7 @@ export function buildPick(
     eliteFadeApplied,
     dataQualityTier: model.dataQualityTier,
     hardPassReason,
+    passReason,
     isSparseModel: model.isSparseModel,
     projHomeScore: model.projHomeScore,
     projAwayScore: model.projAwayScore,
@@ -707,10 +744,15 @@ const TIER_RANK: Record<Verdict, number> = {
 };
 
 export function applyDailyCap(picks: BuiltPick[], maxPicks = MAX_PICKS_PER_DAY): BuiltPick[] {
+  // v6.6 ranking: tier rank first, then confidence × edge / sqrt(1+impliedProb)
+  // so the best N spots survive the (now tighter) cap.
   const sorted = [...picks].sort((a, b) => {
     const r = TIER_RANK[a.verdictTier] - TIER_RANK[b.verdictTier];
     if (r !== 0) return r;
-    return (b.edgePp ?? -999) - (a.edgePp ?? -999);
+    return (
+      pickRankScore(b.confidence, b.edgePp, b.pickImpliedProb) -
+      pickRankScore(a.confidence, a.edgePp, a.pickImpliedProb)
+    );
   });
 
   let actionableCount = 0;

@@ -2,8 +2,9 @@
 // draw cap at RECON tier, friendly cap at RECON, WC matchday-1 cap at RECON,
 // phantom-edge detection on league-fallback notes.
 
-import { assignTier } from "../../core/tier";
+import { assignTier, evaluateHardGates } from "../../core/tier";
 import { convictionUnits, applyJuicePenalty, unitsToStake } from "../../core/sizing";
+import { taperBigDogStake, capEvPer100, pickRankScore } from "../units";
 import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
 import { buildTwoWayMarket } from "../../core/markets";
 import { emptyMarket, type Market, type MarketSet, type Side, type Verdict } from "../../core/types";
@@ -11,7 +12,7 @@ import type { BuiltPick } from "../mlb/picksEngine";
 import type { SoccerModelResult } from "./model";
 
 export const BANKROLL_USD = 25000;
-export const MAX_PICKS_PER_DAY = 5;
+export const MAX_PICKS_PER_DAY = 3; // v6.6: 5 → 3
 // Soccer is noisier than the US majors — require a higher edge floor to play.
 export const SOCCER_MIN_EDGE_PP = 7.0;
 const GOAL_MARGIN_SCALE = 1.8;
@@ -288,24 +289,35 @@ export function buildPick(
 
   const isDraw = pickSide === "draw";
 
-  // EV
-  const ev = pickWp !== null && pickMl !== null
+  // EV (raw used for gates/confidence; capped value displayed — see v6.6).
+  const evRaw = pickWp !== null && pickMl !== null
     ? computeEv(pickWp, pickMl)
     : 0.0;
+  const { evPer100: ev, evPer100Raw, evCapped } = capEvPer100(evRaw);
 
   const confidence = computeConfidence(pickEdge, model, pickSide, game.isFriendly);
 
   // Tier assignment — with soccer caps applied AFTER
-  let tier = assignTier({
+  const tierInput = {
     edgePp: pickEdge,
     confidence,
     polyPct: game._polymarketData?.found ? (game._polymarketData.pct ?? null) : null,
-    evPer100: ev,
+    evPer100: evRaw,
     hardPass,
     trapCapped: model.trapSignal,
     oddsAmerican: pickMl,
     winProb: pickWp,
-  });
+    trapSignal: model.trapSignal,
+    trapGapPp: model.trapGapPp,
+    dataQualityTier: model.dataQualityTier,
+  };
+  const hardGate = evaluateHardGates(tierInput);
+  let passReason: string | null = hardGate.fired ? hardGate.reason : null;
+
+  let tier = assignTier(tierInput);
+  if ((model.dataQualityTier ?? "").toUpperCase() === "LOW" && (tier === "EDGE" || tier === "SNIPER")) {
+    tier = "RECON";
+  }
 
   // Soccer edge floor (v5): below 7pp → PASS regardless of confidence.
   if (!hardPass && (pickEdge === null || Math.abs(pickEdge) < SOCCER_MIN_EDGE_PP)) {
@@ -334,7 +346,13 @@ export function buildPick(
   let verdictTier = tier as Verdict;
   const baseUnits = hardPass ? 0 : convictionUnits(verdictTier);
   const { units: juicedUnits, halfCut } = applyJuicePenalty(baseUnits, pickMl);
-  let units = juicedUnits;
+  // v6.6 big-dog taper, applied after sizing, before verdict finalize.
+  let units = pickMl !== null ? taperBigDogStake(juicedUnits, pickMl) : juicedUnits;
+  if (units === 0 && juicedUnits > 0 && verdictTier !== "PASS") {
+    verdictTier = "PASS";
+    tier = "PASS";
+    if (!passReason) passReason = `+${pickMl} exceeds max odds policy`;
+  }
   let stakeDollars = unitsToStake(units, bankroll);
 
   if (phantomEdge) { units = 0; stakeDollars = 0; verdictTier = "PASS"; }
@@ -401,6 +419,8 @@ export function buildPick(
           : model.fairDrawMl,
     edgePp: pickEdge !== null ? round2(pickEdge) : null,
     evPer100: ev,
+    evPer100Raw,
+    evCapped,
     confidence,
     units,
     kellyStakeDollars: stakeDollars,
@@ -421,6 +441,7 @@ export function buildPick(
     eliteFadeApplied: false,
     dataQualityTier: model.dataQualityTier,
     hardPassReason,
+    passReason,
     isSparseModel: model.isSparseModel,
     projHomeScore: model.projHomeGoals,
     projAwayScore: model.projAwayGoals,
@@ -469,7 +490,10 @@ export function applyDailyCap(picks: SoccerPick[], maxPicks = MAX_PICKS_PER_DAY)
   const sorted = [...picks].sort((a, b) => {
     const r = TIER_RANK[a.verdictTier] - TIER_RANK[b.verdictTier];
     if (r !== 0) return r;
-    return (b.edgePp ?? -999) - (a.edgePp ?? -999);
+    return (
+      pickRankScore(b.confidence, b.edgePp, b.pickImpliedProb) -
+      pickRankScore(a.confidence, a.edgePp, a.pickImpliedProb)
+    );
   });
   let actionableCount = 0;
   for (const p of sorted) {

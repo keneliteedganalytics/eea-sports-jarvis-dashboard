@@ -2,8 +2,9 @@
 // sizing, tier, ML/spread(puck-line)/total markets, daily-cap 6, NHL hard-pass
 // guard, and phantom-edge detection.
 
-import { assignTier } from "../../core/tier";
+import { assignTier, evaluateHardGates } from "../../core/tier";
 import { convictionUnits, applyJuicePenalty, unitsToStake } from "../../core/sizing";
+import { taperBigDogStake, pickRankScore } from "../units";
 import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
 import { buildTwoWayMarket } from "../../core/markets";
 import { emptyMarket, type Market, type MarketSet, type Side, type Verdict } from "../../core/types";
@@ -11,7 +12,7 @@ import type { BuiltPick, PolymarketData } from "../mlb/picksEngine";
 import type { NhlModelResult, GoalieStats, TeamHockeyStats } from "./model";
 
 export const BANKROLL_USD = 25000;
-export const MAX_PICKS_PER_DAY = 3;
+export const MAX_PICKS_PER_DAY = 2; // v6.6: 3 → 2
 const PUCK_MARGIN_SCALE = 1.9; // goals-diff → cover prob scale
 const TOTAL_SCALE = 2.2;
 
@@ -122,20 +123,34 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
 
   const confidence = computeConfidence(pickEdge, model, pickSide);
 
-  const tier: Verdict = assignTier({
+  const tierInput = {
     edgePp: pickEdge,
     confidence,
     polyPct,
     hardPass,
     oddsAmerican: pickMl,
     winProb: pickWp,
-  });
+    dataQualityTier: model.dataQualityTier,
+  };
+  const hardGate = evaluateHardGates(tierInput);
+  let passReason: string | null = hardGate.fired ? hardGate.reason : null;
+
+  let tier: Verdict = assignTier(tierInput);
+  if ((model.dataQualityTier ?? "").toUpperCase() === "LOW" && (tier === "EDGE" || tier === "SNIPER")) {
+    tier = "RECON";
+  }
 
   // EEA flat-unit sizing (SPEC §4): conviction units → juice penalty → stake.
   let verdictTier = tier;
   const baseUnits = hardPass ? 0 : convictionUnits(verdictTier);
   const { units: juicedUnits, halfCut } = applyJuicePenalty(baseUnits, pickMl);
-  let units = juicedUnits;
+  // v6.6 big-dog taper, applied after sizing, before verdict finalize.
+  let units = pickMl !== null ? taperBigDogStake(juicedUnits, pickMl) : juicedUnits;
+  if (units === 0 && juicedUnits > 0 && verdictTier !== "PASS") {
+    verdictTier = "PASS";
+    tier = "PASS";
+    if (!passReason) passReason = `+${pickMl} exceeds max odds policy`;
+  }
   let stakeDollars = unitsToStake(units, bankroll);
 
   // Alignment signal (SPEC §8): raw edge magnitude — confirming upgrade signal.
@@ -184,6 +199,8 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
     fairMl: pickSide === "home" ? model.fairHomeMl : model.fairAwayMl,
     edgePp: pickEdge !== null ? round2(pickEdge) : null,
     evPer100: 0,
+    evPer100Raw: 0,
+    evCapped: false,
     confidence,
     units,
     kellyStakeDollars: stakeDollars,
@@ -203,6 +220,7 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
     eliteFadeApplied: false,
     dataQualityTier: model.dataQualityTier,
     hardPassReason,
+    passReason,
     isSparseModel: false,
     projHomeScore: model.projHomeGoals,
     projAwayScore: model.projAwayGoals,
@@ -335,7 +353,10 @@ export function applyDailyCap(picks: BuiltPick[], maxPicks = MAX_PICKS_PER_DAY):
   const sorted = [...picks].sort((a, b) => {
     const r = TIER_RANK[a.verdictTier] - TIER_RANK[b.verdictTier];
     if (r !== 0) return r;
-    return (b.edgePp ?? -999) - (a.edgePp ?? -999);
+    return (
+      pickRankScore(b.confidence, b.edgePp, b.pickImpliedProb) -
+      pickRankScore(a.confidence, a.edgePp, a.pickImpliedProb)
+    );
   });
   let count = 0;
   for (const p of sorted) {

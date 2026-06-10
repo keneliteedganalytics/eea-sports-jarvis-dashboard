@@ -7,8 +7,10 @@ import { probToAmerican } from "../../core/odds";
 
 export const SOCCER_LG_GPG = 1.35;       // league average goals per game per team
 export const HOME_ADVANTAGE_GOALS = 0.35; // home team gets +0.35 goals boost
-export const MODEL_TRUST_WEIGHT = 0.45;
-export const PROB_CLAMP_LO = 0.05;
+// v6.6: trust model more on the match-result market; lower the floor so a true
+// long-shot stays a long-shot. 3-way ceiling kept at 0.90.
+export const MODEL_TRUST_WEIGHT = 0.7;
+export const PROB_CLAMP_LO = 0.02;
 export const PROB_CLAMP_HI = 0.90;
 export const POISSON_MAX_GOALS = 7;       // 0..6 scoreline matrix (7×7)
 

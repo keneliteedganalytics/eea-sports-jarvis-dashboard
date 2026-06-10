@@ -99,7 +99,7 @@ test("market shrinkage pulls toward fair prob (MODEL_TRUST_WEIGHT)", () => {
   assert.ok(r.homeWinProb < r.homeWinProbFormula, "shrinkage pulls toward market");
 });
 
-test("probability clamp holds [0.15, 0.85]", () => {
+test("probability clamp holds [PROB_CLAMP_LO, PROB_CLAMP_HI]", () => {
   const r = predictGame(ctx({ homeStats: stats({ ortg: 140, drtg: 95 }), awayStats: stats({ ortg: 95, drtg: 140 }) }));
   assert.ok(r.homeWinProb <= PROB_CLAMP_HI + 1e-9, `clamp hi: ${r.homeWinProb}`);
   assert.ok(r.awayWinProb >= PROB_CLAMP_LO - 1e-9, `clamp lo away: ${r.awayWinProb}`);

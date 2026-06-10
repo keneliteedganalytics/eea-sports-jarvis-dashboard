@@ -19,9 +19,19 @@ export const MLB_LG_ERA = 4.2;
 export const MLB_HFA_RUNS = 0.12;
 export const MLB_SP_ADJ_LO = 0.55;
 export const MLB_SP_ADJ_HI = 1.55;
-export const PROB_CLAMP_LO = 0.15;
+// v6.6: lower the ML floor so a true long-shot dog stays a long-shot instead of
+// being forced up to 15% (which manufactured phantom edges at the tails). Upper
+// ceiling unchanged. Totals/spreads keep the tighter [0.30, 0.70] band because
+// those markets are sharper than our model at the extremes.
+export const PROB_CLAMP_LO = 0.02; // ML floor (was 0.15)
 export const PROB_CLAMP_HI = 0.85;
-export const MODEL_TRUST_WEIGHT = 0.45; // raised from 0.35 on 2026-05-10
+export const PROB_CLAMP_TOTALS: readonly [number, number] = [0.3, 0.7];
+export const PROB_CLAMP_SPREADS: readonly [number, number] = [0.3, 0.7];
+// v6.6: market-specific model trust. ML trusts the model more (market noise was
+// dragging dogs up); totals stay market-led; spreads in between.
+export const MODEL_TRUST_WEIGHT = 0.7; // ML (was 0.45)
+export const MODEL_TRUST_WEIGHT_TOTALS = 0.45;
+export const MODEL_TRUST_WEIGHT_SPREADS = 0.55;
 export const TRAP_RAW_THRESHOLD = 10.0;
 export const TRAP_SHRUNK_THRESHOLD = 5.0;
 export const ELITE_FADE_PP = 12.0;

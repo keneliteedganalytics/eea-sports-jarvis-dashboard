@@ -1,21 +1,36 @@
-// Verdict tier assignment (v5 collapsed ladder). Exactly four tiers:
+// Verdict tier assignment (v6.6 sharp calibration). Exactly four tiers:
 // SNIPER, EDGE, RECON, PASS. assignTier is the single source of truth.
+//
+// v6.6 tightens every tier with AND-gates on win-prob floor, data quality, and
+// an EV sanity ceiling, plus a set of hard PASS gates that fire regardless of
+// edge. The gates exist to kill the phantom long-shot dog edges that the old
+// [0.15, 0.85] clamp + 0.45 market blend manufactured at the tails.
 
 import type { Verdict } from "./types";
 
-// Tier thresholds (v5 locked):
-//   SNIPER  edge ≥ 7pp AND confidence ≥ 65 → 2.5u
-//   EDGE    edge ≥ 5pp AND confidence ≥ 55 → 2.0u
-//   RECON   edge ≥ 3pp AND confidence ≥ 50 → 1.0u
-//   PASS    otherwise (not displayed in plays-only)
-export const TIER_SNIPER_EDGE = 7.0;
-export const TIER_SNIPER_CONF = 65;
-export const TIER_EDGE_EDGE = 5.0;
-export const TIER_EDGE_CONF = 55;
-export const TIER_RECON_EDGE = 3.0;
+// ── Tier edge floors (v6.6: lowered slightly, but AND-gated below) ──
+export const TIER_SNIPER_EDGE = 6.0;
+export const TIER_SNIPER_CONF = 70;
+export const TIER_EDGE_EDGE = 4.0;
+export const TIER_EDGE_CONF = 60;
+export const TIER_RECON_EDGE = 2.5;
 export const TIER_RECON_CONF = 50;
 export const MIN_CONFIDENCE = TIER_RECON_CONF;
 export const EDGE_THRESHOLD_PP = TIER_RECON_EDGE;
+
+// ── Win-probability floors per tier (v6.6) ──────────────────────────
+export const TIER_SNIPER_WINPROB = 0.3;
+export const TIER_EDGE_WINPROB = 0.25;
+export const TIER_RECON_WINPROB = 0.2;
+
+// ── EV-per-100 ceiling for SNIPER (v6.6) ────────────────────────────
+export const TIER_SNIPER_EV_MAX = 25;
+
+// ── Hard PASS gate thresholds (v6.6) ────────────────────────────────
+export const HARD_PASS_TRAP_GAP_PP = 25; // trapSignal AND gap > 25 → PASS (was 30)
+export const HARD_PASS_EV_PER_100 = 30; // EV/$100 above this is a calibration artifact
+export const HARD_PASS_MAX_ODDS = 1000; // American odds longer than +1000 → PASS
+export const HARD_PASS_MIN_WINPROB = 0.1; // win prob under 10% → not in the lotto business
 
 const TIER_LADDER: Verdict[] = ["SNIPER", "EDGE", "RECON", "PASS"];
 
@@ -35,18 +50,65 @@ export interface TierInput {
   trapCapped?: boolean;
   oddsAmerican?: number | null;
   winProb?: number | null;
+  // v6.6 gating inputs (optional; default to the most permissive value so
+  // callers that don't model these — e.g. the two-way market builder — keep
+  // their prior behavior).
+  trapSignal?: boolean;
+  trapGapPp?: number | null;
+  dataQualityTier?: string | null;
+}
+
+// Result of a hard-gate evaluation. fired=true means force PASS; reason is a
+// short human string for the card / API (null when no gate fired).
+export interface HardGateResult {
+  fired: boolean;
+  reason: string | null;
+}
+
+// Evaluate the v6.6 hard PASS gates. Returns the FIRST gate that fires (order is
+// significant: most-specific / most-informative reason first). These run before
+// the edge/confidence ladder and short-circuit it.
+export function evaluateHardGates(input: TierInput): HardGateResult {
+  const { trapSignal, trapGapPp, evPer100, oddsAmerican, winProb } = input;
+
+  if (trapSignal === true && (trapGapPp ?? 0) > HARD_PASS_TRAP_GAP_PP) {
+    return {
+      fired: true,
+      reason: `trap signal (${Math.round(trapGapPp ?? 0)}pp public/sharp gap)`,
+    };
+  }
+  if (evPer100 !== null && evPer100 !== undefined && evPer100 > HARD_PASS_EV_PER_100) {
+    return {
+      fired: true,
+      reason: `EV +${Math.round(evPer100)}/$100 exceeds sanity ceiling`,
+    };
+  }
+  if (oddsAmerican !== null && oddsAmerican !== undefined && oddsAmerican > HARD_PASS_MAX_ODDS) {
+    return {
+      fired: true,
+      reason: `+${oddsAmerican} exceeds max odds policy`,
+    };
+  }
+  if (winProb !== null && winProb !== undefined && winProb < HARD_PASS_MIN_WINPROB) {
+    return {
+      fired: true,
+      reason: `win prob ${(winProb * 100).toFixed(0)}% below 10% floor`,
+    };
+  }
+  return { fired: false, reason: null };
 }
 
 export function assignTier(input: TierInput): Verdict {
   const { edgePp, confidence, hardPass, trapCapped } = input;
 
   if (hardPass) return "PASS";
+  if (evaluateHardGates(input).fired) return "PASS";
   if (edgePp === null || edgePp === undefined) return "PASS";
 
   const edge = Number(edgePp);
   const conf = Number(confidence ?? 0);
 
-  const baseTier = computeBaseTier(edge, conf);
+  const baseTier = computeBaseTier(edge, conf, input);
 
   if (trapCapped && baseTier !== "PASS") {
     return downgradeTier(baseTier);
@@ -54,10 +116,36 @@ export function assignTier(input: TierInput): Verdict {
   return baseTier;
 }
 
-function computeBaseTier(edge: number, conf: number): Verdict {
-  if (edge >= TIER_SNIPER_EDGE && conf >= TIER_SNIPER_CONF) return "SNIPER";
-  if (edge >= TIER_EDGE_EDGE && conf >= TIER_EDGE_CONF) return "EDGE";
-  if (edge >= TIER_RECON_EDGE && conf >= TIER_RECON_CONF) return "RECON";
+function computeBaseTier(edge: number, conf: number, input: TierInput): Verdict {
+  // Win prob defaults to 1 (permissive) so the two-way market builder — which
+  // passes the side win prob explicitly — is gated, while bare callers are not
+  // accidentally downgraded.
+  const wp = input.winProb ?? 1;
+  const ev = input.evPer100 ?? 0;
+  const dq = (input.dataQualityTier ?? "HIGH").toUpperCase();
+  const dqHigh = dq === "HIGH";
+  const dqHighOrMed = dq === "HIGH" || dq === "MEDIUM";
+
+  if (
+    edge >= TIER_SNIPER_EDGE &&
+    conf >= TIER_SNIPER_CONF &&
+    ev <= TIER_SNIPER_EV_MAX &&
+    wp >= TIER_SNIPER_WINPROB &&
+    dqHigh
+  ) {
+    return "SNIPER";
+  }
+  if (
+    edge >= TIER_EDGE_EDGE &&
+    conf >= TIER_EDGE_CONF &&
+    wp >= TIER_EDGE_WINPROB &&
+    dqHighOrMed
+  ) {
+    return "EDGE";
+  }
+  if (edge >= TIER_RECON_EDGE && conf >= TIER_RECON_CONF && wp >= TIER_RECON_WINPROB) {
+    return "RECON";
+  }
   return "PASS";
 }
 

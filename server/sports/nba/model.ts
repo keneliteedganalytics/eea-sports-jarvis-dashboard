@@ -9,9 +9,15 @@ export const NBA_LG_ORTG = 114.0; // league offensive rating (pts / 100 poss)
 export const NBA_LG_PACE = 99.5; // league possessions per 48
 export const NBA_HOME_PTS = 2.5; // home-court points advantage
 export const MARGIN_TO_WP_SCALE = 12.0; // points-margin → win-prob logistic scale
-export const MODEL_TRUST_WEIGHT = 0.45;
-export const PROB_CLAMP_LO = 0.15;
+// v6.6: ML trust bumped to 0.70, ML floor lowered to 0.02 (kill phantom dog
+// edges). Totals/spreads kept tighter — see MLB model for rationale.
+export const MODEL_TRUST_WEIGHT = 0.7;
+export const MODEL_TRUST_WEIGHT_TOTALS = 0.45;
+export const MODEL_TRUST_WEIGHT_SPREADS = 0.55;
+export const PROB_CLAMP_LO = 0.02;
 export const PROB_CLAMP_HI = 0.85;
+export const PROB_CLAMP_TOTALS: readonly [number, number] = [0.3, 0.7];
+export const PROB_CLAMP_SPREADS: readonly [number, number] = [0.3, 0.7];
 export const NBA_B2B_PTS = 2.2;       // points docked from a team on zero rest (back-to-back)
 export const NBA_REST_EDGE_PTS = 0.6; // extra points per day of rest advantage (capped)
 
