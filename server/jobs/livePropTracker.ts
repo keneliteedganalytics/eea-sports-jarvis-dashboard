@@ -12,6 +12,7 @@ import {
   activePropPicksForDate,
   updatePropPickLiveState,
   settlePropPickWithBankroll,
+  getEventTeamsForGame,
   type PropPickRow,
 } from "../gradedBook";
 import { fetchSchedule } from "../adapters/mlbStats";
@@ -64,6 +65,13 @@ export interface LiveTickSummary {
 }
 
 function toTracked(p: PropPickRow): TrackedProp {
+  // Resolve the game by the authoritative offer-side event_home/event_away.
+  // prop_picks.team/opponent are unreliable — team is usually null and opponent
+  // can carry a stale constant — and matching on that junk made the tracker
+  // resolve the WRONG game (e.g. an unrelated final game), producing the v6.7.3
+  // false grades. Prefer the offer teams; fall back to the pick's fields only
+  // when the offer lookup is empty.
+  const offer = getEventTeamsForGame(p.game_id);
   return {
     pick_id: p.pick_id,
     game_id: p.game_id,
@@ -71,8 +79,8 @@ function toTracked(p: PropPickRow): TrackedProp {
     market_type: p.market_type,
     line: p.line,
     side: p.side,
-    team: p.team,
-    opponent: p.opponent,
+    team: offer.home ?? p.team,
+    opponent: offer.away ?? p.opponent,
     player_id: p.player_id != null ? Number(p.player_id) || null : null,
   };
 }

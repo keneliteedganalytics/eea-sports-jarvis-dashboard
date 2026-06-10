@@ -129,5 +129,58 @@ await test("a final winning game grades exactly once across repeated ticks", asy
   assert.equal(row?.live_state, "paid");
 });
 
+// v6.7.5 regression: the v6.7.3 false-grade root cause. A pick with team=NULL
+// and a STALE opponent ("Boston Red Sox", a DIFFERENT game that is Final) must
+// resolve to its own game via the offer's event_home/event_away — not the stale
+// opponent's final game — so a scheduled game stays pending and is never graded.
+await test("pick with null team + stale opponent resolves its OWN (scheduled) game, not the stale final game", async () => {
+  upsertPropOffer({
+    event_id: "evtReal", sport: "mlb", game_date: DATE, player_name: "Corey Seager",
+    team: null, event_home: "Kansas City Royals", event_away: "Texas Rangers",
+    market: "batter_hits", line: 1.5, over_price: 110, under_price: -130, book: "draftkings",
+  });
+  upsertPropPick({
+    pick_id: "evtReal:batter_hits:Corey Seager:under", sport: "mlb", game_id: "evtReal",
+    player_name: "Corey Seager", team: null, opponent: "Boston Red Sox",
+    market_type: "batter_hits", line: 1.5, side: "under", posted_odds: -130,
+    tier: "EDGE", stake_units: 0.5,
+  });
+
+  // Schedule has BOTH games: the stale opponent's Red Sox game is FINAL; the
+  // pick's real game (Rangers @ Royals) is still scheduled (Preview).
+  const schedule = [
+    {
+      gamePk: "G-redsox-final", startIso: "", homeTeamFull: "Tampa Bay Rays", awayTeamFull: "Boston Red Sox",
+      homeTeam: "TB", awayTeam: "BOS", venue: "", homeTeamId: null, awayTeamId: null,
+      homePitcherId: null, awayPitcherId: null, homePitcher: null, awayPitcher: null,
+      homeBattingOrder: [], awayBattingOrder: [],
+    },
+    {
+      gamePk: "G-rangers-scheduled", startIso: "", homeTeamFull: "Kansas City Royals", awayTeamFull: "Texas Rangers",
+      homeTeam: "KC", awayTeam: "TEX", venue: "", homeTeamId: null, awayTeamId: null,
+      homePitcherId: null, awayPitcherId: null, homePitcher: null, awayPitcher: null,
+      homeBattingOrder: [], awayBattingOrder: [],
+    },
+  ];
+  const deps: LiveTrackerDeps = {
+    activePicks: (d) => activePropPicksForDate(d, "mlb").filter((p) => p.pick_id.startsWith("evtReal")),
+    schedule: async () => schedule,
+    fetchLiveFeed: async (gamePk: string) => {
+      // The Red Sox game is Final; the Rangers game is Preview (scheduled).
+      const abstractGameState = gamePk === "G-redsox-final" ? "Final" : "Preview";
+      return { gameData: { status: { abstractGameState } } } as never;
+    },
+    resolvePlayerId: async () => null,
+    writeState: updatePropPickLiveState,
+    settle: settlePropPickWithBankroll,
+  };
+
+  const summary = await runLiveTrackTick(DATE, deps);
+  assert.equal(summary.graded, 0, "a scheduled game must NOT be graded (the v6.7.3 bug)");
+  const row = getPropPick("evtReal:batter_hits:Corey Seager:under");
+  assert.equal(row?.result ?? null, null, "pick must remain ungraded — its real game is still scheduled");
+  assert.equal(row?.live_state ?? null, "pending", "scheduled game → pending, never paid pre-game");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
