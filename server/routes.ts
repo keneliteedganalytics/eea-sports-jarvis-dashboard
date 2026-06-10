@@ -299,7 +299,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/props/board", (req: Request, res: Response) => {
     const sport = typeof req.query.sport === "string" ? req.query.sport : null;
     const date = parseDateParam(req.query.date) ?? null;
-    res.json({ sport: sport ?? "ALL", date, items: propBoard({ sport, date }) });
+    // Surface the live-tracking fields on the FIRST render (camelCased like the
+    // rest of the API) so cards can color without waiting for the /live poll.
+    const items = propBoard({ sport, date }).map((row) => ({
+      ...row,
+      liveState: row.live_state ?? "pending",
+      currentValue: row.live_value,
+      gameStatus: row.live_status ?? null,
+    }));
+    res.json({ sport: sport ?? "ALL", date, items });
   });
 
   // Live in-game prop tracking (v6.7.3). Returns the stored live disposition of
@@ -320,7 +328,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         tracking[row.pick_id] = {
           liveState: row.live_state ?? "pending",
           currentValue: row.live_value,
-          gameStatus: null,
+          gameStatus: row.live_status ?? null,
           lastUpdated: row.live_updated_at,
         };
       }

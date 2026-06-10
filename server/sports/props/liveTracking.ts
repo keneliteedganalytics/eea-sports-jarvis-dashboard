@@ -19,7 +19,7 @@ import type { ScheduleGame } from "../../adapters/mlbStats";
 const LIVE_BASE = "https://statsapi.mlb.com/api/v1.1";
 
 export type LiveState = "pending" | "live_clear" | "busted" | "paid";
-export type GameStatus = "scheduled" | "live" | "final";
+export type GameStatus = "scheduled" | "live" | "final" | "unknown";
 
 // The minimal prop shape the tracker needs (a subset of PropPickRow).
 export interface TrackedProp {
@@ -42,26 +42,38 @@ export interface LiveTracking {
 
 // ── Pure state computation ──────────────────────────────────────────────────
 
-// Decide a prop's live disposition from its current accumulated value. For a
-// settled game the over needs to have reached the next whole number above the
-// line (line 1.5 → needs 2); the under must have stayed at/below the floor
-// (line 1.5 → must be ≤ 1). Mid-game: an over that already cleared is "paid"
-// (can't un-happen); an under that exceeded its floor is "busted"; otherwise
-// the prop is still live.
+// Decide a prop's live disposition from its current accumulated value and the
+// game's status.
+//
+//   final: the result is settled. An over is "paid" iff it reached the next whole
+//     number above the line (1.5 → needs 2); an under is "paid" iff it stayed
+//     at/below the floor (1.5 → must be ≤ 1). Otherwise "busted".
+//
+//   live: mid-game. An over that already cleared ceil(line) is "paid" (can't
+//     un-happen). An under can NEVER be "paid" mid-game — the player can still
+//     pile on more — so it is only "busted" (exceeded floor) or "live_clear".
+//
+//   scheduled / unknown: there is no live result to read — return "pending". This
+//     is the load-bearing guard that kills false pre-game PAID transitions: an
+//     under sitting at 0 before first pitch must read "pending", not "paid".
 export function computeLiveState(
   pick: { side: "over" | "under"; line: number },
   currentValue: number,
-  gameIsFinal: boolean,
+  gameStatus: GameStatus,
 ): LiveState {
-  if (gameIsFinal) {
+  if (gameStatus === "scheduled" || gameStatus === "unknown") return "pending";
+
+  if (gameStatus === "final") {
     if (pick.side === "over") return currentValue >= Math.ceil(pick.line) ? "paid" : "busted";
     return currentValue <= Math.floor(pick.line) ? "paid" : "busted";
   }
+
+  // live (in progress)
   if (pick.side === "over") {
     if (currentValue >= Math.ceil(pick.line)) return "paid";
     return "live_clear";
   }
-  // under, in progress
+  // under, in progress — never "paid" until final.
   if (currentValue > Math.floor(pick.line)) return "busted";
   return "live_clear";
 }
@@ -118,11 +130,17 @@ export function statForMarket(market: string, stats: RawPlayerStats | undefined)
   }
 }
 
-function gameStatusFrom(feed: RawLiveFeed): GameStatus {
+// Derive a coarse game status from the MLB feed's abstractGameState. "Preview"
+// (and any pre-game label) → scheduled, "Live"/"In Progress" → live, "Final" →
+// final. A missing/unrecognized value → "unknown" (NOT "scheduled" and never a
+// silent "final") so the state machine returns "pending" rather than grading.
+export function gameStatusFrom(feed: RawLiveFeed): GameStatus {
   const abstract = (feed.gameData?.status?.abstractGameState ?? "").toLowerCase();
+  if (abstract === "") return "unknown";
   if (abstract === "final") return "final";
   if (abstract === "live") return "live";
-  return "scheduled";
+  if (abstract === "preview") return "scheduled";
+  return "unknown";
 }
 
 // Find a player's current stat node in the boxscore by resolved id (preferred)
@@ -180,7 +198,7 @@ export async function computeLiveTracking(
   const feedCache = new Map<string, RawLiveFeed | null>();
 
   for (const pick of picks) {
-    const pending: LiveTracking = { liveState: "pending", currentValue: null, gameStatus: "scheduled" };
+    const pending: LiveTracking = { liveState: "pending", currentValue: null, gameStatus: "unknown" };
 
     const eventTeams: EventTeams = { team: pick.team ?? null, opponent: pick.opponent ?? null };
     const gamePk = resolveGamePk(eventTeams, deps.schedule);
@@ -200,7 +218,9 @@ export async function computeLiveTracking(
     }
 
     const gameStatus = gameStatusFrom(feed);
-    if (gameStatus === "scheduled") {
+    // No live result to read for a pre-game or unknown-status game — stay pending
+    // and, critically, never let an under be graded "paid" before first pitch.
+    if (gameStatus === "scheduled" || gameStatus === "unknown") {
       out[pick.pick_id] = { liveState: "pending", currentValue: null, gameStatus };
       continue;
     }
@@ -223,12 +243,12 @@ export async function computeLiveTracking(
         out[pick.pick_id] = { liveState: "pending", currentValue: null, gameStatus };
         continue;
       }
-      const liveState = computeLiveState(pick, 0, gameStatus === "final");
+      const liveState = computeLiveState(pick, 0, gameStatus);
       out[pick.pick_id] = { liveState, currentValue: 0, gameStatus };
       continue;
     }
 
-    const liveState = computeLiveState(pick, value, gameStatus === "final");
+    const liveState = computeLiveState(pick, value, gameStatus);
     out[pick.pick_id] = { liveState, currentValue: value, gameStatus };
   }
 

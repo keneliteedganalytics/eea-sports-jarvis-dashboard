@@ -61,6 +61,49 @@ export function bestPriceForSide(quotes: BookQuote[], side: "over" | "under"): B
   return best;
 }
 
+export interface FairQuote {
+  book: string;
+  fairProb: number; // de-vigged fair probability for the picked side at this book
+  price: number; // the American price at this book for the picked side
+}
+
+// No-vig (devigged) fair probability for one side at one book. When BOTH the
+// over and under price are present we remove the bookmaker margin by normalizing:
+//   total = rawOver + rawUnder (> 1 due to vig)
+//   fairProb = rawSide / total
+// When only the picked side is priced, no two-way market exists to devig against,
+// so we fall back to the raw single-side implied probability. Returns null when
+// the picked side has no price.
+export function fairProbForQuote(q: BookQuote, side: "over" | "under"): number | null {
+  const rawOver = q.overPrice == null ? null : americanToProb(q.overPrice);
+  const rawUnder = q.underPrice == null ? null : americanToProb(q.underPrice);
+  const rawSide = side === "over" ? rawOver : rawUnder;
+  if (rawSide === null) return null;
+  if (rawOver !== null && rawUnder !== null) {
+    const total = rawOver + rawUnder;
+    if (total <= 0) return null;
+    return rawSide / total;
+  }
+  // Single-side market: no opposing price to devig against — use raw implied.
+  return rawSide;
+}
+
+// Line-shop on the BEST (lowest) fair market probability for the picked side
+// across books — the lowest fair prob is the cheapest bet after vig, i.e. the
+// most edge. Carries the book and its American price (for display) alongside.
+// Returns null when no book prices the picked side.
+export function bestFairForSide(quotes: BookQuote[], side: "over" | "under"): FairQuote | null {
+  let best: FairQuote | null = null;
+  for (const q of quotes) {
+    const fair = fairProbForQuote(q, side);
+    if (fair === null) continue;
+    const price = side === "over" ? q.overPrice : q.underPrice;
+    if (price === null || price === undefined) continue;
+    if (best === null || fair < best.fairProb) best = { book: q.book, fairProb: fair, price };
+  }
+  return best;
+}
+
 export interface PropEdgeResult {
   side: "over" | "under";
   modelProb: number; // model probability for the chosen side
@@ -69,12 +112,13 @@ export interface PropEdgeResult {
   pushProb: number;
   bestBook: string;
   bestPrice: number;
-  impliedProb: number; // de-vigged not applied — raw implied from best price
-  edgePp: number; // (modelProb − impliedProb) × 100
+  impliedProb: number; // de-vigged fair market prob the edge is computed against
+  edgePp: number; // (modelProb − fairMarketProb) × 100
 }
 
-// Pick the side the model favors (higher model prob), shop its best price, and
-// compute the edge in pp. Returns null when neither side has a priced book.
+// Pick the side the model favors (higher model prob), shop the book with the best
+// (lowest) no-vig fair market prob for that side, and compute the edge against
+// that fair prob in pp. Returns null when neither side has a priced book.
 export function computePropEdge(
   dist: SimDistribution,
   line: number,
@@ -84,13 +128,10 @@ export function computePropEdge(
   const side: "over" | "under" = ou.probOver >= ou.probUnder ? "over" : "under";
   const modelProb = side === "over" ? ou.probOver : ou.probUnder;
 
-  const best = bestPriceForSide(quotes, side);
+  const best = bestFairForSide(quotes, side);
   if (!best) return null;
 
-  const implied = americanToProb(best.price);
-  if (implied === null) return null;
-
-  const edgePp = round2((modelProb - implied) * 100);
+  const edgePp = round2((modelProb - best.fairProb) * 100);
   return {
     side,
     modelProb,
@@ -99,7 +140,7 @@ export function computePropEdge(
     pushProb: ou.pushProb,
     bestBook: best.book,
     bestPrice: best.price,
-    impliedProb: round4(implied),
+    impliedProb: round4(best.fairProb),
     edgePp,
   };
 }

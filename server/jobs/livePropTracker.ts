@@ -100,9 +100,9 @@ export async function runLiveTrackTick(
     if (!t) continue;
 
     // Persist the live disposition (only count a transition when it changed).
-    if (p.live_state !== t.liveState || p.live_value !== t.currentValue) {
+    if (p.live_state !== t.liveState || p.live_value !== t.currentValue || p.live_status !== t.gameStatus) {
       try {
-        deps.writeState(p.pick_id, t.liveState, t.currentValue);
+        deps.writeState(p.pick_id, t.liveState, t.currentValue, t.gameStatus);
         transitions++;
       } catch {
         // best-effort; a failed write just retries next tick

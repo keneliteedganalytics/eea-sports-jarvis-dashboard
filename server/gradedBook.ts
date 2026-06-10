@@ -328,6 +328,9 @@ export function gradedDb(): Database.Database {
     live_state: "TEXT",
     live_value: "REAL",
     live_updated_at: "TEXT",
+    // v6.7.4: persist the game's coarse status (scheduled | live | final |
+    // unknown) so the board can surface gameStatus without a live HTTP read.
+    live_status: "TEXT",
   });
   // v6.7.3: store the Odds API event's home/away team names on each offer so the
   // event→MLB-gamePk mapper can locate the game by team (the Odds event id is a
@@ -764,6 +767,8 @@ export interface PropPickRow {
   live_state: string | null;
   live_value: number | null;
   live_updated_at: string | null;
+  // v6.7.4 coarse game status (scheduled | live | final | unknown).
+  live_status: string | null;
 }
 
 export interface UpsertPropInput {
@@ -1137,12 +1142,14 @@ export function updatePropPickLiveState(
   pickId: string,
   liveState: string,
   currentValue: number | null,
+  gameStatus: string | null = null,
 ): void {
   gradedDb()
     .prepare(
       `UPDATE prop_picks
           SET live_state = @live_state,
               live_value = @live_value,
+              live_status = @live_status,
               live_updated_at = @now
         WHERE pick_id = @pick_id`,
     )
@@ -1150,6 +1157,7 @@ export function updatePropPickLiveState(
       pick_id: pickId,
       live_state: liveState,
       live_value: currentValue,
+      live_status: gameStatus,
       now: new Date().toISOString(),
     });
 }
@@ -1158,6 +1166,7 @@ export interface PropLiveStateRow {
   pick_id: string;
   live_state: string | null;
   live_value: number | null;
+  live_status: string | null;
   live_updated_at: string | null;
 }
 
@@ -1175,7 +1184,8 @@ export function getPropPickLiveStates(date: string, sport?: string | null): Prop
   return db
     .prepare(
       `SELECT DISTINCT p.pick_id AS pick_id, p.live_state AS live_state,
-              p.live_value AS live_value, p.live_updated_at AS live_updated_at
+              p.live_value AS live_value, p.live_status AS live_status,
+              p.live_updated_at AS live_updated_at
          FROM prop_picks p
          JOIN prop_offers o ON o.event_id = p.game_id
         WHERE ${clauses.join(" AND ")}`,
