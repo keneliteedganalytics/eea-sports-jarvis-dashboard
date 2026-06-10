@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Info } from "lucide-react";
 import { PickCard } from "@/components/PickCard";
 import { CompactCard } from "@/components/CompactCard";
-import { fmtMoney, fmtLine } from "@/lib/format";
+import { fmtMoney } from "@/lib/format";
+import { PropCard } from "@/components/PropCard";
 import type { DailySlate, BuiltPick, Verdict, PropBoardPayload } from "@/lib/types";
 
 type SportFilter = "ALL" | "MLB" | "NHL" | "NBA" | "SOCCER" | "PROPS";
@@ -231,9 +232,7 @@ function SkeletonGrid() {
   );
 }
 
-const PROP_TIER_COLOR: Record<string, string> = {
-  SNIPER: "#E8C14A", EDGE: "#C9A227", RECON: "#9A7B1E",
-};
+const PROP_TIERS = ["SNIPER", "EDGE", "RECON"] as const;
 
 function PropsBoard({ date }: { date: string }) {
   const { data, isLoading, isError } = useQuery<PropBoardPayload>({
@@ -241,6 +240,10 @@ function PropsBoard({ date }: { date: string }) {
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
+
+  const [tierFilter, setTierFilter] = useState<string>("ALL");
+  const [sportFilter, setSportFilter] = useState<string>("ALL");
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   if (isLoading) return <SkeletonGrid />;
   if (isError) {
@@ -251,8 +254,8 @@ function PropsBoard({ date }: { date: string }) {
     );
   }
 
-  const items = data?.items ?? [];
-  if (items.length === 0) {
+  const allItems = data?.items ?? [];
+  if (allItems.length === 0) {
     return (
       <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="props-empty">
         No prop picks today.
@@ -260,54 +263,88 @@ function PropsBoard({ date }: { date: string }) {
     );
   }
 
-  // Group by sport so the board reads sport-by-sport.
-  const bySport = new Map<string, typeof items>();
+  const sportsPresent = [...new Set(allItems.map((it) => it.sport.toUpperCase()))];
+  const items = allItems.filter(
+    (it) =>
+      (tierFilter === "ALL" || it.tier === tierFilter) &&
+      (sportFilter === "ALL" || it.sport.toUpperCase() === sportFilter),
+  );
+
+  // Group by game so the board reads game-by-game (collapsible sections).
+  const byGame = new Map<string, { label: string; rows: typeof items }>();
   for (const it of items) {
-    const key = it.sport.toUpperCase();
-    if (!bySport.has(key)) bySport.set(key, []);
-    bySport.get(key)!.push(it);
+    const key = it.game_id;
+    if (!byGame.has(key)) {
+      const label = it.team
+        ? `${it.team}${it.opponent ? ` vs ${it.opponent}` : ""}`
+        : `${it.sport.toUpperCase()} · ${it.game_id}`;
+      byGame.set(key, { label, rows: [] });
+    }
+    byGame.get(key)!.rows.push(it);
   }
 
+  const chip = (active: boolean) =>
+    `rounded-full px-3 py-1 font-display text-[11px] font-bold uppercase tracking-[0.14em] transition-colors ${
+      active ? "bg-gold text-navy-deep" : "bg-navy-card text-muted-foreground hover:text-foreground"
+    }`;
+
   return (
-    <div className="space-y-6" data-testid="props-board">
-      {[...bySport.entries()].map(([sportKey, rows]) => (
-        <div key={sportKey} className="space-y-2">
-          <h2 className="font-display text-sm font-bold uppercase tracking-[0.18em] text-gold-dark">{sportKey}</h2>
-          <div className="space-y-2">
-            {rows.map((it) => (
-              <div
-                key={it.pick_id}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-card-border bg-navy-card px-3 py-2.5"
-                data-testid={`prop-row-${it.pick_id}`}
-              >
-                <span
-                  className="rounded-full bg-background/50 px-2 py-0.5 font-display text-[10px] font-bold uppercase tracking-wider"
-                  style={{ color: PROP_TIER_COLOR[it.tier] ?? "#6B7A99" }}
-                >
-                  {it.tier}
-                </span>
-                <span className="text-sm font-medium text-foreground">{it.player_name}</span>
-                {it.team && (
-                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                    {it.team}{it.opponent ? ` vs ${it.opponent}` : ""}
-                  </span>
-                )}
-                <span className="font-display text-[13px] uppercase tracking-[0.04em] text-[#C0C6D0]">
-                  {it.market_type} {it.side === "over" ? "O" : "U"} {it.line}
-                </span>
-                {it.posted_odds != null && (
-                  <span className="text-xs tabular-nums text-muted-foreground">{fmtLine(it.posted_odds)}</span>
-                )}
-                {it.edge_pp != null && (
-                  <span className="ml-auto text-xs font-bold tabular-nums text-tier-bonus">
-                    +{it.edge_pp.toFixed(1)}pp
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+    <div className="space-y-4" data-testid="props-board">
+      {/* Tier + sport filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button className={chip(tierFilter === "ALL")} onClick={() => setTierFilter("ALL")} data-testid="prop-tier-all">
+          All tiers
+        </button>
+        {PROP_TIERS.map((t) => (
+          <button key={t} className={chip(tierFilter === t)} onClick={() => setTierFilter(t)} data-testid={`prop-tier-filter-${t}`}>
+            {t}
+          </button>
+        ))}
+        {sportsPresent.length > 1 && (
+          <span className="mx-1 h-4 w-px bg-card-border" />
+        )}
+        {sportsPresent.length > 1 && (
+          <button className={chip(sportFilter === "ALL")} onClick={() => setSportFilter("ALL")}>
+            All sports
+          </button>
+        )}
+        {sportsPresent.length > 1 &&
+          sportsPresent.map((s) => (
+            <button key={s} className={chip(sportFilter === s)} onClick={() => setSportFilter(s)}>
+              {s}
+            </button>
+          ))}
+      </div>
+
+      {items.length === 0 ? (
+        <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="props-filtered-empty">
+          No props match this filter.
         </div>
-      ))}
+      ) : (
+        [...byGame.entries()].map(([gameId, { label, rows }]) => {
+          const isCollapsed = collapsed[gameId] ?? false;
+          return (
+            <div key={gameId} className="space-y-2" data-testid={`prop-game-${gameId}`}>
+              <button
+                className="flex w-full items-center justify-between text-left"
+                onClick={() => setCollapsed((c) => ({ ...c, [gameId]: !isCollapsed }))}
+              >
+                <h2 className="font-display text-sm font-bold uppercase tracking-[0.18em] text-gold-dark">
+                  {label} <span className="text-muted-foreground">({rows.length})</span>
+                </h2>
+                <span className="text-muted-foreground">{isCollapsed ? "+" : "−"}</span>
+              </button>
+              {!isCollapsed && (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {rows.map((it) => (
+                    <PropCard key={it.pick_id} item={it} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }

@@ -36,16 +36,31 @@ export interface DataQualityBreakdown extends PropRecord {
   bets: number;
 }
 
+// Calibration check (spec §9): of the OVER picks where the player's L10 hit rate
+// was ≥ 0.60 (a strong directional read), how often did the bet actually win? A
+// well-calibrated model wins these well above 50%.
+export interface CalibrationCheck {
+  qualifying: number; // decided OVER picks with L10 ≥ 0.60
+  wins: number;
+  hitRatePct: number; // wins / qualifying
+}
+
+// Minimum graded props before the analytics tile stops flagging small-sample.
+export const SAMPLE_WARNING_THRESHOLD = 100;
+export const CALIBRATION_L10_FLOOR = 0.6;
+
 export interface PropAnalyticsPayload {
   totalPicks: number;
   record: PropRecord;
   roiPct: number;
   netUnits: number;
   clvMeanPct: number;
+  sampleWarning: boolean; // true until ≥ 100 graded props
   byMarket: MarketBreakdown[];
   byPlayer: PlayerBreakdown[];
   byLineDistance: LineDistanceBucket[];
   byDataQuality: DataQualityBreakdown[];
+  calibration: CalibrationCheck;
 }
 
 function emptyRecord(): PropRecord {
@@ -86,11 +101,43 @@ export function buildPropAnalytics(opts: { sport?: string | null; since?: string
     roiPct: roi(netUnits, staked),
     netUnits: Math.round(netUnits * 100) / 100,
     clvMeanPct: clvN > 0 ? Math.round((clvSum / clvN) * 100) / 100 : 0,
+    sampleWarning: rows.length < SAMPLE_WARNING_THRESHOLD,
     byMarket: byMarket(rows),
     byPlayer: byPlayer(rows),
     byLineDistance: byLineDistance(rows),
     byDataQuality: byDataQuality(rows),
+    calibration: calibrationCheck(rows),
   };
+}
+
+// Pull the stored L10 hit rate off the prop's hit_rates_json snapshot and test
+// the OVER-side calibration claim. Pushes don't count as decided. Rows without a
+// snapshot (pre-v6.7) are skipped.
+function calibrationCheck(rows: PropPickRow[]): CalibrationCheck {
+  let qualifying = 0;
+  let wins = 0;
+  for (const r of rows) {
+    if (r.side !== "over" || r.result === "P" || !r.result) continue;
+    const l10 = parseL10Rate(r.hit_rates_json);
+    if (l10 === null || l10 < CALIBRATION_L10_FLOOR) continue;
+    qualifying++;
+    if (r.result === "W") wins++;
+  }
+  return {
+    qualifying,
+    wins,
+    hitRatePct: qualifying > 0 ? Math.round((wins / qualifying) * 1000) / 10 : 0,
+  };
+}
+
+function parseL10Rate(json: string | null): number | null {
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json) as { l10?: { rate?: number | null } };
+    return parsed?.l10?.rate ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function byMarket(rows: PropPickRow[]): MarketBreakdown[] {

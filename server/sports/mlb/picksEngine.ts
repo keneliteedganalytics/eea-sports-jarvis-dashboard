@@ -32,7 +32,12 @@ import {
 } from "./recentForm";
 
 export const ELITE_FADE_PP = 12.0;
-export const MAX_PICKS_PER_DAY = 4; // v6.6: 6 → 4 (was firing too many marginal spots)
+export const MAX_PICKS_PER_DAY = 3; // v6.7: 4 → 3 (props absorb volume; tighten game-line surface)
+// v6.7: as prop volume comes online, game lines must clear a higher bar. Any
+// actionable game-line pick under this edge is demoted to PASS regardless of
+// tier. This is a game-line-only floor — it does NOT touch the shared tier
+// constant TIER_RECON_EDGE (2.5), which props and the tier ladder still use.
+export const GAME_LINE_RECON_FLOOR = 4.0;
 // June reset (EEA operating rules). Overridable via BANKROLL_USD env at the route.
 export const BANKROLL_USD = 25000;
 
@@ -758,7 +763,8 @@ export function applyDailyCap(picks: BuiltPick[], maxPicks = MAX_PICKS_PER_DAY):
   let actionableCount = 0;
   for (const p of sorted) {
     if (p.qualifies) {
-      if (actionableCount >= maxPicks) {
+      // v6.7 game-line RECON floor: demote thin edges before the cap counts them.
+      if ((p.edgePp ?? 0) < GAME_LINE_RECON_FLOOR || actionableCount >= maxPicks) {
         p.verdictTier = "PASS";
         p.verdict = "PASS";
         p.qualifies = false;

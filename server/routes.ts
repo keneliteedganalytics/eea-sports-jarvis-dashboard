@@ -17,6 +17,7 @@ import { startOddsPoller } from "./pollers/oddsPoller";
 import { startScratchPoller } from "./pollers/scratchPoller";
 import { startLiveScoring, pollEspnAndUpdate } from "./jobs/liveScoring";
 import { startLockWorker } from "./jobs/lockWorker";
+import { startPropIngestWorker } from "./jobs/propIngest";
 import {
   confirmBet,
   adminLockWithOverride,
@@ -26,6 +27,7 @@ import {
   pickHistoryCount,
   archivedPicks,
   propBoard,
+  getPropPick,
 } from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 import { z } from "zod";
@@ -70,6 +72,15 @@ function parseDateParam(raw: unknown): string | undefined {
   return Number.isNaN(t) ? undefined : raw;
 }
 
+// Parse a stored JSON blob (sim/hit-rate snapshots) without throwing on a bad row.
+function safeParse(json: string): unknown {
+  try {
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
 // Kick off every timer-driven background worker. Each start* fires one run
 // immediately (so a fresh container repopulates live scores + CLV without waiting
 // for the first interval tick) then settles into its cadence; all are idempotent.
@@ -81,6 +92,7 @@ export function startBackgroundWorkers(): void {
   startScratchPoller();
   startLiveScoring();
   startLockWorker();
+  startPropIngestWorker();
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
@@ -274,11 +286,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // Active (ungraded) player-prop picks for a sport+date — the PROPS board view.
-  // Empty until prop generation is wired (a follow-up), so this returns [] today.
+  // Rows carry the simulation summary + hit-rate snapshot + best-book price the
+  // pick builder wrote (v6.7). Empty when no props clear the surfacing gate.
   app.get("/api/props/board", (req: Request, res: Response) => {
     const sport = typeof req.query.sport === "string" ? req.query.sport : null;
     const date = parseDateParam(req.query.date) ?? null;
     res.json({ sport: sport ?? "ALL", date, items: propBoard({ sport, date }) });
+  });
+
+  // Single prop-pick detail: the full row plus the parsed simulation distribution
+  // summary, hit-rate windows, and matchup notes for the card detail view.
+  app.get("/api/props/board/:pickId", (req: Request, res: Response) => {
+    const row = getPropPick(String(req.params.pickId));
+    if (!row) return res.status(404).json({ message: "prop pick not found" });
+    const hitRates = row.hit_rates_json ? safeParse(row.hit_rates_json) : null;
+    const matchup = row.matchup_json ? safeParse(row.matchup_json) : null;
+    res.json({
+      ...row,
+      simulation: {
+        median: row.sim_median,
+        p25: row.sim_p25,
+        p75: row.sim_p75,
+        mean: row.sim_mean,
+        trials: row.sim_trials,
+        modelProb: row.model_prob,
+      },
+      hitRates,
+      matchup,
+    });
   });
 
   // Prop-specific analytics: record, ROI, CLV, and breakdowns by market / player /

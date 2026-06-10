@@ -210,12 +210,25 @@ export default function Analytics() {
             </div>
           ) : (
             <div className="space-y-4" data-testid="props-analytics">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              {props.sampleWarning && (
+                <div
+                  className="rounded-lg border border-gold/30 bg-gold/[0.06] px-3 py-2 text-[11px] text-gold-dark"
+                  data-testid="props-sample-warning"
+                >
+                  Small sample — under 100 graded props. Treat these breakdowns as directional, not conclusive.
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                 <Kpi label="Prop picks" value={String(props.totalPicks)} />
                 <Kpi label="Record" value={`${props.record.wins}-${props.record.losses}-${props.record.pushes}`} />
                 <Kpi label="ROI" value={`${props.roiPct >= 0 ? "+" : ""}${props.roiPct.toFixed(1)}%`} good={props.roiPct >= 0} />
                 <Kpi label="Net units" value={fmtUnits(props.netUnits)} good={props.netUnits >= 0} />
                 <Kpi label="Mean CLV" value={`${props.clvMeanPct >= 0 ? "+" : ""}${props.clvMeanPct.toFixed(1)}%`} good={props.clvMeanPct >= 0} />
+                <Kpi
+                  label={`Calibration (${props.calibration.qualifying})`}
+                  value={props.calibration.qualifying > 0 ? `${props.calibration.hitRatePct.toFixed(1)}%` : "—"}
+                  good={props.calibration.hitRatePct >= 50}
+                />
               </div>
               {props.byMarket.length > 0 && (
                 <div className="overflow-x-auto" data-testid="props-by-market">
@@ -245,6 +258,46 @@ export default function Analytics() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+              {props.byPlayer.length > 0 && (
+                <div className="overflow-x-auto" data-testid="props-by-player">
+                  <h3 className="mb-1 font-display text-[11px] font-bold uppercase tracking-[0.16em] text-gold-dark">Top players</h3>
+                  <table className="w-full text-left text-[11px]">
+                    <thead>
+                      <tr className="text-muted-foreground">
+                        <th className="py-1 pr-3">Player</th>
+                        <th className="py-1 pr-3">Bets</th>
+                        <th className="py-1 pr-3">W-L-P</th>
+                        <th className="py-1">Net units</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {props.byPlayer.map((p) => (
+                        <tr key={p.player_name} className="border-t border-card-border">
+                          <td className="py-1.5 pr-3 font-medium text-foreground">{p.player_name}</td>
+                          <td className="py-1.5 pr-3 tabular-nums">{p.bets}</td>
+                          <td className="py-1.5 pr-3 tabular-nums">{p.wins}-{p.losses}-{p.pushes}</td>
+                          <td className={`py-1.5 tabular-nums ${p.netUnits >= 0 ? "text-tier-bonus" : "text-trap"}`}>
+                            {fmtUnits(p.netUnits)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {props.byLineDistance.some((b) => b.decided > 0) && (
+                <div className="flex flex-wrap gap-3" data-testid="props-by-line-distance">
+                  {props.byLineDistance.map((b) => (
+                    <div key={b.label} className="rounded-lg border border-card-border bg-navy-card px-3 py-2 text-[11px]">
+                      <div className="text-muted-foreground">{b.label}</div>
+                      <div className="font-bold tabular-nums text-foreground">
+                        {b.decided > 0 ? `${b.hitRatePct.toFixed(0)}%` : "—"}
+                        <span className="ml-1 font-normal text-muted-foreground">({b.decided})</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

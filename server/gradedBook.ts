@@ -249,6 +249,28 @@ export function gradedDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_prop_picks_sport ON prop_picks(sport);
     CREATE INDEX IF NOT EXISTS idx_prop_picks_market ON prop_picks(market_type);
     CREATE INDEX IF NOT EXISTS idx_prop_picks_player ON prop_picks(player_name);
+    -- Raw multi-book prop offerings (v6.7). One row per book per market per
+    -- player so the pick builder can shop the best price. Refreshed each ingest
+    -- run; not a permanent ledger (these are pre-pick quotes, not graded bets).
+    -- Composite primary key dedupes a re-ingest of the same quote.
+    CREATE TABLE IF NOT EXISTS prop_offers (
+      event_id TEXT,
+      sport TEXT,
+      game_date TEXT,
+      player_name TEXT,
+      player_id TEXT,
+      team TEXT,
+      market TEXT,
+      line REAL,
+      over_price INTEGER,
+      under_price INTEGER,
+      book TEXT,
+      fetched_at TEXT,
+      PRIMARY KEY (event_id, market, player_name, book)
+    );
+    CREATE INDEX IF NOT EXISTS idx_prop_offers_date ON prop_offers(game_date);
+    CREATE INDEX IF NOT EXISTS idx_prop_offers_event ON prop_offers(event_id);
+    CREATE INDEX IF NOT EXISTS idx_prop_offers_lookup ON prop_offers(player_name, market);
   `);
   // Migrate pre-lock databases in place (CREATE TABLE IF NOT EXISTS skips the new
   // columns on an existing table). Mirror of migrations/0001_pick_lock.sql.
@@ -284,6 +306,23 @@ export function gradedDb(): Database.Database {
   sqlite.exec(
     "CREATE INDEX IF NOT EXISTS idx_pick_history_archived_at ON pick_history(archived_at);",
   );
+  // v6.7: prop picks gain a stored simulation summary + hit-rate snapshot + the
+  // best-book price the pick was shopped to. Mirror of migrations/0005_prop_engine.sql.
+  ensureColumns(sqlite, "prop_picks", {
+    model_prob: "REAL",
+    sim_median: "REAL",
+    sim_p25: "REAL",
+    sim_p75: "REAL",
+    sim_mean: "REAL",
+    sim_trials: "INTEGER",
+    hit_rates_json: "TEXT",
+    matchup_json: "TEXT",
+    best_book: "TEXT",
+    best_price: "INTEGER",
+    market_label: "TEXT",
+    stake_units: "REAL",
+    hundred_club: "INTEGER NOT NULL DEFAULT 0",
+  });
   _db = sqlite;
   initBankrollState(sqlite);
   backfillPickHistory(sqlite);
@@ -693,6 +732,20 @@ export interface PropPickRow {
   edge_pp: number | null;
   data_quality_tier: string | null;
   clv_pct: number | null;
+  // v6.7 simulation + line-shopping fields.
+  model_prob: number | null;
+  sim_median: number | null;
+  sim_p25: number | null;
+  sim_p75: number | null;
+  sim_mean: number | null;
+  sim_trials: number | null;
+  hit_rates_json: string | null;
+  matchup_json: string | null;
+  best_book: string | null;
+  best_price: number | null;
+  market_label: string | null;
+  stake_units: number | null;
+  hundred_club: number | null;
 }
 
 export interface UpsertPropInput {
@@ -712,6 +765,19 @@ export interface UpsertPropInput {
   confidence?: number | null;
   edge_pp?: number | null;
   data_quality_tier?: string | null;
+  model_prob?: number | null;
+  sim_median?: number | null;
+  sim_p25?: number | null;
+  sim_p75?: number | null;
+  sim_mean?: number | null;
+  sim_trials?: number | null;
+  hit_rates_json?: string | null;
+  matchup_json?: string | null;
+  best_book?: string | null;
+  best_price?: number | null;
+  market_label?: string | null;
+  stake_units?: number | null;
+  hundred_club?: boolean | number | null;
 }
 
 // Insert or refresh a prop pick. A prop already graded (result set) is sacred and
@@ -727,16 +793,27 @@ export function upsertPropPick(input: UpsertPropInput): string {
     `INSERT INTO prop_picks (
        pick_id, sport, game_id, player_name, player_id, team, opponent,
        market_type, line, side, posted_odds, posted_at,
-       tier, confidence, edge_pp, data_quality_tier
+       tier, confidence, edge_pp, data_quality_tier,
+       model_prob, sim_median, sim_p25, sim_p75, sim_mean, sim_trials,
+       hit_rates_json, matchup_json, best_book, best_price, market_label,
+       stake_units, hundred_club
      ) VALUES (
        @pick_id, @sport, @game_id, @player_name, @player_id, @team, @opponent,
        @market_type, @line, @side, @posted_odds, @posted_at,
-       @tier, @confidence, @edge_pp, @data_quality_tier
+       @tier, @confidence, @edge_pp, @data_quality_tier,
+       @model_prob, @sim_median, @sim_p25, @sim_p75, @sim_mean, @sim_trials,
+       @hit_rates_json, @matchup_json, @best_book, @best_price, @market_label,
+       @stake_units, @hundred_club
      )
      ON CONFLICT(pick_id) DO UPDATE SET
        line=@line, side=@side, posted_odds=@posted_odds,
        tier=@tier, confidence=@confidence, edge_pp=@edge_pp,
-       data_quality_tier=@data_quality_tier`,
+       data_quality_tier=@data_quality_tier,
+       model_prob=@model_prob, sim_median=@sim_median, sim_p25=@sim_p25,
+       sim_p75=@sim_p75, sim_mean=@sim_mean, sim_trials=@sim_trials,
+       hit_rates_json=@hit_rates_json, matchup_json=@matchup_json,
+       best_book=@best_book, best_price=@best_price, market_label=@market_label,
+       stake_units=@stake_units, hundred_club=@hundred_club`,
   ).run({
     pick_id: input.pick_id,
     sport: input.sport.toLowerCase(),
@@ -754,6 +831,19 @@ export function upsertPropPick(input: UpsertPropInput): string {
     confidence: input.confidence ?? null,
     edge_pp: input.edge_pp ?? null,
     data_quality_tier: input.data_quality_tier ?? null,
+    model_prob: input.model_prob ?? null,
+    sim_median: input.sim_median ?? null,
+    sim_p25: input.sim_p25 ?? null,
+    sim_p75: input.sim_p75 ?? null,
+    sim_mean: input.sim_mean ?? null,
+    sim_trials: input.sim_trials ?? null,
+    hit_rates_json: input.hit_rates_json ?? null,
+    matchup_json: input.matchup_json ?? null,
+    best_book: input.best_book ?? null,
+    best_price: input.best_price ?? null,
+    market_label: input.market_label ?? null,
+    stake_units: input.stake_units ?? null,
+    hundred_club: input.hundred_club ? 1 : 0,
   });
   return input.pick_id;
 }
@@ -819,6 +909,97 @@ export function settlePropPick(
       pl_dollars: fields.plDollars,
       graded_at: now,
     });
+}
+
+// ── Prop offers (raw multi-book quotes) ─────────────────────────────────────
+// Storage for the line-shopping table. One row per book per market per player;
+// re-ingesting the same quote upserts it. Not graded — these are pre-pick.
+
+export interface PropOfferRow {
+  event_id: string;
+  sport: string;
+  game_date: string | null;
+  player_name: string;
+  player_id: string | null;
+  team: string | null;
+  market: string;
+  line: number;
+  over_price: number | null;
+  under_price: number | null;
+  book: string;
+  fetched_at: string | null;
+}
+
+export interface UpsertPropOfferInput {
+  event_id: string;
+  sport: string;
+  game_date?: string | null;
+  player_name: string;
+  player_id?: string | null;
+  team?: string | null;
+  market: string;
+  line: number;
+  over_price?: number | null;
+  under_price?: number | null;
+  book: string;
+}
+
+export function upsertPropOffer(input: UpsertPropOfferInput): void {
+  gradedDb()
+    .prepare(
+      `INSERT INTO prop_offers (
+         event_id, sport, game_date, player_name, player_id, team,
+         market, line, over_price, under_price, book, fetched_at
+       ) VALUES (
+         @event_id, @sport, @game_date, @player_name, @player_id, @team,
+         @market, @line, @over_price, @under_price, @book, @fetched_at
+       )
+       ON CONFLICT(event_id, market, player_name, book) DO UPDATE SET
+         line=@line, over_price=@over_price, under_price=@under_price,
+         game_date=@game_date, team=@team, player_id=@player_id, fetched_at=@fetched_at`,
+    )
+    .run({
+      event_id: input.event_id,
+      sport: input.sport.toLowerCase(),
+      game_date: input.game_date ?? null,
+      player_name: input.player_name,
+      player_id: input.player_id ?? null,
+      team: input.team ?? null,
+      market: input.market,
+      line: input.line,
+      over_price: input.over_price ?? null,
+      under_price: input.under_price ?? null,
+      book: input.book,
+      fetched_at: new Date().toISOString(),
+    });
+}
+
+// All offers for a given operating date (optionally a sport). One row per book.
+export function propOffersForDate(date: string, sport?: string | null): PropOfferRow[] {
+  const db = gradedDb();
+  const clauses = ["game_date = @date"];
+  const params: Record<string, unknown> = { date };
+  if (sport && sport.toUpperCase() !== "ALL") {
+    clauses.push("sport = @sport");
+    params.sport = sport.toLowerCase();
+  }
+  return db
+    .prepare(`SELECT * FROM prop_offers WHERE ${clauses.join(" AND ")} ORDER BY player_name, market`)
+    .all(params) as PropOfferRow[];
+}
+
+// All offers across books for one (event, player, market) — the line-shopping set.
+export function propOffersFor(eventId: string, playerName: string, market: string): PropOfferRow[] {
+  return gradedDb()
+    .prepare(
+      "SELECT * FROM prop_offers WHERE event_id=? AND player_name=? AND market=? ORDER BY book",
+    )
+    .all(eventId, playerName, market) as PropOfferRow[];
+}
+
+// Wipe offers for a date before a fresh ingest (offers are quotes, not a ledger).
+export function clearPropOffersForDate(date: string): void {
+  gradedDb().prepare("DELETE FROM prop_offers WHERE game_date = ?").run(date);
 }
 
 // Write the final-grade ledger side effects for a freshly-settled pick: append

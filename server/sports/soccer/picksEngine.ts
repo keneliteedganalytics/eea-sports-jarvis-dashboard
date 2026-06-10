@@ -12,9 +12,12 @@ import type { BuiltPick } from "../mlb/picksEngine";
 import type { SoccerModelResult } from "./model";
 
 export const BANKROLL_USD = 25000;
-export const MAX_PICKS_PER_DAY = 3; // v6.6: 5 → 3
+export const MAX_PICKS_PER_DAY = 2; // v6.7: 3 → 2 (props absorb volume; tighten game-line surface)
 // Soccer is noisier than the US majors — require a higher edge floor to play.
 export const SOCCER_MIN_EDGE_PP = 7.0;
+// v6.7 game-line RECON floor (matches MLB). Soccer's SOCCER_MIN_EDGE_PP already
+// sits above this, so it's a belt-and-suspenders guard, not a behavior change.
+export const GAME_LINE_RECON_FLOOR = 4.0;
 const GOAL_MARGIN_SCALE = 1.8;
 const TOTAL_SCALE = 2.2;
 
@@ -498,7 +501,7 @@ export function applyDailyCap(picks: SoccerPick[], maxPicks = MAX_PICKS_PER_DAY)
   let actionableCount = 0;
   for (const p of sorted) {
     if (p.qualifies) {
-      if (actionableCount >= maxPicks) {
+      if ((p.edgePp ?? 0) < GAME_LINE_RECON_FLOOR || actionableCount >= maxPicks) {
         (p as SoccerPick & { verdictTier: Verdict }).verdictTier = "PASS";
         p.tier = "PASS";
         p.verdict = "PASS";

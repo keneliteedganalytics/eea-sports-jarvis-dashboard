@@ -79,9 +79,9 @@ async function run() {
     assert.ok(total > 0, "board produced at least one pick");
   });
 
-  await test("daily cap holds — per-sport actionable cap (MLB 6, NHL/NBA 3, soccer 5)", async () => {
+  await test("daily cap holds — per-sport actionable cap (MLB 3, NHL/NBA 3, soccer 2)", async () => {
     const slate = await getDailySlate(undefined, DATE);
-    const caps: Record<string, number> = { mlb: 6, nhl: 3, nba: 3, soccer: 5 };
+    const caps: Record<string, number> = { mlb: 3, nhl: 3, nba: 3, soccer: 2 };
     for (const sport of ["mlb", "nhl", "nba", "soccer"] as const) {
       const qualifying = slate.sports[sport].picks.filter((p) => p.qualifies).length;
       assert.ok(qualifying <= caps[sport], `${sport}: ${qualifying} qualifying ≤ ${caps[sport]}`);

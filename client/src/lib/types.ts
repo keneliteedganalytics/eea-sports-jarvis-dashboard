@@ -320,16 +320,40 @@ export interface PropDataQualityBreakdown extends PropRecord {
   bets: number;
 }
 
+export interface PropCalibrationCheck {
+  qualifying: number;
+  wins: number;
+  hitRatePct: number;
+}
+
 export interface PropAnalyticsPayload {
   totalPicks: number;
   record: PropRecord;
   roiPct: number;
   netUnits: number;
   clvMeanPct: number;
+  sampleWarning: boolean;
   byMarket: PropMarketBreakdown[];
   byPlayer: PropPlayerBreakdown[];
   byLineDistance: PropLineDistanceBucket[];
   byDataQuality: PropDataQualityBreakdown[];
+  calibration: PropCalibrationCheck;
+}
+
+// A single hit-rate window as stored in hit_rates_json (rate is null when the
+// window has no decided games).
+export interface PropHitWindow {
+  decided: number;
+  over: number;
+  rate: number | null;
+}
+
+export interface PropHitRates {
+  l5: PropHitWindow;
+  l10: PropHitWindow;
+  l20: PropHitWindow;
+  season: PropHitWindow;
+  hundredClub: boolean;
 }
 
 export interface PropBoardItem {
@@ -347,6 +371,19 @@ export interface PropBoardItem {
   confidence: number | null;
   edge_pp: number | null;
   data_quality_tier: string | null;
+  // v6.7 simulation + line-shopping fields.
+  model_prob: number | null;
+  sim_median: number | null;
+  sim_p25: number | null;
+  sim_p75: number | null;
+  sim_mean: number | null;
+  sim_trials: number | null;
+  hit_rates_json: string | null;
+  best_book: string | null;
+  best_price: number | null;
+  market_label: string | null;
+  stake_units: number | null;
+  hundred_club: number | null;
 }
 
 export interface PropBoardPayload {
