@@ -25,6 +25,7 @@ import {
   type TrackedProp,
 } from "../sports/props/liveTracking";
 import { getOperatingDay } from "../sports/mlb/operatingDay";
+import { validateGradesTick, reconcileFalseGradesV675 } from "./reconcileFalseGrades";
 
 function log(message: string, source = "live-props"): void {
   const t = new Date().toLocaleTimeString("en-US", {
@@ -82,6 +83,12 @@ export async function runLiveTrackTick(
   date: string = getOperatingDay(),
   deps: LiveTrackerDeps = DEFAULT_DEPS,
 ): Promise<LiveTickSummary> {
+  // Defensive grade-validity sweep BEFORE processing: heal any prop pick that is
+  // marked graded while its game is positively not final (the v6.7.3 failure
+  // mode). Best-effort and idempotent; a healed pick reverts to ungraded and is
+  // picked up as active below.
+  await validateGradesTick(date).catch(() => 0);
+
   const picks = deps.activePicks(date, "mlb");
   if (picks.length === 0) return { date, tracked: 0, transitions: 0, graded: 0 };
 
@@ -131,7 +138,11 @@ export async function runLiveTrackTick(
 let timer: NodeJS.Timeout | null = null;
 
 export function startLivePropTracker(): void {
-  void runLiveTrackTick().catch(() => undefined);
+  // One-shot false-grade reconciliation (v6.7.5), then the regular tracking loop.
+  // The reconciliation is idempotent (system_state flag), so a redeploy is safe.
+  void reconcileFalseGradesV675()
+    .catch(() => undefined)
+    .finally(() => void runLiveTrackTick().catch(() => undefined));
   if (timer) clearInterval(timer);
   timer = setInterval(() => {
     void runLiveTrackTick().catch(() => undefined);

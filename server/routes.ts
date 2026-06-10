@@ -20,6 +20,7 @@ import { startLockWorker } from "./jobs/lockWorker";
 import { startPropIngestWorker, getLastIngestSummary } from "./jobs/propIngest";
 import { tomorrowOperatingDay } from "./jobs/propIngest";
 import { startLivePropTracker } from "./jobs/livePropTracker";
+import { reconciliationFlag } from "./jobs/reconcileFalseGrades";
 import { getOperatingDay } from "./sports/mlb/operatingDay";
 import { hasOddsKey, fetchMlbEvents } from "./sports/props/ingestMlbProps";
 import {
@@ -228,6 +229,57 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       },
       railwayVolumeMountPath: process.env.RAILWAY_VOLUME_MOUNT_PATH || null,
       gradedBookPathEnv: process.env.GRADED_BOOK_PATH || null,
+    });
+  });
+
+  // v6.7.5: report the one-shot false-grade reconciliation outcome. Detail rows
+  // are reconstructed from the pick_audit entries the unwind wrote (reason prefix
+  // "false_grade_unwound_v675") joined to the (now-reset) prop_picks row for the
+  // player/market/side/line, with originalResult / originalPlDollars / status
+  // parsed from the audit reason.
+  app.get("/api/debug/reconciliation", (_req: Request, res: Response) => {
+    const flag = reconciliationFlag();
+    const db = gradedDb();
+    const rows = db
+      .prepare(
+        `SELECT a.pickId AS pick_id, a.reason AS reason, a.createdAt AS created_at,
+                p.player_name AS player, p.market_type AS market, p.side AS side, p.line AS line
+           FROM pick_audit a
+           LEFT JOIN prop_picks p ON p.pick_id = a.pickId
+          WHERE a.reason LIKE 'false_grade_unwound_v675%'
+          ORDER BY a.createdAt ASC`,
+      )
+      .all() as Array<{
+        pick_id: string;
+        reason: string;
+        created_at: string;
+        player: string | null;
+        market: string | null;
+        side: string | null;
+        line: number | null;
+      }>;
+    const details = rows.map((r) => {
+      const resultM = /result=(\w+)/.exec(r.reason);
+      const plM = /pl_dollars=(-?[\d.]+)/.exec(r.reason);
+      const statusM = /gameStatus=(\w+)/.exec(r.reason);
+      return {
+        pick_id: r.pick_id,
+        player: r.player,
+        market: r.market,
+        side: r.side,
+        line: r.line,
+        originalResult: resultM ? resultM[1] : null,
+        originalPlDollars: plM ? Number(plM[1]) : null,
+        gameStatusAtUnwind: statusM ? statusM[1] : null,
+      };
+    });
+    const bankrollAdjustment = details.reduce((s, d) => s + (d.originalPlDollars ?? 0), 0);
+    res.json({
+      ran: flag.ran,
+      completedAt: flag.completedAt,
+      picksUnwound: details.length,
+      bankrollAdjustment: Math.round(bankrollAdjustment * 100) / 100,
+      details,
     });
   });
 

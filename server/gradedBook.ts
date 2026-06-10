@@ -271,6 +271,13 @@ export function gradedDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_prop_offers_date ON prop_offers(game_date);
     CREATE INDEX IF NOT EXISTS idx_prop_offers_event ON prop_offers(event_id);
     CREATE INDEX IF NOT EXISTS idx_prop_offers_lookup ON prop_offers(player_name, market);
+    -- v6.7.5: tiny key/value store for one-shot operational flags (e.g. the
+    -- reconciliation idempotency guard) that must survive a redeploy.
+    CREATE TABLE IF NOT EXISTS system_state (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TEXT
+    );
   `);
   // Migrate pre-lock databases in place (CREATE TABLE IF NOT EXISTS skips the new
   // columns on an existing table). Mirror of migrations/0001_pick_lock.sql.
@@ -1221,6 +1228,139 @@ export function insertPropAudit(pickId: string, action: string, reason: string):
        VALUES (@pickId, @action, NULL, NULL, NULL, NULL, @reason, @createdAt)`,
     )
     .run({ pickId, action, reason, createdAt: new Date().toISOString() });
+}
+
+// ── system_state KV (v6.7.5) ────────────────────────────────────────────────
+// Tiny persistent flag store for one-shot operational guards.
+
+export function getSystemState(key: string): string | null {
+  const row = gradedDb()
+    .prepare("SELECT value FROM system_state WHERE key = ?")
+    .get(key) as { value: string | null } | undefined;
+  return row ? (row.value ?? null) : null;
+}
+
+export function setSystemState(key: string, value: string): void {
+  gradedDb()
+    .prepare(
+      `INSERT INTO system_state (key, value, updated_at) VALUES (@key, @value, @now)
+       ON CONFLICT(key) DO UPDATE SET value = @value, updated_at = @now`,
+    )
+    .run({ key, value, now: new Date().toISOString() });
+}
+
+// ── False-grade reconciliation (v6.7.5) ─────────────────────────────────────
+// The v6.7.3 live tracker graded prop picks against games that had not started,
+// crediting phantom wins to the bankroll. This unwinds a single such pick: it
+// reverses the exact bankroll delta the grade applied, clears the grade fields,
+// resets the live snapshot so the v6.7.4 worker recomputes fresh, writes an
+// audit row, and removes the (never-should-have-existed) permanent ledger entry.
+// Idempotent: a pick with no result is a no-op. Returns the reversal detail or
+// null when nothing was unwound.
+
+export interface UnwindResult {
+  pick_id: string;
+  player: string;
+  market: string;
+  side: string;
+  line: number;
+  originalResult: string;
+  originalPlDollars: number;
+  bankrollBefore: number;
+  bankrollAfter: number;
+  gameStatusAtUnwind: string;
+}
+
+export function unwindFalsePropGrade(pickId: string, gameStatusAtUnwind: string): UnwindResult | null {
+  const db = gradedDb();
+  const pick = db.prepare("SELECT * FROM prop_picks WHERE pick_id = ?").get(pickId) as
+    | PropPickRow
+    | undefined;
+  if (!pick || !pick.result) return null; // unknown or not graded → nothing to undo
+
+  const originalResult = pick.result;
+  const plDollars = pick.pl_dollars ?? 0;
+  const plUnits = pick.pl_units ?? 0;
+  // The bankroll credit that the grade applied: for W the payout (pl_dollars), for
+  // L the stake loss (pl_dollars is already negative). Reversing means subtracting
+  // that same delta back out, and decrementing the matching W/L/P counter.
+  const winDec = originalResult === "W" ? 1 : 0;
+  const lossDec = originalResult === "L" ? 1 : 0;
+  const pushDec = originalResult === "P" ? 1 : 0;
+
+  const before = db.prepare("SELECT current_bankroll FROM bankroll_state WHERE id = 1").get() as
+    | { current_bankroll: number }
+    | undefined;
+  const bankrollBefore = before?.current_bankroll ?? 0;
+  const now = new Date().toISOString();
+
+  const txn = db.transaction(() => {
+    db.prepare(
+      `UPDATE bankroll_state SET
+         current_bankroll = current_bankroll - @plDollars,
+         lifetime_wins = lifetime_wins - @winDec,
+         lifetime_losses = lifetime_losses - @lossDec,
+         lifetime_pushes = lifetime_pushes - @pushDec,
+         lifetime_net_units = lifetime_net_units - @plUnits,
+         lifetime_net_dollars = lifetime_net_dollars - @plDollars,
+         last_updated = @now
+       WHERE id = 1`,
+    ).run({ plDollars, winDec, lossDec, pushDec, plUnits, now });
+
+    db.prepare(
+      `UPDATE prop_picks SET
+         result = NULL, graded_at = NULL, pl_units = NULL, pl_dollars = NULL,
+         actual_value = NULL, live_state = NULL, live_value = NULL, live_status = NULL,
+         live_updated_at = NULL
+       WHERE pick_id = @id`,
+    ).run({ id: pickId });
+
+    // Remove the permanent ledger entry — this grade should never have existed.
+    db.prepare("DELETE FROM pick_history WHERE pick_id = @id").run({ id: pickId });
+
+    db.prepare(
+      `INSERT INTO pick_audit (pickId, action, fromTier, toTier, fromOdds, toOdds, reason, createdAt)
+       VALUES (@pickId, 'unwind', NULL, NULL, NULL, NULL, @reason, @now)`,
+    ).run({
+      pickId,
+      reason: `false_grade_unwound_v675 result=${originalResult} pl_dollars=${plDollars} bankroll ${bankrollBefore}->${bankrollBefore - plDollars} gameStatus=${gameStatusAtUnwind}`,
+      now,
+    });
+  });
+  txn();
+
+  return {
+    pick_id: pickId,
+    player: pick.player_name,
+    market: pick.market_type,
+    side: pick.side,
+    line: pick.line,
+    originalResult,
+    originalPlDollars: plDollars,
+    bankrollBefore,
+    bankrollAfter: bankrollBefore - plDollars,
+    gameStatusAtUnwind,
+  };
+}
+
+// All graded prop picks for date IN (today, yesterday) — the candidate set the
+// reconciliation re-validates against the live game status. prop_picks has no
+// game_date, so resolve the slate date via the offer join (same as the counters).
+export function gradedPropPicksForDates(dates: string[]): PropPickRow[] {
+  if (dates.length === 0) return [];
+  const db = gradedDb();
+  const placeholders = dates.map((_, i) => `@d${i}`).join(", ");
+  const params: Record<string, unknown> = {};
+  dates.forEach((d, i) => {
+    params[`d${i}`] = d;
+  });
+  return db
+    .prepare(
+      `SELECT DISTINCT p.* FROM prop_picks p
+         JOIN prop_offers o ON o.event_id = p.game_id
+        WHERE p.result IS NOT NULL AND o.game_date IN (${placeholders})`,
+    )
+    .all(params) as PropPickRow[];
 }
 
 // Write the final-grade ledger side effects for a freshly-settled pick: append

@@ -20,6 +20,7 @@ import {
   DEFAULT_TRIALS,
   type SimInput,
 } from "../sports/props/simulate";
+import { overUnderProb } from "../sports/props/edge";
 import type { BatterProfile, PitcherProfile, BatterGameLog, PitcherGameLog } from "../sports/props/mlbStatsProps";
 
 let passed = 0;
@@ -270,6 +271,76 @@ test("hitter-friendly park lifts the HR mean", () => {
 
 test("DEFAULT_TRIALS is 10000", () => {
   assert.equal(DEFAULT_TRIALS, 10000);
+});
+
+// ── PA/rate baseline regression (v6.7.5) ─────────────────────────────────────
+// Pins the model's behaviour for a TYPICAL everyday regular so the simulator's
+// PA expectation + per-PA rate baseline can never silently drift back to the
+// inflated-edge regime. A 0.27 hits/PA hitter batting a neutral matchup gets
+// ~4.2 PA → ~1.13 expected hits, so P(2+ hits) ≈ 0.30. The model prob for an
+// OVER 1.5 must land in [0.25, 0.40]; the UNDER must NOT be an inflated ~0.90.
+
+// An everyday regular: 0.27 hits/PA over a full 20-log window + season anchor.
+// Each log is 4 PA with hits spread so the windowed per-PA rate ≈ 0.27.
+function regularBatter(hitsPerPa = 0.27): BatterProfile {
+  const logs = Array.from({ length: 20 }, (_, i) =>
+    // 4 PA/log; alternate 1 and 2 hits to average ~1.08 hits/4PA = 0.27/PA.
+    batterLog({ pa: 4, ab: 4, hits: i % 4 === 0 ? 2 : 1, totalBases: i % 4 === 0 ? 3 : 1, singles: 1 }),
+  );
+  return {
+    available: true,
+    playerId: 7,
+    name: "Everyday Regular",
+    logs,
+    seasonPa: 600,
+    seasonRates: {
+      hitsPerPa,
+      tbPerPa: hitsPerPa * 1.6,
+      hrPerPa: 0.03,
+      runsPerPa: 0.15,
+      rbiPerPa: 0.13,
+      walksPerPa: 0.09,
+      singlesPerPa: hitsPerPa * 0.7,
+    },
+  };
+}
+
+test("regular hitter (0.27 hits/PA) → over-1.5 model prob in [0.25, 0.40]", () => {
+  const d = simulate({
+    market: "batter_hits",
+    batter: regularBatter(0.27),
+    matchup: NEUTRAL_MATCHUP,
+    seedKey: "reg|Everyday Regular|hits|1.5",
+  }).distribution!;
+  const ou = overUnderProb(d, 1.5);
+  assert.ok(
+    ou.probOver >= 0.25 && ou.probOver <= 0.4,
+    `over-1.5 prob ${ou.probOver} outside [0.25,0.40] — PA/rate baseline drifted`,
+  );
+  // The complement under prob must be a sane ~0.60-0.75, never the inflated ~0.90
+  // that produced the bogus 34-46pp under edges.
+  assert.ok(ou.probUnder <= 0.78, `under-1.5 prob ${ou.probUnder} too high (inflation regression)`);
+});
+
+test("regular hitter (0.27 hits/PA) → over-0.5 model prob is a sane ~0.65-0.75", () => {
+  const d = simulate({
+    market: "batter_hits",
+    batter: regularBatter(0.27),
+    matchup: NEUTRAL_MATCHUP,
+    seedKey: "reg|Everyday Regular|hits|0.5",
+  }).distribution!;
+  const ou = overUnderProb(d, 0.5);
+  assert.ok(ou.probOver >= 0.6 && ou.probOver <= 0.8, `over-0.5 prob ${ou.probOver} outside [0.60,0.80]`);
+});
+
+test("expected hits mean for a 0.27/PA regular sits near 1.0-1.2 (no PA suppression)", () => {
+  const d = simulate({
+    market: "batter_hits",
+    batter: regularBatter(0.27),
+    matchup: NEUTRAL_MATCHUP,
+    seedKey: "reg|Everyday Regular|hits|mean",
+  }).distribution!;
+  assert.ok(d.mean >= 0.95 && d.mean <= 1.25, `mean hits ${d.mean} — expected ~1.0-1.2 for 0.27/PA × ~4.2 PA`);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
