@@ -15,7 +15,7 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "graded-reconcile-v675-"));
 process.env.GRADED_BOOK_PATH = path.join(tmpDir, "test_book.db");
 
 const gb = await import("../gradedBook");
-const { reconcileFalseGradesV675, RECONCILIATION_FLAG } = await import("../jobs/reconcileFalseGrades");
+const { reconcileFalseGradesV675, validateGradesTick, RECONCILIATION_FLAG } = await import("../jobs/reconcileFalseGrades");
 type ReconcileDeps = import("../jobs/reconcileFalseGrades").ReconcileDeps;
 
 let passed = 0;
@@ -169,6 +169,69 @@ await test("reconcileFalseGradesV675 unwinds non-final, leaves final alone, skip
   assert.ok(Math.abs(gb.getBankrollState().current - (before - 367.5)) < 1e-6);
   // Flag stamped.
   assert.equal(gb.getSystemState(RECONCILIATION_FLAG), "true");
+});
+
+await test("statusForPick resolves the game via offer event_home/away when pick.team is null", async () => {
+  // The prod corruption shape: graded pick with NULL team/opponent. The game is
+  // only resolvable through the offer's event_home/event_away. Seed an offer that
+  // carries the two clubs, a graded pick with null team, then run the tick path
+  // (uses the real candidates + getEventTeamsForGame) and confirm it unwinds.
+  gb.upsertPropOffer({
+    event_id: "evt-offerteams",
+    sport: "mlb",
+    game_date: "2026-06-10",
+    player_name: "Corey Seager",
+    team: null,
+    event_home: "Kansas City Royals",
+    event_away: "Texas Rangers",
+    market: "batter_hits",
+    line: 1.5,
+    over_price: -110,
+    under_price: 110,
+    book: "test",
+  });
+  // Graded pick whose game_id points at that offer's event; team stays null.
+  gb.upsertPropPick({
+    pick_id: "offerteams-pick",
+    sport: "mlb",
+    game_id: "evt-offerteams",
+    player_name: "Corey Seager",
+    market_type: "batter_hits",
+    line: 1.5,
+    side: "under",
+    posted_odds: 110,
+    stake_units: 0.5,
+  });
+  const db = gb.gradedDb();
+  db.prepare(
+    `UPDATE prop_picks SET result='W', actual_value=0, pl_units=0.98, pl_dollars=367.5,
+       graded_at=@now, live_state='paid', live_value=0, live_status='scheduled'
+     WHERE pick_id='offerteams-pick'`,
+  ).run({ now: new Date().toISOString() });
+  db.prepare(
+    `UPDATE bankroll_state SET current_bankroll = current_bankroll + 367.5,
+       lifetime_wins = lifetime_wins + 1 WHERE id = 1`,
+  ).run();
+
+  const schedule = [
+    {
+      gamePk: "pk-offer", startIso: "2026-06-10T23:00:00Z",
+      homeTeamFull: "Kansas City Royals", awayTeamFull: "Texas Rangers",
+      homeTeam: "Kansas City Royals", awayTeam: "Texas Rangers",
+      venue: "Park", homeTeamId: null, awayTeamId: null,
+      homePitcherId: null, awayPitcherId: null, homePitcher: null, awayPitcher: null,
+      homeBattingOrder: [], awayBattingOrder: [],
+    } as never,
+  ];
+  const deps: ReconcileDeps = {
+    candidates: () => [gb.getPropPick("offerteams-pick")!],
+    schedule: async () => schedule,
+    fetchLiveFeed: async () => ({ gameData: { status: { abstractGameState: "Preview" } } } as never),
+    unwind: gb.unwindFalsePropGrade,
+  };
+  const healed = await validateGradesTick("2026-06-10", deps);
+  assert.equal(healed, 1, "offer-side resolution should let the null-team pick unwind");
+  assert.equal(gb.getPropPick("offerteams-pick")!.result, null);
 });
 
 await test("reconcileFalseGradesV675 is idempotent (second run is a no-op)", async () => {

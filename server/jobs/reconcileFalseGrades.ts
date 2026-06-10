@@ -20,6 +20,7 @@ import {
   insertPropAudit,
   getSystemState,
   setSystemState,
+  getEventTeamsForGame,
   type PropPickRow,
   type UnwindResult,
 } from "../gradedBook";
@@ -69,7 +70,17 @@ async function statusForPick(
   fetchLiveFeed: typeof DEFAULT_LIVE_DEPS.fetchLiveFeed,
   feedCache: Map<string, GameStatus | null>,
 ): Promise<GameStatus | null> {
-  const eventTeams: EventTeams = { team: pick.team ?? null, opponent: pick.opponent ?? null };
+  // prop_picks.team/opponent are usually null (set only when lineup resolution
+  // succeeded), so fall back to the offer-side event_home/event_away for the
+  // pick's game_id — that's what lets resolveGamePk find the MLB game.
+  let team = pick.team ?? null;
+  let opponent = pick.opponent ?? null;
+  if (!team && !opponent) {
+    const offerTeams = getEventTeamsForGame(pick.game_id);
+    team = offerTeams.home;
+    opponent = offerTeams.away;
+  }
+  const eventTeams: EventTeams = { team, opponent };
   const gamePk = resolveGamePk(eventTeams, schedule);
   if (!gamePk) return null;
   if (feedCache.has(gamePk)) return feedCache.get(gamePk) ?? null;

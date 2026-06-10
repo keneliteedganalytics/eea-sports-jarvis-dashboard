@@ -1343,6 +1343,22 @@ export function unwindFalsePropGrade(pickId: string, gameStatusAtUnwind: string)
   };
 }
 
+// The Odds API event's two clubs for a pick's game_id, read from the stored
+// offers (which carry event_home/event_away). prop_picks often has null team/
+// opponent (set only when lineup resolution succeeded), so the reconciliation
+// resolves the game by these offer-side team names instead. Returns nulls when
+// no offer row carries the teams.
+export function getEventTeamsForGame(gameId: string): { home: string | null; away: string | null } {
+  const row = gradedDb()
+    .prepare(
+      `SELECT event_home, event_away FROM prop_offers
+        WHERE event_id = ? AND (event_home IS NOT NULL OR event_away IS NOT NULL)
+        LIMIT 1`,
+    )
+    .get(gameId) as { event_home: string | null; event_away: string | null } | undefined;
+  return { home: row?.event_home ?? null, away: row?.event_away ?? null };
+}
+
 // All graded prop picks for date IN (today, yesterday) — the candidate set the
 // reconciliation re-validates against the live game status. prop_picks has no
 // game_date, so resolve the slate date via the offer join (same as the counters).
