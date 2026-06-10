@@ -49,7 +49,7 @@ console.log("prop pick builder");
 test("operating constants match spec", () => {
   assert.equal(PROP_DAILY_CAP, 8);
   assert.equal(PROP_MAX_AMERICAN, 400);
-  assert.equal(PROP_SNIPER_EDGE, 8.0);
+  assert.equal(PROP_SNIPER_EDGE, 6.0); // v6.7.6: tightened to the post-fix edge scale (was 8.0)
   assert.equal(PROP_EDGE_EDGE, 6.0);
   assert.equal(PROP_RECON_EDGE, 4.0);
   assert.equal(MIN_BATTER_LOGS, 20);
@@ -58,7 +58,7 @@ test("operating constants match spec", () => {
 
 // ── Tiering ───────────────────────────────────────────────────────────────────
 
-test("SNIPER: edge ≥ 8 AND L20 aligned AND data HIGH", () => {
+test("SNIPER: edge ≥ 6 AND L20 aligned AND data HIGH", () => {
   const t = assignPropTier({ edgePp: 9, side: "over", l10: aligned, l20: aligned, dataQualityTier: "HIGH" });
   assert.equal(t, "SNIPER");
 });
@@ -79,7 +79,9 @@ test("EDGE: edge ≥ 6 AND L10 aligned", () => {
 });
 
 test("edge ≥ 6 but L10 misaligned drops to RECON", () => {
-  const t = assignPropTier({ edgePp: 6.5, side: "over", l10: misaligned, l20: aligned, dataQualityTier: "HIGH" });
+  // Not HIGH (so the SNIPER gate can't catch it) and L10 misaligned (so EDGE can't
+  // either) → it lands in RECON on the shared 6.0 edge floor.
+  const t = assignPropTier({ edgePp: 6.5, side: "over", l10: misaligned, l20: aligned, dataQualityTier: "MEDIUM" });
   assert.equal(t, "RECON");
 });
 

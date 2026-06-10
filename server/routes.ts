@@ -8,6 +8,8 @@ import { getNbaSlate } from "./sports/nba/slate";
 import { getDailySlate, getAnyPick, decorateSlatePicks, excludeArchivedPicks } from "./slate/orchestrator";
 import { getProps } from "./props";
 import { buildPropAnalytics } from "./sports/props/analytics";
+import { probeSimulator } from "./sports/props/calibrationProbe";
+import { isBatterMarket, isPitcherMarket, type PropMarket } from "./sports/props/simulate";
 import { hitRatesByTier, trackRecord } from "./sports/mlb/trackRecord";
 import { buildAnalytics } from "./analytics";
 import { generateBrief } from "./audio/brief";
@@ -21,6 +23,7 @@ import { startPropIngestWorker, getLastIngestSummary } from "./jobs/propIngest";
 import { tomorrowOperatingDay } from "./jobs/propIngest";
 import { startLivePropTracker } from "./jobs/livePropTracker";
 import { reconciliationFlag } from "./jobs/reconcileFalseGrades";
+import { recomputeFlag } from "./jobs/recomputeProps";
 import { getOperatingDay } from "./sports/mlb/operatingDay";
 import { hasOddsKey, fetchMlbEvents } from "./sports/props/ingestMlbProps";
 import {
@@ -314,6 +317,48 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
   });
 
+  // Diagnostic for the v6.7.6 stale-edge recompute. Reports whether the one-shot
+  // re-tier ran (system_state flag) and a live snapshot of today's prop picks by
+  // tier so we can confirm the SNIPER count + edge distribution settled into the
+  // expected post-fix range without re-running anything.
+  app.get("/api/debug/recompute", (_req: Request, res: Response) => {
+    const flag = recomputeFlag();
+    const db = gradedDb();
+    const rows = db
+      .prepare(
+        `SELECT p.tier AS tier, p.edge_pp AS edge_pp
+           FROM prop_picks p
+           LEFT JOIN prop_offers o ON o.event_id = p.game_id
+          WHERE p.result IS NULL AND o.game_date >= ?
+          GROUP BY p.pick_id`,
+      )
+      .all(getOperatingDay()) as Array<{ tier: string | null; edge_pp: number | null }>;
+    const byTier: Record<string, number> = {};
+    const sniperEdges: number[] = [];
+    for (const r of rows) {
+      const tier = r.tier ?? "UNKNOWN";
+      byTier[tier] = (byTier[tier] ?? 0) + 1;
+      if (tier === "SNIPER" && typeof r.edge_pp === "number") sniperEdges.push(r.edge_pp);
+    }
+    sniperEdges.sort((a, b) => a - b);
+    const median = sniperEdges.length
+      ? sniperEdges[Math.floor((sniperEdges.length - 1) / 2)]
+      : null;
+    res.json({
+      ran: flag.ran,
+      completedAt: flag.completedAt,
+      operatingDay: getOperatingDay(),
+      undecided: rows.length,
+      byTier,
+      sniperEdgePp: {
+        count: sniperEdges.length,
+        min: sniperEdges[0] ?? null,
+        median,
+        max: sniperEdges[sniperEdges.length - 1] ?? null,
+      },
+    });
+  });
+
   // Admin: run one live-scoring pass for a date (?date=YYYY-MM-DD, default
   // today's operating day). Fetches the public ESPN scoreboard, updates live
   // scores, and grades any games that have gone final.
@@ -476,6 +521,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       lastIngestSummary: getLastIngestSummary(),
       eventsTodayProbe,
     });
+  });
+
+  // Calibration probe (v6.7.6). Runs one (player, market, line, side) through the
+  // real pipeline (resolve → profile → simulate → edge) and returns the PA / rate
+  // / distribution breakdown, so the simulator baseline can be spot-checked live.
+  // Read-only. e.g. /api/props/probe?player=Trea+Turner&market=batter_hits&line=1.5&side=over
+  app.get("/api/props/probe", async (req: Request, res: Response) => {
+    const player = typeof req.query.player === "string" ? req.query.player.trim() : "";
+    const market = typeof req.query.market === "string" ? req.query.market : "";
+    const line = Number(req.query.line);
+    const side = req.query.side === "under" ? "under" : "over";
+    if (!player) return res.status(400).json({ message: "player is required" });
+    if (!isBatterMarket(market) && !isPitcherMarket(market)) {
+      return res.status(400).json({ message: `unknown market: ${market}` });
+    }
+    if (!Number.isFinite(line)) return res.status(400).json({ message: "line must be a number" });
+    try {
+      const result = await probeSimulator(player, market as PropMarket, line, side);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
   });
 
   // Alerts (steam / scratch). ?since=<id> for incremental polling.

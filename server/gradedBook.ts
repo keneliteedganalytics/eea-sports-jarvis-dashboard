@@ -1359,6 +1359,48 @@ export function getEventTeamsForGame(gameId: string): { home: string | null; awa
   return { home: row?.event_home ?? null, away: row?.event_away ?? null };
 }
 
+// Re-evaluation update (v6.7.6). The recompute job re-runs the (fixed) simulator
+// for an existing undecided pick and writes the new edge/model_prob/tier and sim
+// summary in place. Only ungraded picks (result IS NULL) are touched — a settled
+// pick's grade is never disturbed. A pick that no longer clears thresholds is
+// stamped tier='PASS' so the default board filters it out while it stays queryable.
+export interface PropPickEval {
+  pick_id: string;
+  side: "over" | "under";
+  posted_odds: number;
+  tier: string;
+  confidence: number;
+  edge_pp: number;
+  model_prob: number;
+  sim_median: number;
+  sim_p25: number;
+  sim_p75: number;
+  sim_mean: number;
+  best_book: string;
+  best_price: number;
+  stake_units: number;
+}
+export function updatePropPickEval(e: PropPickEval): void {
+  gradedDb()
+    .prepare(
+      `UPDATE prop_picks SET
+         side = @side, posted_odds = @posted_odds, tier = @tier, confidence = @confidence,
+         edge_pp = @edge_pp, model_prob = @model_prob,
+         sim_median = @sim_median, sim_p25 = @sim_p25, sim_p75 = @sim_p75, sim_mean = @sim_mean,
+         best_book = @best_book, best_price = @best_price, stake_units = @stake_units
+       WHERE pick_id = @pick_id AND result IS NULL`,
+    )
+    .run(e);
+}
+
+// Mark an ungraded pick as PASS in place (no re-sim) — used when the recompute
+// can't produce an edge for it any more (e.g. profile no longer available).
+export function markPropPickPass(pickId: string): void {
+  gradedDb()
+    .prepare("UPDATE prop_picks SET tier = 'PASS' WHERE pick_id = @id AND result IS NULL")
+    .run({ id: pickId });
+}
+
 // All graded prop picks for date IN (today, yesterday) — the candidate set the
 // reconciliation re-validates against the live game status. prop_picks has no
 // game_date, so resolve the slate date via the offer join (same as the counters).

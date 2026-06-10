@@ -156,6 +156,65 @@ export function expectedPa(lineupSpot: number): number {
   return 4.65 - (spot - 1) * 0.11;
 }
 
+// Realistic guardrails (v6.7.6). A mean PA outside [3.0, 5.5] for a starter is
+// almost always a data error (bad lineup spot, a pinch hitter mislabeled as a
+// regular). Clamp to a sane batting-order band so one junk input can't collapse
+// or inflate the whole outcome distribution.
+const PA_MIN = 3.0;
+const PA_MAX = 5.5;
+const PA_CLAMP_LO = 3.5;
+const PA_CLAMP_HI = 4.8;
+export function clampExpectedPa(meanPa: number, who = ""): number {
+  if (meanPa < PA_MIN || meanPa > PA_MAX) {
+    const to = Math.min(PA_CLAMP_HI, Math.max(PA_CLAMP_LO, meanPa));
+    console.warn(`[sim-guard] expectedPA ${meanPa.toFixed(2)} out of [${PA_MIN},${PA_MAX}]${who ? ` for ${who}` : ""} → clamped to ${to.toFixed(2)}`);
+    return to;
+  }
+  return meanPa;
+}
+
+// Realistic hits/PA band for a confirmed-active MLB batter. The extremes are real
+// (elite contact ~0.36, replacement ~0.18); anything outside [0.18, 0.40] with a
+// real sample is a data error. Clamp into [0.20, 0.35] (the band of true regulars).
+const HITS_PER_PA_MIN = 0.18;
+const HITS_PER_PA_MAX = 0.40;
+const HITS_PER_PA_CLAMP_LO = 0.20;
+const HITS_PER_PA_CLAMP_HI = 0.35;
+export function clampHitsPerPa(rate: number, hasRecentSample: boolean, who = ""): number {
+  if (!hasRecentSample) return rate; // no confirmed activity → trust whatever we have
+  if (rate < HITS_PER_PA_MIN || rate > HITS_PER_PA_MAX) {
+    const to = Math.min(HITS_PER_PA_CLAMP_HI, Math.max(HITS_PER_PA_CLAMP_LO, rate));
+    console.warn(`[sim-guard] hits/PA ${rate.toFixed(3)} out of [${HITS_PER_PA_MIN},${HITS_PER_PA_MAX}]${who ? ` for ${who}` : ""} → clamped to ${to.toFixed(3)}`);
+    return to;
+  }
+  return rate;
+}
+
+// Pitcher guardrails (v6.7.6). K/9 realistic band [5.0, 14.0] → per-out [0.185,0.519];
+// outs/start realistic band [12, 24] (4–8 IP). Clamp data errors into the band.
+const OUTS_MIN = 6;
+const OUTS_MAX = 27;
+const OUTS_CLAMP_LO = 12;
+const OUTS_CLAMP_HI = 24;
+const K_PER_OUT_LO = 5.0 / 9 / 3; // K/9 5.0 → per recorded out
+const K_PER_OUT_HI = 14.0 / 9 / 3; // K/9 14.0 → per recorded out
+export function clampOutsPerStart(outs: number, who = ""): number {
+  if (outs < OUTS_MIN || outs > OUTS_MAX) {
+    const to = Math.min(OUTS_CLAMP_HI, Math.max(OUTS_CLAMP_LO, outs));
+    console.warn(`[sim-guard] outs/start ${outs.toFixed(1)} out of [${OUTS_MIN},${OUTS_MAX}]${who ? ` for ${who}` : ""} → clamped to ${to.toFixed(1)}`);
+    return to;
+  }
+  return outs;
+}
+export function clampKPerOut(rate: number, who = ""): number {
+  if (rate < K_PER_OUT_LO || rate > K_PER_OUT_HI) {
+    const to = Math.min(K_PER_OUT_HI, Math.max(K_PER_OUT_LO, rate));
+    console.warn(`[sim-guard] K/out ${rate.toFixed(3)} (K/9 ${(rate * 27).toFixed(1)}) out of band${who ? ` for ${who}` : ""} → clamped`);
+    return to;
+  }
+  return rate;
+}
+
 // Per-stat park sensitivity. HR and TB swing most with park; walks barely move.
 const PARK_SENSITIVITY: Record<BatterMarket, number> = {
   batter_hits: 0.5,
@@ -216,22 +275,33 @@ function seasonBatterRate(profile: BatterProfile, market: BatterMarket): number 
 // ── Batter simulation ───────────────────────────────────────────────────────
 
 // Total bases are not Bernoulli (a PA can yield 0..4 bases), so we sample a TB
-// value per PA from a small categorical built off the hit/HR mix. For all other
-// batter markets the per-PA outcome is a Bernoulli on the blended per-PA rate.
-function sampleTotalBasesPerPa(rng: () => number, tbPerPa: number, hrPerPa: number): number {
-  // Decompose expected TB/PA into a rough hit-type mix. Most TB come from
-  // singles+doubles; HR contributes 4 each. We keep it simple and stable: draw
-  // whether a hit happens at rate (tbPerPa capped), then assign bases.
-  const hitProb = Math.min(0.6, tbPerPa * 0.42); // hits/PA roughly tbPerPa×0.42
+// value per PA from a hit/base mix calibrated so the realized E[TB/PA] equals the
+// input tbPerPa. v6.7.6 fix: the prior `hitProb = tbPerPa * 0.42` heuristic
+// systematically UNDERSHOT total bases (~15–18% low), which inflated UNDER
+// probabilities on TB markets — the dominant phantom-edge pattern. We now draw a
+// hit at the true hits/PA rate, then distribute bases so the conditional mean
+// hits the target slugging-per-hit, making E[TB/PA] == tbPerPa.
+function sampleTotalBasesPerPa(
+  rng: () => number,
+  hitsPerPa: number,
+  tbPerPa: number,
+  hrPerPa: number,
+): number {
+  const hitProb = Math.min(0.6, Math.max(0, hitsPerPa));
+  if (hitProb <= 0) return 0;
   if (rng() >= hitProb) return 0;
-  // Given a hit, pick the base count. HR share derived from hrPerPa vs hitProb.
-  const hrShare = hitProb > 0 ? Math.min(0.5, hrPerPa / hitProb) : 0;
-  const r = rng();
-  if (r < hrShare) return 4; // home run
-  const r2 = rng();
-  if (r2 < 0.62) return 1; // single
-  if (r2 < 0.88) return 2; // double
-  return 3; // triple (rare)
+  // Given a hit: HR share is the fraction of hits that clear the fence.
+  const hrShare = Math.min(0.6, Math.max(0, hrPerPa / hitProb));
+  if (rng() < hrShare) return 4;
+  // Non-HR hit: split across {1B,2B,3B} so the overall conditional mean equals
+  // bases-per-hit (= tbPerPa / hitsPerPa), preserving E[TB/PA] = tbPerPa.
+  const basesPerHit = tbPerPa / hitProb;
+  const meanNonHr = 1 - hrShare > 0 ? (basesPerHit - hrShare * 4) / (1 - hrShare) : 1;
+  const mu = Math.min(3, Math.max(1, meanNonHr));
+  const lo = Math.floor(mu);
+  const hi = Math.min(3, lo + 1);
+  const pHi = hi > lo ? mu - lo : 0;
+  return rng() < pHi ? hi : lo;
 }
 
 export interface SimInput {
@@ -271,12 +341,25 @@ export function simulateBatter(
   const parkAdj = 1 + (matchup.parkFactor - 1) * PARK_SENSITIVITY[market];
   const adjRate = Math.max(0, baseRate * pitcherAdj * parkAdj);
 
-  const meanPa = expectedPa(matchup.lineupSpot);
+  // Realistic PA guardrail (v6.7.6): clamp a junk lineup-spot/PA estimate.
+  const meanPa = clampExpectedPa(expectedPa(matchup.lineupSpot), profile.name);
+  const hasSample = profile.logs.length > 0;
+
+  // Hits/PA drives both the hits market and the TB sampler's hit frequency.
+  const hitsPerPaRaw = blendRate(
+    recentBatterRate(profile, "batter_hits"),
+    seasonBatterRate(profile, "batter_hits"),
+  ) ?? 0;
+  const hitsPerPaAdj = clampHitsPerPa(hitsPerPaRaw * pitcherAdj * (1 + (matchup.parkFactor - 1) * PARK_SENSITIVITY.batter_hits), hasSample, profile.name);
+
   const hrPerPa = blendRate(
     recentBatterRate(profile, "batter_home_runs"),
     seasonBatterRate(profile, "batter_home_runs"),
   ) ?? 0;
   const tbPerPaAdj = market === "batter_total_bases" ? adjRate : 0;
+
+  // For the hits market specifically, use the clamped hits/PA as the Bernoulli p.
+  const bernoulliRate = market === "batter_hits" ? hitsPerPaAdj : adjRate;
 
   const samples: number[] = new Array(trials);
   for (let t = 0; t < trials; t++) {
@@ -285,10 +368,10 @@ export function simulateBatter(
     let stat = 0;
     for (let i = 0; i < pa; i++) {
       if (market === "batter_total_bases") {
-        stat += sampleTotalBasesPerPa(rng, tbPerPaAdj, hrPerPa * pitcherAdj);
+        stat += sampleTotalBasesPerPa(rng, hitsPerPaAdj, tbPerPaAdj, hrPerPa * pitcherAdj);
       } else {
         // Bernoulli per PA on the adjusted rate (rate already per-PA).
-        if (rng() < Math.min(0.95, adjRate)) stat += 1;
+        if (rng() < Math.min(0.95, bernoulliRate)) stat += 1;
       }
     }
     samples[t] = stat;
@@ -318,15 +401,15 @@ export function simulatePitcher(
     return { ok: false, market, distribution: null, reason: "no pitcher rate" };
   }
 
-  const outsPerStart = blendRate(
-    recentRates?.outsPerStart ?? null,
-    r?.outsPerStart ?? null,
-  ) ?? 17; // ~5.2 IP fallback
+  const outsPerStart = clampOutsPerStart(
+    blendRate(recentRates?.outsPerStart ?? null, r?.outsPerStart ?? null) ?? 17, // ~5.2 IP fallback
+    profile.name,
+  );
 
   let perOutRate: number;
   switch (market) {
     case "pitcher_strikeouts":
-      perOutRate = (blendRate(recentRates?.kPerOut ?? null, r?.kPerOut ?? null) ?? 0.28) *
+      perOutRate = clampKPerOut(blendRate(recentRates?.kPerOut ?? null, r?.kPerOut ?? null) ?? 0.28, profile.name) *
         matchup.oppLineupKFactor;
       break;
     case "pitcher_earned_runs":

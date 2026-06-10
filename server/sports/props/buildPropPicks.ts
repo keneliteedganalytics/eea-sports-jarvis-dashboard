@@ -46,8 +46,9 @@ export const PROP_MAX_AMERICAN = 400; // big-dog taper hard reject above +400 fo
 export const MIN_BATTER_LOGS = 20;
 export const MIN_PITCHER_STARTS = 8;
 
-// Tier edge thresholds (spec §5). Re-use the SNIPER/EDGE/RECON ladder names.
-export const PROP_SNIPER_EDGE = 8.0;
+// Tier edge thresholds (spec §5; tightened v6.7.6 — post simulator-recalibration,
+// a SNIPER must clear ≥6.0pp, since legitimate MLB-prop edges live in 4–10pp).
+export const PROP_SNIPER_EDGE = 6.0;
 export const PROP_EDGE_EDGE = 6.0;
 export const PROP_RECON_EDGE = 4.0;
 
@@ -380,6 +381,21 @@ export async function buildMlbPropPicks(
       const auditId = `${g.eventId}:${market}:${g.player}:${edge.side}`;
       try {
         insertPropAudit(auditId, "prop-build", "model_outlier");
+      } catch {
+        // audit logging is best-effort; never block the build on it
+      }
+      continue;
+    }
+
+    // Tighter model-outlier gate (v6.7.6). After the simulator recalibration, a
+    // legitimate MLB-prop edge lives in 4–10pp; books are sharp. Any edge > 12pp
+    // where the model probability diverges from the de-vigged fair market prob by
+    // more than 0.15 is the model disagreeing too violently with a sharp market —
+    // almost always a residual model error, not a real edge. PASS it and audit.
+    if (edge.edgePp > 12 && Math.abs(edge.modelProb - edge.impliedProb) > 0.15) {
+      const auditId = `${g.eventId}:${market}:${g.player}:${edge.side}`;
+      try {
+        insertPropAudit(auditId, "prop-build", "model_outlier_v676");
       } catch {
         // audit logging is best-effort; never block the build on it
       }
