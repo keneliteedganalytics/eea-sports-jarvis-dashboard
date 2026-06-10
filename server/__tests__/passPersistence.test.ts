@@ -16,7 +16,7 @@ import type { BuildDeps } from "../sports/props/buildPropPicks";
 import type { BatterProfile, BatterGameLog } from "../sports/props/mlbStatsProps";
 import type { BuiltPick } from "../sports/mlb/picksEngine";
 
-const { upsertPropOffer, gradedDb, getPropPick } = await import("../gradedBook");
+const { upsertPropOffer, gradedDb, getPropPick, upsertPropPick, markPropPickPass, healPassStakes } = await import("../gradedBook");
 const { buildMlbPropPicks } = await import("../sports/props/buildPropPicks");
 const { persistPicks } = await import("../jobs/persistPicks");
 
@@ -144,6 +144,44 @@ await test("game-line PASS with a gate reason is attributed below_threshold/low_
   const db = gradedDb();
   const row = db.prepare("SELECT pass_reason FROM picks WHERE gameId = 'gPass2'").get() as { pass_reason: string };
   assert.equal(row.pass_reason, "low_data_quality", "a sample-driven hard gate maps to low_data_quality");
+});
+
+await test("demoting an actionable prop to PASS zeroes its stake (markPropPickPass)", () => {
+  // Seed an actionable, staked prop, then demote it the way the recompute does.
+  upsertPropPick({
+    pick_id: "demoteMe", sport: "mlb", game_id: "dm1", player_name: "Faded Star",
+    market_type: "batter_hits", line: 1.5, side: "over", posted_odds: -110,
+    tier: "SNIPER", edge_pp: 8, stake_units: 0.5, posted_at: "2026-06-10T18:00:00Z",
+  });
+  markPropPickPass("demoteMe", "below_threshold");
+  const db = gradedDb();
+  const row = db.prepare("SELECT tier, pass_reason, stake_units FROM prop_picks WHERE pick_id = 'demoteMe'").get() as Record<string, unknown>;
+  assert.equal(row.tier, "PASS");
+  assert.equal(row.pass_reason, "below_threshold");
+  assert.equal(row.stake_units, 0, "a demoted PASS row must never keep its stake");
+});
+
+await test("healPassStakes zeroes any legacy PASS row that still carries a stake", () => {
+  const db = gradedDb();
+  // Force a legacy/corrupt state: a PASS row with a non-zero stake (as a pre-v6.7.7
+  // demotion would have left it), bypassing the now-safe write path.
+  upsertPropPick({
+    pick_id: "legacyPass", sport: "mlb", game_id: "lp1", player_name: "Legacy Bat",
+    market_type: "batter_hits", line: 2.5, side: "over", posted_odds: -110,
+    tier: "SNIPER", edge_pp: 6, stake_units: 0.5, posted_at: "2026-06-10T18:00:00Z",
+  });
+  db.prepare("UPDATE prop_picks SET tier = 'PASS' WHERE pick_id = 'legacyPass'").run();
+  const before = db.prepare("SELECT stake_units FROM prop_picks WHERE pick_id = 'legacyPass'").get() as { stake_units: number };
+  assert.equal(before.stake_units, 0.5, "precondition: the legacy PASS row still carries a stake");
+
+  const healed = healPassStakes();
+  assert.ok(healed.props >= 1, "heal reports the prop rows it zeroed");
+
+  const after = db.prepare("SELECT stake_units FROM prop_picks WHERE pick_id = 'legacyPass'").get() as { stake_units: number };
+  assert.equal(after.stake_units, 0, "heal zeroes the stake on the legacy PASS row");
+
+  const leak = db.prepare("SELECT COUNT(*) AS n FROM prop_picks WHERE tier='PASS' AND result IS NULL AND stake_units > 0").get() as { n: number };
+  assert.equal(leak.n, 0, "no ungraded PASS prop may carry a stake after the heal");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -13,6 +13,7 @@ import {
   updatePropPickLiveState,
   settlePropPickWithBankroll,
   getEventTeamsForGame,
+  healPassStakes,
   type PropPickRow,
 } from "../gradedBook";
 import { fetchSchedule } from "../adapters/mlbStats";
@@ -159,6 +160,19 @@ export function startLivePropTracker(): void {
     .catch(() => undefined)
     .then(() => recomputePropsV676().catch(() => undefined))
     .then(() => recordPassesV677().catch(() => undefined))
+    .then(() => {
+      // HARD SAFETY: after any demotion/backfill, zero the stake on every PASS
+      // row so an informational pick can never settle or touch bankroll. Cheap +
+      // idempotent, so it runs unconditionally on every boot (not flag-guarded).
+      try {
+        const healed = healPassStakes();
+        if (healed.props || healed.games) {
+          log(`healed PASS stakes: ${healed.props} props, ${healed.games} game-lines zeroed`);
+        }
+      } catch {
+        // best-effort; never block the tracker on the heal
+      }
+    })
     .finally(() => void runLiveTrackTick().catch(() => undefined));
   if (timer) clearInterval(timer);
   timer = setInterval(() => {

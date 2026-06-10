@@ -1762,12 +1762,30 @@ export function updatePropPickEval(e: PropPickEval): void {
 // Mark an ungraded pick as PASS in place (no re-sim) — used when the recompute
 // can't produce an edge for it any more (e.g. profile no longer available).
 // Stamps a pass_reason (default 'below_threshold') so the demotion is auditable.
+// HARD SAFETY RULE: a PASS row is informational only — it must never carry a
+// stake. Demotion zeroes stake_units so the row can never settle or touch bankroll.
 export function markPropPickPass(pickId: string, reason = "below_threshold"): void {
   gradedDb()
     .prepare(
-      "UPDATE prop_picks SET tier = 'PASS', pass_reason = @reason WHERE pick_id = @id AND result IS NULL",
+      "UPDATE prop_picks SET tier = 'PASS', pass_reason = @reason, stake_units = 0 WHERE pick_id = @id AND result IS NULL",
     )
     .run({ id: pickId, reason });
+}
+
+// HARD SAFETY heal (v6.7.7): zero the stake on any ungraded PASS row that still
+// carries units. Earlier demotions (markPropPickPass / recompute) flipped tier to
+// PASS but left the original stake_units, so a demoted pick could in principle be
+// staked. Naturally idempotent — once every PASS row reads 0 this is a no-op.
+// Only touches ungraded rows (result IS NULL); never disturbs a settled result.
+export function healPassStakes(): { props: number; games: number } {
+  const db = gradedDb();
+  const props = db
+    .prepare("UPDATE prop_picks SET stake_units = 0 WHERE tier = 'PASS' AND result IS NULL AND stake_units > 0")
+    .run().changes;
+  const games = db
+    .prepare("UPDATE picks SET units = 0, stakeDollars = 0 WHERE tier = 'PASS' AND status != 'final' AND (units > 0 OR stakeDollars > 0)")
+    .run().changes;
+  return { props, games };
 }
 
 // All graded prop picks for date IN (today, yesterday) — the candidate set the
