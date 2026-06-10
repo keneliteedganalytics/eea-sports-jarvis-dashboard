@@ -9,7 +9,7 @@ import { getSoccerSlate, getSoccerPick } from "../sports/soccer/slate";
 import { BANKROLL_USD, type BuiltPick } from "../sports/mlb/picksEngine";
 import { applyExposureCap } from "../core/sizing";
 import { persistPicks } from "../jobs/persistPicks";
-import { picksForDate, pickId, type GradedPick } from "../gradedBook";
+import { picksForDate, pickId, getBankrollState, type GradedPick } from "../gradedBook";
 import type { ClvBadge } from "../sports/mlb/picksEngine";
 
 // Build the client-facing CLV badge from a graded row. Returns null until the
@@ -106,10 +106,12 @@ export async function getDailySlate(bankroll = BANKROLL_USD, dateIso?: string): 
   const day = resolved?.value.operatingDay ?? operatingDay();
   attachGradedStatus([mlb, nhl, nba, soccer], day);
 
+  // Sizing above used the configured (starting) bankroll; the board surfaces the
+  // running bankroll, which adjusts as picks grade W/L.
   return {
     operatingDay: day,
     isDemo: allDemo,
-    bankroll,
+    bankroll: getBankrollState().current,
     generatedAt: Date.now(),
     sports: { mlb, nhl, nba, soccer },
   };

@@ -174,6 +174,40 @@ export function gradedDb(): Database.Database {
       createdAt TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_pick_audit_pickId ON pick_audit(pickId);
+    -- Single-row (id=1) running bankroll + lifetime W/L/P ledger. Adjusts every
+    -- time a pick grades to final so the board's bankroll reflects real P/L,
+    -- not the static BANKROLL_USD seed.
+    CREATE TABLE IF NOT EXISTS bankroll_state (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      starting_bankroll REAL NOT NULL,
+      current_bankroll REAL NOT NULL,
+      lifetime_wins INTEGER NOT NULL DEFAULT 0,
+      lifetime_losses INTEGER NOT NULL DEFAULT 0,
+      lifetime_pushes INTEGER NOT NULL DEFAULT 0,
+      lifetime_net_units REAL NOT NULL DEFAULT 0,
+      lifetime_net_dollars REAL NOT NULL DEFAULT 0,
+      last_updated TEXT
+    );
+    -- Permanent, append-only ledger: one row per graded pick, never deleted.
+    -- Track Record + Analytics aggregate from here so lifetime stats survive
+    -- even if the live picks table is wiped.
+    CREATE TABLE IF NOT EXISTS pick_history (
+      pick_id TEXT PRIMARY KEY,
+      sport TEXT,
+      graded_at TEXT,
+      pick_label TEXT,
+      tier TEXT,
+      result TEXT,
+      stake_units REAL,
+      stake_dollars REAL,
+      pl_units REAL,
+      pl_dollars REAL,
+      posted_odds INTEGER,
+      closing_odds INTEGER,
+      clv_pct REAL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pick_history_sport ON pick_history(sport);
+    CREATE INDEX IF NOT EXISTS idx_pick_history_graded_at ON pick_history(graded_at);
   `);
   // Migrate pre-lock databases in place (CREATE TABLE IF NOT EXISTS skips the new
   // columns on an existing table). Mirror of migrations/0001_pick_lock.sql.
@@ -195,7 +229,235 @@ export function gradedDb(): Database.Database {
     lockStatus: "TEXT NOT NULL DEFAULT 'open'",
   });
   _db = sqlite;
+  initBankrollState(sqlite);
+  backfillPickHistory(sqlite);
   return _db;
+}
+
+// Default starting bankroll. Mirrors BANKROLL_USD in picksEngine but resolved
+// here from env to keep gradedBook free of a static import on the slate engine
+// (which imports gradedBook). Used only to seed bankroll_state on first boot.
+const DEFAULT_BANKROLL_USD = 25000;
+function startingBankrollFromEnv(): number {
+  const n = Number(process.env.BANKROLL_USD);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_BANKROLL_USD;
+}
+
+// Seed the single bankroll_state row (id=1) from BANKROLL_USD on first boot.
+// Idempotent: a row already present is left untouched so accumulated P/L sticks.
+function initBankrollState(db: Database.Database): void {
+  const row = db.prepare("SELECT id FROM bankroll_state WHERE id = 1").get();
+  if (row) return;
+  const start = startingBankrollFromEnv();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO bankroll_state (id, starting_bankroll, current_bankroll, last_updated)
+     VALUES (1, @start, @start, @now)`,
+  ).run({ start, now });
+}
+
+// One-time migration: if pick_history is empty but the live picks table already
+// carries graded (final) rows, backfill the permanent ledger from them so a book
+// that graded picks before this layer existed doesn't lose its history.
+function backfillPickHistory(db: Database.Database): void {
+  const count = (db.prepare("SELECT COUNT(*) AS n FROM pick_history").get() as { n: number }).n;
+  if (count > 0) return;
+  const finals = db.prepare("SELECT * FROM picks WHERE status = 'final'").all() as GradedPick[];
+  if (finals.length === 0) return;
+  for (const r of finals) recordPickHistory(db, r);
+}
+
+export interface BankrollState {
+  starting: number;
+  current: number;
+  netDollars: number;
+  netUnits: number;
+  record: { wins: number; losses: number; pushes: number };
+  roiPct: number;
+  lastUpdated: string | null;
+}
+
+interface BankrollRow {
+  starting_bankroll: number;
+  current_bankroll: number;
+  lifetime_wins: number;
+  lifetime_losses: number;
+  lifetime_pushes: number;
+  lifetime_net_units: number;
+  lifetime_net_dollars: number;
+  last_updated: string | null;
+}
+
+// Read the running bankroll + lifetime ledger. ROI is net dollars over the
+// starting bankroll. Always returns a row (init seeds it on first boot).
+export function getBankrollState(): BankrollState {
+  const db = gradedDb();
+  const row = db.prepare("SELECT * FROM bankroll_state WHERE id = 1").get() as BankrollRow | undefined;
+  if (!row) {
+    const start = startingBankrollFromEnv();
+    return {
+      starting: start,
+      current: start,
+      netDollars: 0,
+      netUnits: 0,
+      record: { wins: 0, losses: 0, pushes: 0 },
+      roiPct: 0,
+      lastUpdated: null,
+    };
+  }
+  const roiPct =
+    row.starting_bankroll > 0
+      ? Math.round((row.lifetime_net_dollars / row.starting_bankroll) * 1000) / 10
+      : 0;
+  return {
+    starting: row.starting_bankroll,
+    current: row.current_bankroll,
+    netDollars: Math.round(row.lifetime_net_dollars * 100) / 100,
+    netUnits: Math.round(row.lifetime_net_units * 100) / 100,
+    record: { wins: row.lifetime_wins, losses: row.lifetime_losses, pushes: row.lifetime_pushes },
+    roiPct,
+    lastUpdated: row.last_updated,
+  };
+}
+
+// Apply one graded pick's result to the running bankroll + lifetime ledger.
+//   W: current += stakeDollars × (decimalOdds − 1); +net dollars, +net units.
+//   L: current −= stakeDollars; −net dollars, −net units.
+//   P: pushes++, no bankroll change.
+// Called from gradePick on the pending→final transition. Pure of the grade
+// math itself — the caller passes the already-decided result + P/L in units.
+export function applyGradeToBankroll(
+  db: Database.Database,
+  fields: { result: PickResult; stakeDollars: number; plUnits: number; americanOdds: number | null },
+): void {
+  const row = db.prepare("SELECT * FROM bankroll_state WHERE id = 1").get() as BankrollRow | undefined;
+  if (!row) {
+    initBankrollState(db);
+  }
+  const now = new Date().toISOString();
+  const stake = fields.stakeDollars || 0;
+  let deltaDollars = 0;
+  let winInc = 0;
+  let lossInc = 0;
+  let pushInc = 0;
+  if (fields.result === "W") {
+    const dec = americanToDecimal(fields.americanOdds) ?? 2.0;
+    deltaDollars = stake * (dec - 1);
+    winInc = 1;
+  } else if (fields.result === "L") {
+    deltaDollars = -stake;
+    lossInc = 1;
+  } else {
+    pushInc = 1;
+  }
+  db.prepare(
+    `UPDATE bankroll_state SET
+       current_bankroll = current_bankroll + @deltaDollars,
+       lifetime_wins = lifetime_wins + @winInc,
+       lifetime_losses = lifetime_losses + @lossInc,
+       lifetime_pushes = lifetime_pushes + @pushInc,
+       lifetime_net_units = lifetime_net_units + @plUnits,
+       lifetime_net_dollars = lifetime_net_dollars + @deltaDollars,
+       last_updated = @now
+     WHERE id = 1`,
+  ).run({ deltaDollars, winInc, lossInc, pushInc, plUnits: fields.plUnits, now });
+}
+
+// American → decimal price. Local copy (gradedBook stays free of a core/odds
+// import) so the bankroll math doesn't pull in the engine graph.
+function americanToDecimal(odds: number | null): number | null {
+  if (odds === null || odds === undefined || odds === 0) return null;
+  return 1.0 + (odds > 0 ? odds / 100.0 : 100.0 / -odds);
+}
+
+// Insert a graded pick into the permanent pick_history ledger. Idempotent on
+// pick_id (a re-grade or backfill of the same id is ignored). Computes the
+// dollar P/L from the stored units P/L scaled by stake-per-unit.
+function recordPickHistory(db: Database.Database, r: GradedPick): void {
+  const plUnits = r.pl ?? 0;
+  const perUnit = r.units > 0 ? r.stakeDollars / r.units : 0;
+  const plDollars = Math.round(plUnits * perUnit * 100) / 100;
+  const label = `${r.pickTeam} ${r.pickType} ${
+    r.pickMl !== null ? (r.pickMl > 0 ? `+${r.pickMl}` : r.pickMl) : ""
+  }`.trim();
+  db.prepare(
+    `INSERT OR IGNORE INTO pick_history (
+       pick_id, sport, graded_at, pick_label, tier, result,
+       stake_units, stake_dollars, pl_units, pl_dollars,
+       posted_odds, closing_odds, clv_pct
+     ) VALUES (
+       @pick_id, @sport, @graded_at, @pick_label, @tier, @result,
+       @stake_units, @stake_dollars, @pl_units, @pl_dollars,
+       @posted_odds, @closing_odds, @clv_pct
+     )`,
+  ).run({
+    pick_id: r.id,
+    sport: r.sport,
+    graded_at: r.gradedAt ?? new Date().toISOString(),
+    pick_label: label,
+    tier: r.tier,
+    result: r.result,
+    stake_units: r.units,
+    stake_dollars: r.stakeDollars,
+    pl_units: plUnits,
+    pl_dollars: plDollars,
+    posted_odds: r.postedOddsAmerican,
+    closing_odds: r.closingOddsAmerican,
+    clv_pct: r.clvPct,
+  });
+}
+
+export interface PickHistoryRow {
+  pick_id: string;
+  sport: string;
+  graded_at: string;
+  pick_label: string;
+  tier: string;
+  result: PickResult;
+  stake_units: number;
+  stake_dollars: number;
+  pl_units: number;
+  pl_dollars: number;
+  posted_odds: number | null;
+  closing_odds: number | null;
+  clv_pct: number | null;
+}
+
+// All permanent history rows, optionally filtered by sport, newest first.
+export function pickHistory(sport?: string): PickHistoryRow[] {
+  const db = gradedDb();
+  if (sport && sport.toUpperCase() !== "ALL") {
+    return db
+      .prepare("SELECT * FROM pick_history WHERE sport = ? ORDER BY graded_at DESC")
+      .all(sport.toLowerCase()) as PickHistoryRow[];
+  }
+  return db.prepare("SELECT * FROM pick_history ORDER BY graded_at DESC").all() as PickHistoryRow[];
+}
+
+export function pickHistoryCount(): number {
+  return (gradedDb().prepare("SELECT COUNT(*) AS n FROM pick_history").get() as { n: number }).n;
+}
+
+// Write the final-grade ledger side effects for a freshly-settled pick: append
+// to the permanent pick_history and adjust the running bankroll. Idempotent on
+// pick_id for history; the bankroll update is applied once per call, so callers
+// must invoke this exactly once on the pending→final transition. settlePick
+// drives this from the live-scoring job.
+export function recordGradeLedger(id: string): void {
+  const db = gradedDb();
+  const row = getRawPick(id);
+  if (!row || row.status !== "final" || !row.result) return;
+  // Only adjust the bankroll if this pick isn't already in the permanent ledger
+  // (guards against a double-apply if recordGradeLedger is called twice).
+  const already = db.prepare("SELECT 1 FROM pick_history WHERE pick_id = ?").get(id);
+  recordPickHistory(db, row);
+  if (already) return;
+  applyGradeToBankroll(db, {
+    result: row.result,
+    stakeDollars: row.stakeDollars,
+    plUnits: row.pl ?? 0,
+    americanOdds: row.pickMl,
+  });
 }
 
 // Add any missing columns to an existing table (SQLite has no IF NOT EXISTS for

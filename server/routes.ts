@@ -16,7 +16,14 @@ import { startOddsPoller } from "./pollers/oddsPoller";
 import { startScratchPoller } from "./pollers/scratchPoller";
 import { startLiveScoring, pollEspnAndUpdate } from "./jobs/liveScoring";
 import { startLockWorker } from "./jobs/lockWorker";
-import { confirmBet, adminLockWithOverride } from "./gradedBook";
+import {
+  confirmBet,
+  adminLockWithOverride,
+  getBankrollState,
+  gradedDb,
+  dbPath,
+  pickHistoryCount,
+} from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 import { z } from "zod";
 
@@ -91,7 +98,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const dateIso = parseDateParam(req.query.date);
     const slate = await getSlate(bankroll(), dateIso);
     decorateSlatePicks(slate.picks, slate.operatingDay);
-    res.json(slate);
+    // Sizing used the configured starting bankroll; the board shows the running
+    // bankroll, which adjusts as picks grade W/L.
+    res.json({ ...slate, bankroll: getBankrollState().current });
   });
 
   // NHL + NBA slates.
@@ -99,13 +108,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const dateIso = parseDateParam(req.query.date);
     const slate = await getNhlSlate(bankroll(), dateIso);
     decorateSlatePicks(slate.picks, slate.operatingDay);
-    res.json(slate);
+    res.json({ ...slate, bankroll: getBankrollState().current });
   });
   app.get("/api/nba/slate", async (req: Request, res: Response) => {
     const dateIso = parseDateParam(req.query.date);
     const slate = await getNbaSlate(bankroll(), dateIso);
     decorateSlatePicks(slate.picks, slate.operatingDay);
-    res.json(slate);
+    res.json({ ...slate, bankroll: getBankrollState().current });
   });
 
   // Single pick detail (any sport).
@@ -144,6 +153,54 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
   app.get("/api/soccer/track-record", (_req: Request, res: Response) => {
     res.json(trackRecord("SOCCER"));
+  });
+
+  // Running bankroll + lifetime W/L/P ledger. Reflects real settled P/L, not the
+  // static BANKROLL_USD seed.
+  app.get("/api/bankroll", (_req: Request, res: Response) => {
+    res.json(getBankrollState());
+  });
+
+  // Persistence diagnostics (read-only, unauthenticated, low-risk). Curl this
+  // after a deploy to confirm the SQLite file resolved onto the mounted volume
+  // and the tables/counts look right.
+  app.get("/api/debug/persistence", (_req: Request, res: Response) => {
+    const file = dbPath();
+    let dbExists = false;
+    let dbSizeBytes = 0;
+    try {
+      const stat = fs.statSync(file);
+      dbExists = true;
+      dbSizeBytes = stat.size;
+    } catch {
+      dbExists = false;
+    }
+    const db = gradedDb();
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: string }>
+    ).map((t) => t.name);
+    const countFor = (status: string): number =>
+      (db.prepare("SELECT COUNT(*) AS n FROM picks WHERE status = ?").get(status) as { n: number }).n;
+    const bankroll = getBankrollState();
+    res.json({
+      dbPath: file,
+      dbExists,
+      dbSizeBytes,
+      tables,
+      pickCounts: {
+        pending: countFor("pending"),
+        in_progress: countFor("in_progress"),
+        final: countFor("final"),
+      },
+      historyCount: pickHistoryCount(),
+      bankroll: {
+        starting: bankroll.starting,
+        current: bankroll.current,
+        lastUpdated: bankroll.lastUpdated,
+      },
+      railwayVolumeMountPath: process.env.RAILWAY_VOLUME_MOUNT_PATH || null,
+      gradedBookPathEnv: process.env.GRADED_BOOK_PATH || null,
+    });
   });
 
   // Admin: run one live-scoring pass for a date (?date=YYYY-MM-DD, default

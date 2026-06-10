@@ -9,6 +9,7 @@ import {
   openPicksForDate,
   updateLive,
   settlePick,
+  recordGradeLedger,
   type GradedPick,
 } from "../gradedBook";
 import { gradeMoneyline, gradeSpread, gradeTotal, plUnits, type Result, type Side } from "../grading";
@@ -44,6 +45,10 @@ export function gradePick(pick: GradedPick, finalAwayScore: number, finalHomeSco
     clvPct: pick.clvPct ?? null,
     liveStatusDetail: "Final",
   });
+  // Append to the permanent history ledger + adjust the running bankroll. Runs
+  // once per pending→final transition (openPicksForDate already excludes finals,
+  // and recordGradeLedger is idempotent on pick_id for the bankroll side).
+  recordGradeLedger(pick.id);
   return result;
 }
 

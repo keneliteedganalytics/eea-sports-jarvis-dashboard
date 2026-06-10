@@ -3,7 +3,7 @@
 // empty arrays and zero KPIs, and the UI shows "No graded picks yet". Hit rates
 // by tier are aggregated over rolling 30/60/90-day windows of graded picks.
 
-import { gradedPicks, type GradedPick } from "../../gradedBook";
+import { gradedPicks, pickHistory, type GradedPick, type PickHistoryRow } from "../../gradedBook";
 
 export const HIT_RATE_WINDOWS = [30, 60, 90];
 
@@ -73,23 +73,30 @@ export function hitRatesByTier(sport = "MLB", now: Date = new Date()): TierHitRa
   return [...byTier.values()];
 }
 
-function toBetLog(rows: GradedPick[]): BetLogEntry[] {
+// Date portion (YYYY-MM-DD) of an ISO graded_at timestamp, for the bet log's
+// date field + the analytics since-filter (which compares date strings).
+function gradedDate(iso: string): string {
+  return iso.length >= 10 ? iso.slice(0, 10) : iso;
+}
+
+function toBetLog(rows: PickHistoryRow[]): BetLogEntry[] {
   return rows.map((r) => ({
-    date: r.gameDate,
-    matchup: `${r.awayTeam} @ ${r.homeTeam}`,
-    pick: `${r.pickTeam} ${r.pickType} ${r.pickMl !== null ? (r.pickMl > 0 ? `+${r.pickMl}` : r.pickMl) : ""}`.trim(),
+    date: gradedDate(r.graded_at),
+    matchup: r.pick_label,
+    pick: r.pick_label,
     tier: r.tier,
-    units: r.units,
+    units: r.stake_units,
     result: (r.result ?? "P") as "W" | "L" | "P",
-    clv: r.clvPct !== null ? `${r.clvPct.toFixed(1)}%` : "—",
-    unitsWon: r.pl ?? 0,
+    clv: r.clv_pct !== null ? `${r.clv_pct.toFixed(1)}%` : "—",
+    unitsWon: r.pl_units ?? 0,
   }));
 }
 
-// Headline track-record stats + full graded bet log. All from real grades; an
-// empty book returns zeroes and an empty log.
+// Headline track-record stats + full graded bet log. Aggregated from the
+// permanent pick_history ledger so lifetime stats survive a wipe of the live
+// picks table. An empty ledger returns zeroes and an empty log.
 export function trackRecord(sport = "MLB"): TrackRecordSummary {
-  const rows = gradedPicks(sport);
+  const rows = pickHistory(sport);
   let wins = 0;
   let losses = 0;
   let pushes = 0;
@@ -101,10 +108,10 @@ export function trackRecord(sport = "MLB"): TrackRecordSummary {
     if (r.result === "W") wins++;
     else if (r.result === "L") losses++;
     else pushes++;
-    netUnits += r.pl ?? 0;
-    staked += r.units;
-    if (r.clvPct !== null) {
-      clvSum += r.clvPct;
+    netUnits += r.pl_units ?? 0;
+    staked += r.stake_units;
+    if (r.clv_pct !== null) {
+      clvSum += r.clv_pct;
       clvN++;
     }
   }
@@ -123,13 +130,14 @@ export function trackRecord(sport = "MLB"): TrackRecordSummary {
 }
 
 // Largest peak-to-trough drop of the running net-units curve (≥ 0), in units.
-function maxDrawdown(rows: GradedPick[]): number {
-  const chron = [...rows].sort((a, b) => a.gameDate.localeCompare(b.gameDate));
+// Chronological by graded_at since history rows aren't game-dated.
+function maxDrawdown(rows: PickHistoryRow[]): number {
+  const chron = [...rows].sort((a, b) => a.graded_at.localeCompare(b.graded_at));
   let peak = 0;
   let cum = 0;
   let maxDd = 0;
   for (const r of chron) {
-    cum += r.pl ?? 0;
+    cum += r.pl_units ?? 0;
     if (cum > peak) peak = cum;
     const dd = peak - cum;
     if (dd > maxDd) maxDd = dd;

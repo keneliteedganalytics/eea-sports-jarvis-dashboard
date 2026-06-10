@@ -1,6 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { AlertsPanel } from "./AlertsPanel";
 import { ScopeFull } from "./ScopeFull";
+import { BankrollBadge } from "./BankrollBadge";
 
 const SPORTS = [
   { key: "mlb", label: "MLB", href: "/", live: true },
@@ -34,6 +35,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               </span>
             </span>
           </Link>
+
+          <BankrollBadge />
 
           <nav className="ml-2 flex items-center gap-1 overflow-x-auto" data-testid="nav-sports">
             {SPORTS.map((s) => (

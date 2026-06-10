@@ -128,6 +128,16 @@ export interface BuiltPick {
   fairDrawMl?: number | null;
 }
 
+export interface BankrollState {
+  starting: number;
+  current: number;
+  netDollars: number;
+  netUnits: number;
+  record: { wins: number; losses: number; pushes: number };
+  roiPct: number;
+  lastUpdated: string | null;
+}
+
 export interface SlatePayload {
   operatingDay: string;
   isDemo: boolean;
