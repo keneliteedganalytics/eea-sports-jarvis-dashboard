@@ -10,6 +10,7 @@
 import {
   propOffersForDate,
   upsertPropPick,
+  setPropOfferPlayerId,
   type PropOfferRow,
 } from "../../gradedBook";
 import { fetchSchedule } from "../../adapters/mlbStats";
@@ -17,6 +18,7 @@ import { fetchPitcherStats } from "../../adapters/mlbStats";
 import { parkFactorForTeam } from "../mlb/weather";
 import { nameToAbbr } from "../mlb/teams";
 import { fetchBatterProfile, fetchPitcherProfile } from "./mlbStatsProps";
+import { resolveMlbPlayerId } from "./playerResolver";
 import {
   simulate,
   isPitcherMarket,
@@ -190,22 +192,28 @@ export interface GroupedOffer {
   market: string;
   line: number; // consensus line (most common across books)
   quotes: BookQuote[];
+  playerId: number | null; // resolved MLB Stats id if a prior cycle persisted it
 }
 
 // Collapse per-book offer rows into one quote set per (event, player, market),
-// keyed line = the modal line across books.
+// keyed line = the modal line across books. Carries through any player_id already
+// persisted on the rows (stored as TEXT) so a resolved id survives across cycles.
 export function groupOffers(offers: PropOfferRow[]): GroupedOffer[] {
-  const by = new Map<string, { ev: string; player: string; market: string; lines: number[]; quotes: BookQuote[] }>();
+  const by = new Map<string, { ev: string; player: string; market: string; lines: number[]; quotes: BookQuote[]; playerId: number | null }>();
   for (const o of offers) {
     const k = `${o.event_id}|${o.player_name}|${o.market}`;
-    const g = by.get(k) ?? { ev: o.event_id, player: o.player_name, market: o.market, lines: [], quotes: [] };
+    const g = by.get(k) ?? { ev: o.event_id, player: o.player_name, market: o.market, lines: [], quotes: [], playerId: null };
     g.lines.push(o.line);
     g.quotes.push({ book: o.book, overPrice: o.over_price, underPrice: o.under_price });
+    if (g.playerId == null && o.player_id != null) {
+      const parsed = Number(o.player_id);
+      if (Number.isFinite(parsed) && parsed > 0) g.playerId = parsed;
+    }
     by.set(k, g);
   }
   const out: GroupedOffer[] = [];
   for (const g of by.values()) {
-    out.push({ eventId: g.ev, player: g.player, market: g.market, line: modal(g.lines), quotes: g.quotes });
+    out.push({ eventId: g.ev, player: g.player, market: g.market, line: modal(g.lines), quotes: g.quotes, playerId: g.playerId });
   }
   return out;
 }
@@ -240,17 +248,38 @@ export interface BuildSummary {
   pickIds: string[];
 }
 
+// Injectable data adapters so the orchestrator's end-to-end chain (resolve id →
+// fetch profile → simulate → gate → write) is testable without live HTTP.
+// Production passes nothing and the real adapters are used.
+export interface BuildDeps {
+  resolveId: typeof resolveMlbPlayerId;
+  persistId: typeof setPropOfferPlayerId;
+  batterProfile: typeof fetchBatterProfile;
+  pitcherProfile: typeof fetchPitcherProfile;
+  schedule: typeof fetchSchedule;
+}
+const DEFAULT_BUILD_DEPS: BuildDeps = {
+  resolveId: resolveMlbPlayerId,
+  persistId: setPropOfferPlayerId,
+  batterProfile: fetchBatterProfile,
+  pitcherProfile: fetchPitcherProfile,
+  schedule: fetchSchedule,
+};
+
 // Build the day's MLB prop picks from stored offers. Reads offers for the date,
 // joins MLB schedule for matchup context, simulates each, gates + tiers + caps,
 // and writes survivors to prop_picks. Degrades to an empty write when there are
 // no offers or no player data (no fabricated picks).
-export async function buildMlbPropPicks(date: string): Promise<BuildSummary> {
+export async function buildMlbPropPicks(
+  date: string,
+  deps: BuildDeps = DEFAULT_BUILD_DEPS,
+): Promise<BuildSummary> {
   const offers = propOffersForDate(date, "mlb");
   const grouped = groupOffers(offers);
   if (grouped.length === 0) return { date, considered: 0, written: 0, pickIds: [] };
 
   // Schedule gives us venue (park factor) + opposing probable pitcher per event.
-  const schedule = await fetchSchedule(date).catch(() => []);
+  const schedule = await deps.schedule(date).catch(() => []);
   const eventMeta = new Map<string, { homeAbbr: string; awayAbbr: string; venue: string; homePid: number | null; awayPid: number | null }>();
 
   type Candidate = {
@@ -290,15 +319,32 @@ export async function buildMlbPropPicks(date: string): Promise<BuildSummary> {
     let pitcherProfile: import("./mlbStatsProps").PitcherProfile | null = null;
     let simInput;
     const seedKey = `${g.eventId}|${g.player}|${market}|${g.line}`;
+
+    // Resolve the MLB Stats player id. The Odds API gives us only a name, so
+    // without this every profile fetch short-circuits and no pick is ever built.
+    // Use the id carried through from a prior cycle's offer row if present;
+    // otherwise look it up by name and persist it back for the next cycle.
+    let playerId: number | null = g.playerId;
+    if (playerId == null) {
+      playerId = await deps.resolveId(g.player).catch(() => null);
+      if (playerId != null) {
+        try {
+          deps.persistId(g.eventId, g.market, g.player, playerId);
+        } catch {
+          // best-effort persistence; a failed write just means we re-resolve next cycle
+        }
+      }
+    }
+
     if (isBatterMarket(market)) {
-      const profile = await fetchBatterProfile(null, g.player, 20).catch(() => null);
+      const profile = await deps.batterProfile(playerId, g.player, 20).catch(() => null);
       if (!profile || !profile.available) continue;
       batterProfile = profile;
       batterLogs = profile.logs.length;
       hasSeason = profile.seasonRates !== null;
       simInput = { market, batter: profile, matchup: ctx, seedKey };
     } else {
-      const profile = await fetchPitcherProfile(null, g.player, 20).catch(() => null);
+      const profile = await deps.pitcherProfile(playerId, g.player, 20).catch(() => null);
       if (!profile || !profile.available) continue;
       pitcherProfile = profile;
       pitcherStarts = profile.starts;

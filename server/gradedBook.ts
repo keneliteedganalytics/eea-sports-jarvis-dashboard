@@ -1035,6 +1035,30 @@ export function propOffersFor(eventId: string, playerName: string, market: strin
     .all(eventId, playerName, market) as PropOfferRow[];
 }
 
+// Persist a resolved MLB Stats player id back onto the matching offer rows so the
+// next build cycle reads it from storage instead of re-querying the name lookup.
+// Updates every book's row for the (event, market, player) whose id is still null.
+// Stored as TEXT to match the column; the builder coerces back to a number.
+export function setPropOfferPlayerId(
+  eventId: string,
+  market: string,
+  playerName: string,
+  playerId: number,
+): void {
+  gradedDb()
+    .prepare(
+      `UPDATE prop_offers SET player_id = @player_id
+        WHERE event_id = @event_id AND market = @market
+          AND player_name = @player_name AND player_id IS NULL`,
+    )
+    .run({
+      player_id: String(playerId),
+      event_id: eventId,
+      market,
+      player_name: playerName,
+    });
+}
+
 // Wipe offers for a date before a fresh ingest (offers are quotes, not a ledger).
 export function clearPropOffersForDate(date: string): void {
   gradedDb().prepare("DELETE FROM prop_offers WHERE game_date = ?").run(date);
