@@ -10,6 +10,23 @@ import { BANKROLL_USD, type BuiltPick } from "../sports/mlb/picksEngine";
 import { applyExposureCap } from "../core/sizing";
 import { persistPicks } from "../jobs/persistPicks";
 import { picksForDate, pickId, type GradedPick } from "../gradedBook";
+import type { ClvBadge } from "../sports/mlb/picksEngine";
+
+// Build the client-facing CLV badge from a graded row. Returns null until the
+// pick has a posted price (every actionable pick gets one at posting time). The
+// status is 'open' before the lock worker captures the close, then 'locked',
+// then 'final' once the game completes.
+function buildClvBadge(row: GradedPick): ClvBadge | null {
+  if (row.postedOddsAmerican === null) return null;
+  return {
+    points: row.clvPoints ?? 0,
+    percent: row.clvPercent ?? 0,
+    status: row.lockStatus,
+    postedOdds: row.postedOddsAmerican,
+    closingOdds: row.closingOddsAmerican,
+    closingSource: row.closingSource ?? undefined,
+  };
+}
 
 export interface SportSlate {
   picks: BuiltPick[];
@@ -113,6 +130,7 @@ function attachGradedStatus(slates: SportSlate[], day: string): void {
       p.gradeResult = row.result;
       p.gradePl = row.pl;
       p.clvPct = row.clvPct;
+      p.clv = buildClvBadge(row);
       p.liveAwayScore = row.liveAwayScore;
       p.liveHomeScore = row.liveHomeScore;
       p.liveStatusDetail = row.liveStatusDetail;

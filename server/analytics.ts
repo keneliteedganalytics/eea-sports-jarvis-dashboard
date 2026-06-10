@@ -7,6 +7,7 @@
 // Filters (sport / tier / since-date) are applied to the bet log.
 
 import { hitRatesByTier, trackRecord, type BetLogEntry } from "./sports/mlb/trackRecord";
+import { clvAggregate, type ClvAggregate } from "./gradedBook";
 
 const TIER_ORDER = ["SNIPER", "EDGE", "RECON"];
 const SPORTS = ["MLB", "NHL", "NBA", "SOCCER"];
@@ -64,6 +65,7 @@ export interface AnalyticsPayload {
   roiBySport: SportRoi[];
   trend: TrendPoint[];
   heatmap: HeatCell[];
+  clv: ClvAggregate;
 }
 
 function num(v: string): number | null {
@@ -224,5 +226,6 @@ export function buildAnalytics(filters: AnalyticsFilters = {}): AnalyticsPayload
     roiBySport: roiBySport(log),
     trend: trend(log),
     heatmap: heatmap(sport, tier),
+    clv: clvAggregate({ sport, tier, since }),
   };
 }

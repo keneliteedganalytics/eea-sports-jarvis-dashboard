@@ -95,6 +95,7 @@ export async function buildNhlSlate(now: Date = new Date()): Promise<NhlSlateBui
       gameId: ev.eventId,
       gameDate: opDay,
       gameTimeEt: etClock(ev.startIso),
+      gameStartIso: ev.startIso,
       venue: "",
       homeTeam: ev.homeTeam,
       awayTeam: ev.awayTeam,

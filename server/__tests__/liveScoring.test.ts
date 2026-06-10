@@ -41,7 +41,8 @@ function seedPick() {
     matchup: "SAS @ NYK", homeTeam: "NYK", awayTeam: "SAS",
     homeTeamFull: "New York Knicks", awayTeamFull: "San Antonio Spurs",
     pickSide: "home", pickTeam: "NYK", pickTeamFull: "New York Knicks", pickType: "ML",
-    pickLine: null, pickMl: -125, pickBook: "DK", tier: "EDGE", units: 1, stakeDollars: 375,
+    pickLine: null, pickMl: -125, pickBook: "DK", gameStartIso: `${DATE}T23:00:00Z`,
+    tier: "EDGE", units: 1, stakeDollars: 375,
     pickWinProb: 0.6, pickImpliedProb: 0.55, edgePp: 5, evPer100: 4, confidence: 70, fairMl: -130,
   });
 }

@@ -19,6 +19,7 @@ export interface NhlGameInput {
   gameId: string;
   gameDate: string;
   gameTimeEt: string;
+  gameStartIso?: string | null;
   venue: string;
   homeTeam: string;
   awayTeam: string;
@@ -159,6 +160,7 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
 
   return {
     sport: "nhl",
+    gameStartIso: game.gameStartIso ?? null,
     gameId: game.gameId,
     gameDate: game.gameDate,
     gameTimeEt: game.gameTimeEt,

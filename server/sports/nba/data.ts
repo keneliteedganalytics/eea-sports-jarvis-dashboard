@@ -100,6 +100,7 @@ export async function buildNbaSlate(now: Date = new Date()): Promise<NbaSlateBui
       gameId: ev.eventId,
       gameDate: opDay,
       gameTimeEt: etClock(ev.startIso),
+      gameStartIso: ev.startIso,
       venue: "",
       homeTeam: ev.homeTeam,
       awayTeam: ev.awayTeam,

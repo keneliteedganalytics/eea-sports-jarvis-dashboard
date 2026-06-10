@@ -13,6 +13,10 @@ import path from "node:path";
 
 export type PickStatus = "pending" | "in_progress" | "final";
 export type PickResult = "W" | "L" | "P";
+// Closing Line Value lock lifecycle: 'open' until first pitch / tip / puck drop /
+// kickoff, 'locked' once the closing line is captured + CLV computed, 'final'
+// once the game completes.
+export type LockStatus = "open" | "locked" | "final";
 
 export interface GradedPick {
   id: string;
@@ -32,6 +36,18 @@ export interface GradedPick {
   pickLine: number | null;
   pickMl: number | null;
   pickBook: string | null;
+  // Actual game start (ISO) captured at pick generation — drives the lock window.
+  gameStartIso: string | null;
+  // Closing Line Value tracking. posted_* is the price at the moment the pick was
+  // posted; closing_* is the snapshot taken when the lock window opens.
+  postedOddsAmerican: number | null;
+  postedAt: string | null;
+  closingOddsAmerican: number | null;
+  closingCapturedAt: string | null;
+  closingSource: string | null;
+  clvPoints: number | null;
+  clvPercent: number | null;
+  lockStatus: LockStatus;
   tier: string;
   units: number;
   stakeDollars: number;
@@ -95,6 +111,15 @@ export function gradedDb(): Database.Database {
       pickLine REAL,
       pickMl INTEGER,
       pickBook TEXT,
+      gameStartIso TEXT,
+      postedOddsAmerican INTEGER,
+      postedAt TEXT,
+      closingOddsAmerican INTEGER,
+      closingCapturedAt TEXT,
+      closingSource TEXT,
+      clvPoints REAL,
+      clvPercent REAL,
+      lockStatus TEXT NOT NULL DEFAULT 'open',
       tier TEXT NOT NULL,
       units REAL NOT NULL,
       stakeDollars REAL NOT NULL,
@@ -146,6 +171,16 @@ export function gradedDb(): Database.Database {
     lockedTier: "TEXT",
     lockedStake: "REAL",
     lockedOdds: "INTEGER",
+    // CLV tracking — mirror of migrations/0003_clv.sql.
+    gameStartIso: "TEXT",
+    postedOddsAmerican: "INTEGER",
+    postedAt: "TEXT",
+    closingOddsAmerican: "INTEGER",
+    closingCapturedAt: "TEXT",
+    closingSource: "TEXT",
+    clvPoints: "REAL",
+    clvPercent: "REAL",
+    lockStatus: "TEXT NOT NULL DEFAULT 'open'",
   });
   _db = sqlite;
   return _db;
@@ -185,6 +220,7 @@ export interface UpsertPickInput {
   pickLine: number | null;
   pickMl: number | null;
   pickBook: string | null;
+  gameStartIso: string | null;
   tier: string;
   units: number;
   stakeDollars: number;
@@ -213,11 +249,15 @@ export function upsertPick(input: UpsertPickInput): boolean {
   if (existing && existing.locked) return false;
 
   if (existing) {
+    // While still pending and unlocked we refresh pre-game fields, but the
+    // posted odds + posted timestamp are sacred (captured at first posting) so
+    // CLV is measured against the true posting price — never re-stamp them.
     db.prepare(
       `UPDATE picks SET
         gameDate=@gameDate, gameTimeEt=@gameTimeEt, matchup=@matchup,
         homeTeam=@homeTeam, awayTeam=@awayTeam, homeTeamFull=@homeTeamFull, awayTeamFull=@awayTeamFull,
         pickTeam=@pickTeam, pickTeamFull=@pickTeamFull, pickLine=@pickLine, pickMl=@pickMl, pickBook=@pickBook,
+        gameStartIso=@gameStartIso,
         tier=@tier, units=@units, stakeDollars=@stakeDollars,
         pickWinProb=@pickWinProb, pickImpliedProb=@pickImpliedProb, edgePp=@edgePp, evPer100=@evPer100,
         confidence=@confidence, fairMl=@fairMl, updatedAt=@updatedAt
@@ -242,16 +282,18 @@ export function forceInsertPick(input: UpsertPickInput): string {
       id, gameId, sport, gameDate, gameTimeEt, matchup,
       homeTeam, awayTeam, homeTeamFull, awayTeamFull,
       pickSide, pickTeam, pickTeamFull, pickType, pickLine, pickMl, pickBook,
+      gameStartIso, postedOddsAmerican, postedAt, lockStatus,
       tier, units, stakeDollars, pickWinProb, pickImpliedProb, edgePp, evPer100,
       confidence, fairMl, status, createdAt, updatedAt
     ) VALUES (
       @id, @gameId, @sport, @gameDate, @gameTimeEt, @matchup,
       @homeTeam, @awayTeam, @homeTeamFull, @awayTeamFull,
       @pickSide, @pickTeam, @pickTeamFull, @pickType, @pickLine, @pickMl, @pickBook,
+      @gameStartIso, @postedOddsAmerican, @postedAt, 'open',
       @tier, @units, @stakeDollars, @pickWinProb, @pickImpliedProb, @edgePp, @evPer100,
       @confidence, @fairMl, 'pending', @createdAt, @updatedAt
     )`,
-  ).run({ ...input, id, createdAt: now, updatedAt: now });
+  ).run({ ...input, id, postedOddsAmerican: input.pickMl, postedAt: now, createdAt: now, updatedAt: now });
   return id;
 }
 
@@ -357,6 +399,7 @@ export interface SeedBuiltPick {
   pickType: string;
   pickMl: number | null;
   pickBook: string | null;
+  gameStartIso?: string | null;
   verdictTier: string;
   units: number;
   kellyStakeDollars: number;
@@ -401,6 +444,7 @@ function seedToUpsertInput(pick: SeedBuiltPick, override: AdminLockOverride): Up
     pickLine: null,
     pickMl: override.odds ?? pick.pickMl,
     pickBook: pick.pickBook,
+    gameStartIso: pick.gameStartIso ?? null,
     tier: override.tier,
     units: pick.units,
     stakeDollars: override.stake ?? pick.kellyStakeDollars,
@@ -492,6 +536,37 @@ export function openPicksForDate(date: string): GradedPick[] {
     .all(date) as GradedPick[];
 }
 
+// Picks whose closing line hasn't been captured yet (lockStatus='open') and that
+// carry a known game-start time. Used by the lock worker to snapshot the close.
+export function openLockPicksForDate(date: string): GradedPick[] {
+  return gradedDb()
+    .prepare(
+      "SELECT * FROM picks WHERE gameDate = ? AND lockStatus = 'open' AND gameStartIso IS NOT NULL AND units > 0",
+    )
+    .all(date) as GradedPick[];
+}
+
+// Persist the closing-line snapshot + computed CLV on a pick and flip it to
+// 'locked'. Idempotent at the call site (the worker only selects 'open' rows).
+export function lockClosingLine(
+  id: string,
+  fields: {
+    closingOddsAmerican: number;
+    closingSource: string;
+    clvPoints: number;
+    clvPercent: number;
+  },
+): void {
+  const now = new Date().toISOString();
+  gradedDb()
+    .prepare(
+      `UPDATE picks SET closingOddsAmerican=@closingOddsAmerican, closingCapturedAt=@closingCapturedAt,
+        closingSource=@closingSource, clvPoints=@clvPoints, clvPercent=@clvPercent,
+        lockStatus='locked', updatedAt=@updatedAt WHERE id=@id`,
+    )
+    .run({ ...fields, id, closingCapturedAt: now, updatedAt: now });
+}
+
 export function picksForDate(date: string): GradedPick[] {
   const rows = gradedDb().prepare("SELECT * FROM picks WHERE gameDate = ? ORDER BY gameTimeEt").all(date) as GradedPick[];
   return rows.map((r) => applyLock(r)!);
@@ -528,9 +603,62 @@ export function settlePick(
       `UPDATE picks SET status='final', finalAwayScore=@finalAwayScore, finalHomeScore=@finalHomeScore,
         liveAwayScore=@finalAwayScore, liveHomeScore=@finalHomeScore,
         result=@result, pl=@pl, clvPct=@clvPct, liveStatusDetail=@liveStatusDetail,
-        gradedAt=@gradedAt, updatedAt=@updatedAt WHERE id=@id`,
+        lockStatus='final', gradedAt=@gradedAt, updatedAt=@updatedAt WHERE id=@id`,
     )
     .run({ ...fields, id, gradedAt: now, updatedAt: now });
+}
+
+export interface ClvAggregate {
+  meanPct: number;
+  positiveRatePct: number;
+  captured: number; // rows with a captured closing line
+  byTier: Array<{ tier: string; meanPct: number; captured: number }>;
+}
+
+// Aggregate captured-CLV figures from rows whose closing line has been snapshot
+// (lockStatus locked/final → clvPercent is non-null). Optional sport/tier/since
+// filters mirror the analytics dashboard. Empty book → zeros + empty byTier.
+export function clvAggregate(opts: { sport?: string | null; tier?: string | null; since?: string | null } = {}): ClvAggregate {
+  const clauses = ["clvPercent IS NOT NULL"];
+  const params: Record<string, unknown> = {};
+  if (opts.sport && opts.sport.toUpperCase() !== "ALL") {
+    clauses.push("sport = @sport");
+    params.sport = opts.sport.toLowerCase();
+  }
+  if (opts.tier && opts.tier.toUpperCase() !== "ALL") {
+    clauses.push("tier = @tier");
+    params.tier = opts.tier.toUpperCase();
+  }
+  if (opts.since) {
+    clauses.push("gameDate >= @since");
+    params.since = opts.since;
+  }
+  const rows = gradedDb()
+    .prepare(`SELECT tier, clvPercent FROM picks WHERE ${clauses.join(" AND ")}`)
+    .all(params) as Array<{ tier: string; clvPercent: number }>;
+
+  if (rows.length === 0) return { meanPct: 0, positiveRatePct: 0, captured: 0, byTier: [] };
+
+  const sum = rows.reduce((a, r) => a + r.clvPercent, 0);
+  const positive = rows.filter((r) => r.clvPercent > 0).length;
+
+  const byTierMap = new Map<string, number[]>();
+  for (const r of rows) {
+    if (!byTierMap.has(r.tier)) byTierMap.set(r.tier, []);
+    byTierMap.get(r.tier)!.push(r.clvPercent);
+  }
+  const byTier = [...byTierMap.entries()].map(([tier, vals]) => ({
+    tier,
+    meanPct: Math.round((vals.reduce((a, v) => a + v, 0) / vals.length) * 100) / 100,
+    captured: vals.length,
+  }));
+
+  return {
+    meanPct: Math.round((sum / rows.length) * 100) / 100,
+    positiveRatePct: Math.round((positive / rows.length) * 1000) / 10,
+    captured: rows.length,
+    byTier,
+  };
 }
 
 // All graded (final) picks, optionally filtered by sport, newest first.

@@ -4,6 +4,7 @@ import { ScopeFull } from "./ScopeFull";
 import { SignalBars } from "./SignalBars";
 import { SpreadRow } from "./SpreadRow";
 import { TotalRow } from "./TotalRow";
+import { ClvBadge } from "./ClvBadge";
 import { fmtGameDate, fmtGameTime, fmtLine, TIER_LABEL } from "@/lib/format";
 import { gradeVisual } from "@/lib/grade";
 import type { BuiltPick } from "@/lib/types";
@@ -172,6 +173,9 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
             No edge — fair price{pick.pickMl !== null ? ` (${pick.pickTeam} ${fmtLine(pick.pickMl)})` : ""}
           </div>
         )}
+
+        {/* Closing Line Value (only present once a posted price was captured) */}
+        <ClvBadge pick={pick} />
       </div>
 
       {/* Brand footer: scope mark + wordmark */}

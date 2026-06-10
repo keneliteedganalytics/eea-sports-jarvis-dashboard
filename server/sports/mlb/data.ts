@@ -107,6 +107,7 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       gamePk: sched?.gamePk ?? null,
       gameDate: opDay,
       gameTimeEt: utcIsoToEtClock(ev.startIso),
+      gameStartIso: ev.startIso,
       venue: sched?.venue ?? "",
       homeTeam: ev.homeTeam,
       awayTeam: ev.awayTeam,

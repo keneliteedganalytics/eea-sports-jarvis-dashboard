@@ -40,6 +40,7 @@ export interface GameInput {
   gamePk?: string | null; // MLB Stats API gamePk (for umpire/lineup lookups)
   gameDate: string;
   gameTimeEt: string;
+  gameStartIso?: string | null; // actual game start (ISO) — drives the CLV lock window
   venue: string;
   homeTeam: string; // tri-code
   awayTeam: string;
@@ -83,6 +84,17 @@ export interface GameInput {
   _recentFormAway?: RecentForm | null;
 }
 
+// CLV payload sent to the client. null on the BuiltPick until the lock worker
+// captures the closing line.
+export interface ClvBadge {
+  points: number;
+  percent: number;
+  status: "open" | "locked" | "final";
+  postedOdds: number;
+  closingOdds: number | null;
+  closingSource?: string;
+}
+
 export interface PolymarketData {
   found: boolean;
   pct?: number | null; // 0-100 for pick side
@@ -103,6 +115,7 @@ export interface BuiltPick {
   gameId: string;
   gameDate: string;
   gameTimeEt: string;
+  gameStartIso?: string | null;
   venue: string;
   matchup: string;
   homeTeam: string;
@@ -180,6 +193,9 @@ export interface BuiltPick {
   gradeResult?: "W" | "L" | "P" | null;
   gradePl?: number | null;
   clvPct?: number | null;
+  // Closing Line Value — null until the lock worker captures the close. status
+  // 'open' before lock, 'locked' once captured, 'final' after the game ends.
+  clv?: ClvBadge | null;
   liveAwayScore?: number | null;
   liveHomeScore?: number | null;
   liveStatusDetail?: string | null;
@@ -611,6 +627,7 @@ export function buildPick(
     gameId: game.gameId,
     gameDate: game.gameDate,
     gameTimeEt: game.gameTimeEt,
+    gameStartIso: game.gameStartIso ?? null,
     venue: game.venue,
     matchup: `${awayFull} @ ${homeFull}`,
     homeTeam: game.homeTeam,

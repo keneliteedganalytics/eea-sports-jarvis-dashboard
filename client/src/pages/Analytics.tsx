@@ -88,6 +88,41 @@ export default function Analytics() {
         </div>
       )}
 
+      {/* Closing Line Value — mean CLV %, positive rate, mean by tier */}
+      {data && (
+        <Panel title="Closing line value">
+          {data.clv.captured === 0 ? (
+            <div className="text-xs text-muted-foreground" data-testid="clv-empty">
+              No closing lines captured yet — CLV populates once picks lock at game start.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" data-testid="clv-cards">
+              <Kpi
+                label="Mean CLV"
+                value={`${data.clv.meanPct >= 0 ? "+" : ""}${data.clv.meanPct.toFixed(1)}%`}
+                good={data.clv.meanPct >= 0}
+              />
+              <Kpi
+                label="Positive rate"
+                value={`${data.clv.positiveRatePct.toFixed(0)}%`}
+                good={data.clv.positiveRatePct >= 50}
+              />
+              {["SNIPER", "EDGE", "RECON"].map((t) => {
+                const row = data.clv.byTier.find((r) => r.tier === t);
+                return (
+                  <Kpi
+                    key={t}
+                    label={`${t} CLV`}
+                    value={row ? `${row.meanPct >= 0 ? "+" : ""}${row.meanPct.toFixed(1)}%` : "—"}
+                    good={row ? row.meanPct >= 0 : undefined}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </Panel>
+      )}
+
       {/* Win rate by tier + ROI by sport */}
       <div className="grid gap-4 lg:grid-cols-2">
         {data && data.winRateByTier.length > 0 && (

@@ -25,6 +25,7 @@ export function persistPick(pick: BuiltPick): boolean {
     pickLine: null,
     pickMl: pick.pickMl,
     pickBook: pick.pickBook,
+    gameStartIso: pick.gameStartIso ?? null,
     tier: pick.verdictTier,
     units: pick.units,
     stakeDollars: pick.kellyStakeDollars,

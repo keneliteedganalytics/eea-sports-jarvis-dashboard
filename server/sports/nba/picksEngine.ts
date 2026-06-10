@@ -19,6 +19,7 @@ export interface NbaGameInput {
   gameId: string;
   gameDate: string;
   gameTimeEt: string;
+  gameStartIso?: string | null;
   venue: string;
   homeTeam: string;
   awayTeam: string;
@@ -171,6 +172,7 @@ export function buildPick(game: NbaGameInput, model: NbaModelResult, bankroll = 
 
   return {
     sport: "nba",
+    gameStartIso: game.gameStartIso ?? null,
     gameId: game.gameId,
     gameDate: game.gameDate,
     gameTimeEt: game.gameTimeEt,

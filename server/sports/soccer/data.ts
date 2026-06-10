@@ -218,6 +218,7 @@ export async function buildSoccerSlate(now: Date = new Date()): Promise<SoccerSl
       gameId: ev.eventId,
       gameDate: opDay,
       gameTimeEt: etClock(ev.startIso),
+      gameStartIso: ev.startIso,
       venue: "",
       homeTeam: ev.homeTeam,
       awayTeam: ev.awayTeam,

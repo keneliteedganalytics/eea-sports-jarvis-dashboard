@@ -51,7 +51,8 @@ upsertPick({
   matchup: "CHC @ PIT", homeTeam: "PIT", awayTeam: "CHC",
   homeTeamFull: "Pittsburgh Pirates", awayTeamFull: "Chicago Cubs",
   pickSide: "home", pickTeam: "PIT", pickTeamFull: "Pittsburgh Pirates", pickType: "ML",
-  pickLine: null, pickMl: 135, pickBook: "DK", tier: "EDGE", units: 2, stakeDollars: 600,
+  pickLine: null, pickMl: 135, pickBook: "DK", gameStartIso: "2026-06-08T23:05:00Z",
+  tier: "EDGE", units: 2, stakeDollars: 600,
   pickWinProb: 0.46, pickImpliedProb: 0.425, edgePp: 3.5, evPer100: 5, confidence: 64, fairMl: 120,
 });
 

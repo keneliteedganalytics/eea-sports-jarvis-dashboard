@@ -10,6 +10,7 @@ import { SpreadRow } from "./SpreadRow";
 import { TotalRow } from "./TotalRow";
 import { PropsPanel } from "./PropsPanel";
 import { BetPlacedButton } from "./BetPlacedButton";
+import { ClvBadge } from "./ClvBadge";
 import { fmtGameDate, fmtGameTime, fmtLine, fmtMoney, fmtPct, fmtUnits, lineMovement, TIER_LABEL } from "@/lib/format";
 import { gradeVisual } from "@/lib/grade";
 import type { BuiltPick } from "@/lib/types";
@@ -247,6 +248,9 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
             )}
           </div>
         )}
+
+        {/* Closing Line Value chip / badge */}
+        <ClvBadge pick={pick} />
 
         {/* Hit-rate footer */}
         <HitRateFooter tier={pick.verdictTier} />

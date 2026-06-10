@@ -15,6 +15,7 @@ import { getAlerts } from "./pollers/alerts";
 import { startOddsPoller } from "./pollers/oddsPoller";
 import { startScratchPoller } from "./pollers/scratchPoller";
 import { startLiveScoring, pollEspnAndUpdate } from "./jobs/liveScoring";
+import { startLockWorker } from "./jobs/lockWorker";
 import { confirmBet, adminLockWithOverride } from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 import { z } from "zod";
@@ -64,6 +65,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   startOddsPoller();
   startScratchPoller();
   startLiveScoring();
+  startLockWorker();
 
   // Unified cross-sport board (MLB + NHL + NBA). ?date=YYYY-MM-DD overrides the
   // operating day so historical/forward slates can be inspected.

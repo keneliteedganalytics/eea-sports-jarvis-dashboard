@@ -22,6 +22,15 @@ export interface MarketSet {
   total: Market;
 }
 
+export interface ClvBadge {
+  points: number;
+  percent: number;
+  status: "open" | "locked" | "final";
+  postedOdds: number;
+  closingOdds: number | null;
+  closingSource?: string;
+}
+
 export interface BuiltPick {
   sport: string;
   gameId: string;
@@ -92,6 +101,8 @@ export interface BuiltPick {
   gradeResult?: "W" | "L" | "P" | null;
   gradePl?: number | null;
   clvPct?: number | null;
+  // Closing Line Value — null until the lock worker captures the close.
+  clv?: ClvBadge | null;
   liveAwayScore?: number | null;
   liveHomeScore?: number | null;
   liveStatusDetail?: string | null;
@@ -224,6 +235,13 @@ export interface AnalyticsHeatCell {
   decided: number;
 }
 
+export interface ClvAggregate {
+  meanPct: number;
+  positiveRatePct: number;
+  captured: number;
+  byTier: { tier: string; meanPct: number; captured: number }[];
+}
+
 export interface AnalyticsPayload {
   filters: { sport: string; tier: string; since: string | null };
   available: { sports: string[]; tiers: string[] };
@@ -232,4 +250,5 @@ export interface AnalyticsPayload {
   roiBySport: SportRoi[];
   trend: AnalyticsTrendPoint[];
   heatmap: AnalyticsHeatCell[];
+  clv: ClvAggregate;
 }

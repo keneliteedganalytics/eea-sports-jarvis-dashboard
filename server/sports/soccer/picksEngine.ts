@@ -21,6 +21,7 @@ export interface SoccerGameInput {
   gameId: string;
   gameDate: string;
   gameTimeEt: string;
+  gameStartIso?: string | null;
   venue: string;
   homeTeam: string;   // tri-code
   awayTeam: string;
@@ -373,6 +374,7 @@ export function buildPick(
     gameId: game.gameId,
     gameDate: game.gameDate,
     gameTimeEt: game.gameTimeEt,
+    gameStartIso: game.gameStartIso ?? null,
     venue: game.venue,
     matchup: `${awayFull} @ ${homeFull}`,
     homeTeam: game.homeTeam,
