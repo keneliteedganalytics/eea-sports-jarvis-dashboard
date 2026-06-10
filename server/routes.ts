@@ -240,6 +240,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/debug/reconciliation", (_req: Request, res: Response) => {
     const flag = reconciliationFlag();
     const db = gradedDb();
+    // Read-only diagnostic: why is the candidate set empty? Lists every graded
+    // prop pick with its offer game_date + event teams so we can see whether the
+    // date join or the team resolution is the blocker.
+    if (_req.query.diagnose) {
+      const graded = db
+        .prepare(
+          `SELECT p.pick_id, p.game_id, p.player_name, p.market_type, p.side, p.line,
+                  p.team, p.opponent, p.result, p.pl_dollars, p.live_status,
+                  (SELECT o.game_date FROM prop_offers o WHERE o.event_id = p.game_id
+                     AND o.game_date IS NOT NULL LIMIT 1) AS offer_game_date,
+                  (SELECT o.event_home FROM prop_offers o WHERE o.event_id = p.game_id
+                     AND (o.event_home IS NOT NULL OR o.event_away IS NOT NULL) LIMIT 1) AS event_home,
+                  (SELECT o.event_away FROM prop_offers o WHERE o.event_id = p.game_id
+                     AND (o.event_home IS NOT NULL OR o.event_away IS NOT NULL) LIMIT 1) AS event_away
+             FROM prop_picks p WHERE p.result IS NOT NULL ORDER BY p.player_name ASC`,
+        )
+        .all();
+      return res.json({ operatingDay: getOperatingDay(), gradedCount: (graded as unknown[]).length, graded });
+    }
     const rows = db
       .prepare(
         `SELECT a.pickId AS pick_id, a.reason AS reason, a.createdAt AS created_at,
