@@ -213,7 +213,11 @@ export function gradedDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_pick_history_sport ON pick_history(sport);
     CREATE INDEX IF NOT EXISTS idx_pick_history_graded_at ON pick_history(graded_at);
-    CREATE INDEX IF NOT EXISTS idx_pick_history_archived_at ON pick_history(archived_at);
+    -- NOTE: idx_pick_history_archived_at is created *after* ensureColumns below,
+    -- not here. On an existing (pre-v6.5) DB the CREATE TABLE above is a no-op, so
+    -- archived_at doesn't exist yet; indexing it in this batch threw "no such
+    -- column: archived_at" and aborted the entire boot before the column was
+    -- ever added (the v6.5.1 outage). The index must wait for the column.
     -- Player-prop pick ledger. A separate domain from game-line picks (ML/spread/
     -- total): one row per (game, player, market, side). Mirrors pick_history's
     -- append-only, never-deleted contract so prop analytics survive a picks wipe.
@@ -274,6 +278,12 @@ export function gradedDb(): Database.Database {
     home_team: "TEXT",
     away_team: "TEXT",
   });
+  // archived_at now exists (fresh CREATE TABLE or just-added by ensureColumns), so
+  // the archive index is safe to build. Kept out of the upfront exec() block on
+  // purpose — see the NOTE there.
+  sqlite.exec(
+    "CREATE INDEX IF NOT EXISTS idx_pick_history_archived_at ON pick_history(archived_at);",
+  );
   _db = sqlite;
   initBankrollState(sqlite);
   backfillPickHistory(sqlite);
@@ -840,7 +850,16 @@ function ensureColumns(db: Database.Database, table: string, cols: Record<string
     (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name),
   );
   for (const [name, ddl] of Object.entries(cols)) {
-    if (!present.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${ddl}`);
+    if (present.has(name)) continue;
+    try {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${ddl}`);
+    } catch (err) {
+      // SQLite has no "ADD COLUMN IF NOT EXISTS". The PRAGMA check above already
+      // skips existing columns, but swallow a racing "duplicate column" so a
+      // concurrent boot can't abort the migration — any other error is real.
+      const msg = (err as Error).message ?? "";
+      if (!/duplicate column name/i.test(msg)) throw err;
+    }
   }
 }
 
