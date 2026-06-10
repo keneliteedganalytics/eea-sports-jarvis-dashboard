@@ -78,6 +78,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               Yesterday
             </Link>
             <Link
+              href="/archive"
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                isActive("/archive") ? "bg-gold/15 text-gold" : "text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid="link-archive"
+            >
+              Archive
+            </Link>
+            <Link
               href="/track-record"
               className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                 isActive("/track-record") ? "bg-gold/15 text-gold" : "text-muted-foreground hover:text-foreground"

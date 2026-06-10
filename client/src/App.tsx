@@ -10,6 +10,7 @@ import PickDetail from "@/pages/PickDetail";
 import Analytics from "@/pages/Analytics";
 import TrackRecord from "@/pages/TrackRecord";
 import Yesterday from "@/pages/Yesterday";
+import Archive from "@/pages/Archive";
 import SportStub from "@/pages/SportStub";
 import NotFound from "@/pages/not-found";
 
@@ -21,6 +22,7 @@ function AppRouter() {
       <Route path="/analytics" component={Analytics} />
       <Route path="/track-record" component={TrackRecord} />
       <Route path="/yesterday" component={Yesterday} />
+      <Route path="/archive" component={Archive} />
       <Route path="/sports/:sport" component={SportStub} />
       <Route component={NotFound} />
     </Switch>

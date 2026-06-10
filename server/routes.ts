@@ -5,8 +5,9 @@ import { initSchema } from "./storage";
 import { getSlate } from "./sports/mlb/slate";
 import { getNhlSlate } from "./sports/nhl/slate";
 import { getNbaSlate } from "./sports/nba/slate";
-import { getDailySlate, getAnyPick, decorateSlatePicks } from "./slate/orchestrator";
+import { getDailySlate, getAnyPick, decorateSlatePicks, excludeArchivedPicks } from "./slate/orchestrator";
 import { getProps } from "./props";
+import { buildPropAnalytics } from "./sports/props/analytics";
 import { hitRatesByTier, trackRecord } from "./sports/mlb/trackRecord";
 import { buildAnalytics } from "./analytics";
 import { generateBrief } from "./audio/brief";
@@ -23,6 +24,8 @@ import {
   gradedDb,
   dbPath,
   pickHistoryCount,
+  archivedPicks,
+  propBoard,
 } from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 import { z } from "zod";
@@ -87,7 +90,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // operating day so historical/forward slates can be inspected.
   app.get("/api/slate", async (req: Request, res: Response) => {
     const dateIso = parseDateParam(req.query.date);
-    const slate = await getDailySlate(bankroll(), dateIso);
+    // The live board (no explicit date) is in-flight only — drop graded/archived
+    // picks. A past-date query (Yesterday) keeps its graded picks.
+    const slate = await getDailySlate(bankroll(), dateIso, { excludeArchived: !dateIso });
     res.json(slate);
   });
 
@@ -98,6 +103,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const dateIso = parseDateParam(req.query.date);
     const slate = await getSlate(bankroll(), dateIso);
     decorateSlatePicks(slate.picks, slate.operatingDay);
+    if (!dateIso) slate.picks = excludeArchivedPicks(slate.picks);
     // Sizing used the configured starting bankroll; the board shows the running
     // bankroll, which adjusts as picks grade W/L.
     res.json({ ...slate, bankroll: getBankrollState().current });
@@ -108,12 +114,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const dateIso = parseDateParam(req.query.date);
     const slate = await getNhlSlate(bankroll(), dateIso);
     decorateSlatePicks(slate.picks, slate.operatingDay);
+    if (!dateIso) slate.picks = excludeArchivedPicks(slate.picks);
     res.json({ ...slate, bankroll: getBankrollState().current });
   });
   app.get("/api/nba/slate", async (req: Request, res: Response) => {
     const dateIso = parseDateParam(req.query.date);
     const slate = await getNbaSlate(bankroll(), dateIso);
     decorateSlatePicks(slate.picks, slate.operatingDay);
+    if (!dateIso) slate.picks = excludeArchivedPicks(slate.picks);
     res.json({ ...slate, bankroll: getBankrollState().current });
   });
 
@@ -251,6 +259,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const sport = String(req.query.sport ?? "mlb");
     const date = String(req.query.date ?? "");
     res.json(await getProps(sport, date, bankroll()));
+  });
+
+  // Archived (settled + cleared-off-board) picks from the permanent ledger.
+  // Paginated, newest-graded first, with sport / result / tier / since filters.
+  app.get("/api/archive", (req: Request, res: Response) => {
+    const sport = typeof req.query.sport === "string" ? req.query.sport : null;
+    const result = typeof req.query.result === "string" ? req.query.result : null;
+    const tier = typeof req.query.tier === "string" ? req.query.tier : null;
+    const since = parseDateParam(req.query.since) ?? null;
+    const limit = Number(req.query.limit ?? 50);
+    const offset = Number(req.query.offset ?? 0);
+    res.json(archivedPicks({ sport, result, tier, since, limit, offset }));
+  });
+
+  // Active (ungraded) player-prop picks for a sport+date — the PROPS board view.
+  // Empty until prop generation is wired (a follow-up), so this returns [] today.
+  app.get("/api/props/board", (req: Request, res: Response) => {
+    const sport = typeof req.query.sport === "string" ? req.query.sport : null;
+    const date = parseDateParam(req.query.date) ?? null;
+    res.json({ sport: sport ?? "ALL", date, items: propBoard({ sport, date }) });
+  });
+
+  // Prop-specific analytics: record, ROI, CLV, and breakdowns by market / player /
+  // line distance / data-quality tier. Zeroed shape when no props are graded yet.
+  app.get("/api/props/analytics", (req: Request, res: Response) => {
+    const sport = typeof req.query.sport === "string" ? req.query.sport : null;
+    const since = parseDateParam(req.query.since) ?? null;
+    res.json(buildPropAnalytics({ sport, since }));
   });
 
   // Alerts (steam / scratch). ?since=<id> for incremental polling.

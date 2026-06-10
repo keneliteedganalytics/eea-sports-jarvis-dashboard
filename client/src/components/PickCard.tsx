@@ -76,7 +76,16 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
   return (
     <article
       className={`flex flex-col overflow-hidden rounded-xl border bg-navy-deep hover-elevate ${grade ? "" : "border-card-border"}`}
-      style={grade ? { borderColor: grade.borderColor, borderWidth: 2 } : undefined}
+      style={
+        grade
+          ? {
+              borderColor: grade.borderColor,
+              borderWidth: grade.isFinal ? 3 : 2,
+              boxShadow: grade.isFinal && grade.glow ? grade.glow : undefined,
+              opacity: grade.isFinal ? grade.dim : undefined,
+            }
+          : undefined
+      }
       data-testid={`pick-card-${pick.gameId}`}
     >
       {/* Brand header row: scope mark + tier wordmark + tier badge */}
@@ -96,13 +105,25 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
               <span className="font-display text-[10px] font-bold uppercase tracking-[0.18em] text-[#E8C14A]">LIVE</span>
             </span>
           )}
-          <TierPill tier={pick.verdictTier} />
+          {/* Final picks swap the tier pill for a colored result pill. */}
+          {grade?.isFinal ? (
+            <span
+              className="rounded-full px-2.5 py-0.5 font-display text-[11px] font-bold uppercase tracking-[0.14em]"
+              style={{ color: "#020810", backgroundColor: grade.badgeColor }}
+              data-testid={`result-pill-${pick.gameId}`}
+            >
+              {grade.badgeText}
+            </span>
+          ) : (
+            <TierPill tier={pick.verdictTier} />
+          )}
         </div>
       </div>
 
       <div className="flex flex-col gap-3 p-4">
-        {/* Graded status badge (W/L/P/live) */}
-        {grade && (
+        {/* In-progress status badge (live). Final picks carry the result in the
+            header pill, so the body badge is shown for live picks only. */}
+        {grade && !grade.isFinal && (
           <div
             className="rounded px-2 py-1 font-display text-[11px] font-bold uppercase tracking-wider"
             style={{ color: "#020810", backgroundColor: grade.badgeColor }}
@@ -111,7 +132,7 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
             {grade.badgeText}
           </div>
         )}
-        {grade?.scoreLine && (
+        {grade && !grade.isFinal && grade.scoreLine && (
           <div className="text-xs font-medium text-foreground/90" data-testid={`grade-score-${pick.gameId}`}>
             {grade.scoreLine}
           </div>
@@ -204,6 +225,16 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
             <span className="text-muted-foreground">{pick.pickBook ? `· ${pick.pickBook}` : ""}</span>
           </div>
         </div>
+
+        {/* Final score row — prominent, silver, Barlow Condensed. */}
+        {grade?.isFinal && grade.finalScoreLine && (
+          <div
+            className="font-display text-[17px] font-bold uppercase tracking-[0.06em] text-[#C0C6D0]"
+            data-testid={`final-score-${pick.gameId}`}
+          >
+            {grade.finalScoreLine}
+          </div>
+        )}
 
         {/* Projected score (all sports) */}
         {showProjScore && (

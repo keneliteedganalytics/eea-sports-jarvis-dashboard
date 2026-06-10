@@ -3,16 +3,17 @@ import { useQuery } from "@tanstack/react-query";
 import { Info } from "lucide-react";
 import { PickCard } from "@/components/PickCard";
 import { CompactCard } from "@/components/CompactCard";
-import { fmtMoney } from "@/lib/format";
-import type { DailySlate, BuiltPick, Verdict } from "@/lib/types";
+import { fmtMoney, fmtLine } from "@/lib/format";
+import type { DailySlate, BuiltPick, Verdict, PropBoardPayload } from "@/lib/types";
 
-type SportFilter = "ALL" | "MLB" | "NHL" | "NBA" | "SOCCER";
+type SportFilter = "ALL" | "MLB" | "NHL" | "NBA" | "SOCCER" | "PROPS";
 const SPORT_CHIPS: { key: SportFilter; label: string; disabled?: boolean }[] = [
   { key: "ALL", label: "ALL" },
   { key: "MLB", label: "MLB" },
   { key: "NHL", label: "NHL" },
   { key: "NBA", label: "NBA" },
   { key: "SOCCER", label: "SOCCER" },
+  { key: "PROPS", label: "PROPS" },
 ];
 const SOON_CHIPS = ["NFL soon", "NCAAF soon", "NCAAB soon"];
 
@@ -183,14 +184,17 @@ export default function Home() {
         </div>
       </div>
 
-      {isLoading && <SkeletonGrid />}
-      {isError && (
+      {/* PROPS board view — a separate board listing player-prop picks. */}
+      {sport === "PROPS" && <PropsBoard date={date} />}
+
+      {sport !== "PROPS" && isLoading && <SkeletonGrid />}
+      {sport !== "PROPS" && isError && (
         <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground">
           Couldn't load the slate. The desk will retry shortly.
         </div>
       )}
 
-      {data && sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba" | "soccer"] === 0 && (
+      {sport !== "PROPS" && data && sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba" | "soccer"] === 0 && (
         <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="empty-sport">
           No {sport} games on the board today.
         </div>
@@ -222,6 +226,87 @@ function SkeletonGrid() {
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {Array.from({ length: 6 }).map((_, i) => (
         <div key={i} className="h-72 animate-pulse rounded-xl border border-card-border bg-navy-card" />
+      ))}
+    </div>
+  );
+}
+
+const PROP_TIER_COLOR: Record<string, string> = {
+  SNIPER: "#E8C14A", EDGE: "#C9A227", RECON: "#9A7B1E",
+};
+
+function PropsBoard({ date }: { date: string }) {
+  const { data, isLoading, isError } = useQuery<PropBoardPayload>({
+    queryKey: [`/api/props/board?date=${date}`],
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+
+  if (isLoading) return <SkeletonGrid />;
+  if (isError) {
+    return (
+      <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground">
+        Couldn't load the prop board. The desk will retry shortly.
+      </div>
+    );
+  }
+
+  const items = data?.items ?? [];
+  if (items.length === 0) {
+    return (
+      <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="props-empty">
+        No prop picks today.
+      </div>
+    );
+  }
+
+  // Group by sport so the board reads sport-by-sport.
+  const bySport = new Map<string, typeof items>();
+  for (const it of items) {
+    const key = it.sport.toUpperCase();
+    if (!bySport.has(key)) bySport.set(key, []);
+    bySport.get(key)!.push(it);
+  }
+
+  return (
+    <div className="space-y-6" data-testid="props-board">
+      {[...bySport.entries()].map(([sportKey, rows]) => (
+        <div key={sportKey} className="space-y-2">
+          <h2 className="font-display text-sm font-bold uppercase tracking-[0.18em] text-gold-dark">{sportKey}</h2>
+          <div className="space-y-2">
+            {rows.map((it) => (
+              <div
+                key={it.pick_id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-card-border bg-navy-card px-3 py-2.5"
+                data-testid={`prop-row-${it.pick_id}`}
+              >
+                <span
+                  className="rounded-full bg-background/50 px-2 py-0.5 font-display text-[10px] font-bold uppercase tracking-wider"
+                  style={{ color: PROP_TIER_COLOR[it.tier] ?? "#6B7A99" }}
+                >
+                  {it.tier}
+                </span>
+                <span className="text-sm font-medium text-foreground">{it.player_name}</span>
+                {it.team && (
+                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                    {it.team}{it.opponent ? ` vs ${it.opponent}` : ""}
+                  </span>
+                )}
+                <span className="font-display text-[13px] uppercase tracking-[0.04em] text-[#C0C6D0]">
+                  {it.market_type} {it.side === "over" ? "O" : "U"} {it.line}
+                </span>
+                {it.posted_odds != null && (
+                  <span className="text-xs tabular-nums text-muted-foreground">{fmtLine(it.posted_odds)}</span>
+                )}
+                {it.edge_pp != null && (
+                  <span className="ml-auto text-xs font-bold tabular-nums text-tier-bonus">
+                    +{it.edge_pp.toFixed(1)}pp
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       ))}
     </div>
   );

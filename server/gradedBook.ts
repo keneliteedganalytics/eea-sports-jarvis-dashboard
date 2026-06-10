@@ -204,10 +204,47 @@ export function gradedDb(): Database.Database {
       pl_dollars REAL,
       posted_odds INTEGER,
       closing_odds INTEGER,
-      clv_pct REAL
+      clv_pct REAL,
+      archived_at TEXT,
+      final_away_score INTEGER,
+      final_home_score INTEGER,
+      home_team TEXT,
+      away_team TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_pick_history_sport ON pick_history(sport);
     CREATE INDEX IF NOT EXISTS idx_pick_history_graded_at ON pick_history(graded_at);
+    CREATE INDEX IF NOT EXISTS idx_pick_history_archived_at ON pick_history(archived_at);
+    -- Player-prop pick ledger. A separate domain from game-line picks (ML/spread/
+    -- total): one row per (game, player, market, side). Mirrors pick_history's
+    -- append-only, never-deleted contract so prop analytics survive a picks wipe.
+    CREATE TABLE IF NOT EXISTS prop_picks (
+      pick_id TEXT PRIMARY KEY,
+      sport TEXT,
+      game_id TEXT,
+      player_name TEXT,
+      player_id TEXT,
+      team TEXT,
+      opponent TEXT,
+      market_type TEXT,
+      line REAL,
+      side TEXT,
+      posted_odds INTEGER,
+      closing_odds INTEGER,
+      posted_at TEXT,
+      graded_at TEXT,
+      result TEXT,
+      actual_value REAL,
+      pl_units REAL,
+      pl_dollars REAL,
+      tier TEXT,
+      confidence INTEGER,
+      edge_pp REAL,
+      data_quality_tier TEXT,
+      clv_pct REAL
+    );
+    CREATE INDEX IF NOT EXISTS idx_prop_picks_sport ON prop_picks(sport);
+    CREATE INDEX IF NOT EXISTS idx_prop_picks_market ON prop_picks(market_type);
+    CREATE INDEX IF NOT EXISTS idx_prop_picks_player ON prop_picks(player_name);
   `);
   // Migrate pre-lock databases in place (CREATE TABLE IF NOT EXISTS skips the new
   // columns on an existing table). Mirror of migrations/0001_pick_lock.sql.
@@ -228,10 +265,71 @@ export function gradedDb(): Database.Database {
     clvPercent: "REAL",
     lockStatus: "TEXT NOT NULL DEFAULT 'open'",
   });
+  // Migrate pre-archive pick_history rows (v6.5): the archive + final-score
+  // columns. Mirror of migrations/0004_archive_props.sql.
+  ensureColumns(sqlite, "pick_history", {
+    archived_at: "TEXT",
+    final_away_score: "INTEGER",
+    final_home_score: "INTEGER",
+    home_team: "TEXT",
+    away_team: "TEXT",
+  });
   _db = sqlite;
   initBankrollState(sqlite);
   backfillPickHistory(sqlite);
+  backfillArchiveFields(sqlite);
   return _db;
+}
+
+// One-time archive backfill (v6.5). For any pick_history row missing the final
+// score / team columns, hydrate them from the matching picks row (the original
+// final score is sacred there). Set archived_at for already-graded rows: the
+// slate is "in-flight only", so a graded pick is archived at graded_at + 6h for
+// rows that predate the immediate-archive transition, immediately otherwise.
+// Idempotent: only fills NULLs, never overwrites an existing archived_at.
+function backfillArchiveFields(db: Database.Database): void {
+  const rows = db
+    .prepare(
+      `SELECT h.pick_id, h.graded_at, h.archived_at, p.finalAwayScore AS fa, p.finalHomeScore AS fh,
+              p.homeTeam AS ht, p.awayTeam AS at
+       FROM pick_history h LEFT JOIN picks p ON p.id = h.pick_id
+       WHERE h.archived_at IS NULL OR h.final_away_score IS NULL`,
+    )
+    .all() as Array<{
+    pick_id: string;
+    graded_at: string | null;
+    archived_at: string | null;
+    fa: number | null;
+    fh: number | null;
+    ht: string | null;
+    at: string | null;
+  }>;
+  const upd = db.prepare(
+    `UPDATE pick_history SET
+       final_away_score = COALESCE(final_away_score, @fa),
+       final_home_score = COALESCE(final_home_score, @fh),
+       home_team = COALESCE(home_team, @ht),
+       away_team = COALESCE(away_team, @at),
+       archived_at = COALESCE(archived_at, @archived_at)
+     WHERE pick_id = @pick_id`,
+  );
+  const tx = db.transaction(() => {
+    for (const r of rows) {
+      let archivedAt: string | null = r.archived_at;
+      if (!archivedAt && r.graded_at) {
+        archivedAt = new Date(new Date(r.graded_at).getTime() + 6 * 60 * 60_000).toISOString();
+      }
+      upd.run({
+        pick_id: r.pick_id,
+        fa: r.fa,
+        fh: r.fh,
+        ht: r.ht,
+        at: r.at,
+        archived_at: archivedAt,
+      });
+    }
+  });
+  tx();
 }
 
 // Default starting bankroll. Mirrors BANKROLL_USD in picksEngine but resolved
@@ -380,20 +478,25 @@ function recordPickHistory(db: Database.Database, r: GradedPick): void {
   const label = `${r.pickTeam} ${r.pickType} ${
     r.pickMl !== null ? (r.pickMl > 0 ? `+${r.pickMl}` : r.pickMl) : ""
   }`.trim();
+  // Immediate archive: a graded (final) pick leaves the in-flight slate the
+  // moment it settles, so archived_at = graded_at.
+  const gradedAt = r.gradedAt ?? new Date().toISOString();
   db.prepare(
     `INSERT OR IGNORE INTO pick_history (
        pick_id, sport, graded_at, pick_label, tier, result,
        stake_units, stake_dollars, pl_units, pl_dollars,
-       posted_odds, closing_odds, clv_pct
+       posted_odds, closing_odds, clv_pct,
+       archived_at, final_away_score, final_home_score, home_team, away_team
      ) VALUES (
        @pick_id, @sport, @graded_at, @pick_label, @tier, @result,
        @stake_units, @stake_dollars, @pl_units, @pl_dollars,
-       @posted_odds, @closing_odds, @clv_pct
+       @posted_odds, @closing_odds, @clv_pct,
+       @archived_at, @final_away_score, @final_home_score, @home_team, @away_team
      )`,
   ).run({
     pick_id: r.id,
     sport: r.sport,
-    graded_at: r.gradedAt ?? new Date().toISOString(),
+    graded_at: gradedAt,
     pick_label: label,
     tier: r.tier,
     result: r.result,
@@ -404,6 +507,11 @@ function recordPickHistory(db: Database.Database, r: GradedPick): void {
     posted_odds: r.postedOddsAmerican,
     closing_odds: r.closingOddsAmerican,
     clv_pct: r.clvPct,
+    archived_at: gradedAt,
+    final_away_score: r.finalAwayScore,
+    final_home_score: r.finalHomeScore,
+    home_team: r.homeTeam,
+    away_team: r.awayTeam,
   });
 }
 
@@ -421,6 +529,11 @@ export interface PickHistoryRow {
   posted_odds: number | null;
   closing_odds: number | null;
   clv_pct: number | null;
+  archived_at: string | null;
+  final_away_score: number | null;
+  final_home_score: number | null;
+  home_team: string | null;
+  away_team: string | null;
 }
 
 // All permanent history rows, optionally filtered by sport, newest first.
@@ -436,6 +549,266 @@ export function pickHistory(sport?: string): PickHistoryRow[] {
 
 export function pickHistoryCount(): number {
   return (gradedDb().prepare("SELECT COUNT(*) AS n FROM pick_history").get() as { n: number }).n;
+}
+
+export interface ArchiveItem {
+  pick_id: string;
+  sport: string;
+  graded_at: string;
+  pick_label: string;
+  tier: string;
+  result: PickResult;
+  stake_units: number;
+  stake_dollars: number;
+  pl_units: number;
+  pl_dollars: number;
+  posted_odds: number | null;
+  closing_odds: number | null;
+  clv_pct: number | null;
+  final_score: string | null;
+}
+
+export interface ArchiveQuery {
+  sport?: string | null; // "ALL" | mlb/nhl/nba/soccer
+  since?: string | null; // YYYY-MM-DD inclusive lower bound on graded_at
+  result?: string | null; // "ALL" | W | L | P
+  tier?: string | null; // "ALL" | SNIPER | EDGE | RECON
+  limit?: number;
+  offset?: number;
+}
+
+export interface ArchivePage {
+  items: ArchiveItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// Compose the "Away 3 — Home 2" final-score string from stored scores + teams.
+function composeFinalScore(r: PickHistoryRow): string | null {
+  if (r.final_away_score === null || r.final_home_score === null) return null;
+  const away = r.away_team ?? "AWY";
+  const home = r.home_team ?? "HOM";
+  return `${away} ${r.final_away_score} — ${home} ${r.final_home_score}`;
+}
+
+// Paginated archived picks (archived_at IS NOT NULL), newest-graded first, with
+// optional sport / result / tier / since filters. Empty book → empty page.
+export function archivedPicks(q: ArchiveQuery = {}): ArchivePage {
+  const db = gradedDb();
+  const clauses = ["archived_at IS NOT NULL"];
+  const params: Record<string, unknown> = {};
+  if (q.sport && q.sport.toUpperCase() !== "ALL") {
+    clauses.push("sport = @sport");
+    params.sport = q.sport.toLowerCase();
+  }
+  if (q.result && q.result.toUpperCase() !== "ALL") {
+    clauses.push("result = @result");
+    params.result = q.result.toUpperCase();
+  }
+  if (q.tier && q.tier.toUpperCase() !== "ALL") {
+    clauses.push("tier = @tier");
+    params.tier = q.tier.toUpperCase();
+  }
+  if (q.since) {
+    clauses.push("graded_at >= @since");
+    params.since = q.since;
+  }
+  const where = clauses.join(" AND ");
+  const total = (
+    db.prepare(`SELECT COUNT(*) AS n FROM pick_history WHERE ${where}`).get(params) as { n: number }
+  ).n;
+  const limit = Math.min(Math.max(Number(q.limit ?? 50) || 50, 1), 200);
+  const offset = Math.max(Number(q.offset ?? 0) || 0, 0);
+  const rows = db
+    .prepare(
+      `SELECT * FROM pick_history WHERE ${where} ORDER BY graded_at DESC LIMIT @limit OFFSET @offset`,
+    )
+    .all({ ...params, limit, offset }) as PickHistoryRow[];
+  const items: ArchiveItem[] = rows.map((r) => ({
+    pick_id: r.pick_id,
+    sport: r.sport,
+    graded_at: r.graded_at,
+    pick_label: r.pick_label,
+    tier: r.tier,
+    result: r.result,
+    stake_units: r.stake_units,
+    stake_dollars: r.stake_dollars,
+    pl_units: r.pl_units,
+    pl_dollars: r.pl_dollars,
+    posted_odds: r.posted_odds,
+    closing_odds: r.closing_odds,
+    clv_pct: r.clv_pct,
+    final_score: composeFinalScore(r),
+  }));
+  return { items, total, limit, offset };
+}
+
+// Set of archived pick ids for a date's slate exclusion. A pick whose graded
+// row is archived (always true once final) must drop off the in-flight board.
+export function archivedPickIds(): Set<string> {
+  const rows = gradedDb()
+    .prepare("SELECT pick_id FROM pick_history WHERE archived_at IS NOT NULL")
+    .all() as Array<{ pick_id: string }>;
+  return new Set(rows.map((r) => r.pick_id));
+}
+
+// ── Player props ──────────────────────────────────────────────────────────
+// A separate domain from game-line picks. Storage lives here (one db file), but
+// the grading rule + edge model live in server/sports/props/*.
+
+export type PropSide = "over" | "under";
+
+export interface PropPickRow {
+  pick_id: string;
+  sport: string;
+  game_id: string;
+  player_name: string;
+  player_id: string | null;
+  team: string | null;
+  opponent: string | null;
+  market_type: string;
+  line: number;
+  side: PropSide;
+  posted_odds: number | null;
+  closing_odds: number | null;
+  posted_at: string | null;
+  graded_at: string | null;
+  result: PickResult | null;
+  actual_value: number | null;
+  pl_units: number | null;
+  pl_dollars: number | null;
+  tier: string;
+  confidence: number | null;
+  edge_pp: number | null;
+  data_quality_tier: string | null;
+  clv_pct: number | null;
+}
+
+export interface UpsertPropInput {
+  pick_id: string;
+  sport: string;
+  game_id: string;
+  player_name: string;
+  player_id?: string | null;
+  team?: string | null;
+  opponent?: string | null;
+  market_type: string;
+  line: number;
+  side: PropSide;
+  posted_odds?: number | null;
+  posted_at?: string | null;
+  tier?: string;
+  confidence?: number | null;
+  edge_pp?: number | null;
+  data_quality_tier?: string | null;
+}
+
+// Insert or refresh a prop pick. A prop already graded (result set) is sacred and
+// never overwritten — same contract as game-line picks. Returns the pick_id.
+export function upsertPropPick(input: UpsertPropInput): string {
+  const db = gradedDb();
+  const existing = db.prepare("SELECT result FROM prop_picks WHERE pick_id = ?").get(input.pick_id) as
+    | { result: string | null }
+    | undefined;
+  if (existing && existing.result) return input.pick_id;
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO prop_picks (
+       pick_id, sport, game_id, player_name, player_id, team, opponent,
+       market_type, line, side, posted_odds, posted_at,
+       tier, confidence, edge_pp, data_quality_tier
+     ) VALUES (
+       @pick_id, @sport, @game_id, @player_name, @player_id, @team, @opponent,
+       @market_type, @line, @side, @posted_odds, @posted_at,
+       @tier, @confidence, @edge_pp, @data_quality_tier
+     )
+     ON CONFLICT(pick_id) DO UPDATE SET
+       line=@line, side=@side, posted_odds=@posted_odds,
+       tier=@tier, confidence=@confidence, edge_pp=@edge_pp,
+       data_quality_tier=@data_quality_tier`,
+  ).run({
+    pick_id: input.pick_id,
+    sport: input.sport.toLowerCase(),
+    game_id: input.game_id,
+    player_name: input.player_name,
+    player_id: input.player_id ?? null,
+    team: input.team ?? null,
+    opponent: input.opponent ?? null,
+    market_type: input.market_type,
+    line: input.line,
+    side: input.side,
+    posted_odds: input.posted_odds ?? null,
+    posted_at: input.posted_at ?? now,
+    tier: input.tier ?? "RECON",
+    confidence: input.confidence ?? null,
+    edge_pp: input.edge_pp ?? null,
+    data_quality_tier: input.data_quality_tier ?? null,
+  });
+  return input.pick_id;
+}
+
+export function getPropPick(id: string): PropPickRow | undefined {
+  return gradedDb().prepare("SELECT * FROM prop_picks WHERE pick_id = ?").get(id) as
+    | PropPickRow
+    | undefined;
+}
+
+// Active (ungraded) prop picks for a sport+date. Mirrors the slate board shape.
+export function propBoard(opts: { sport?: string | null; date?: string | null } = {}): PropPickRow[] {
+  const db = gradedDb();
+  const clauses = ["result IS NULL"];
+  const params: Record<string, unknown> = {};
+  if (opts.sport && opts.sport.toUpperCase() !== "ALL") {
+    clauses.push("sport = @sport");
+    params.sport = opts.sport.toLowerCase();
+  }
+  if (opts.date) {
+    clauses.push("substr(posted_at, 1, 10) = @date");
+    params.date = opts.date;
+  }
+  return db
+    .prepare(`SELECT * FROM prop_picks WHERE ${clauses.join(" AND ")} ORDER BY posted_at DESC`)
+    .all(params) as PropPickRow[];
+}
+
+// All graded prop picks for analytics, optional sport + since filters.
+export function gradedPropPicks(opts: { sport?: string | null; since?: string | null } = {}): PropPickRow[] {
+  const db = gradedDb();
+  const clauses = ["result IS NOT NULL"];
+  const params: Record<string, unknown> = {};
+  if (opts.sport && opts.sport.toUpperCase() !== "ALL") {
+    clauses.push("sport = @sport");
+    params.sport = opts.sport.toLowerCase();
+  }
+  if (opts.since) {
+    clauses.push("graded_at >= @since");
+    params.since = opts.since;
+  }
+  return db
+    .prepare(`SELECT * FROM prop_picks WHERE ${clauses.join(" AND ")} ORDER BY graded_at DESC`)
+    .all(params) as PropPickRow[];
+}
+
+// Persist a prop grade (result + actual stat + P/L). Idempotent at the call site.
+export function settlePropPick(
+  id: string,
+  fields: { result: PickResult; actualValue: number; plUnits: number; plDollars: number },
+): void {
+  const now = new Date().toISOString();
+  gradedDb()
+    .prepare(
+      `UPDATE prop_picks SET result=@result, actual_value=@actual_value,
+        pl_units=@pl_units, pl_dollars=@pl_dollars, graded_at=@graded_at WHERE pick_id=@id`,
+    )
+    .run({
+      id,
+      result: fields.result,
+      actual_value: fields.actualValue,
+      pl_units: fields.plUnits,
+      pl_dollars: fields.plDollars,
+      graded_at: now,
+    });
 }
 
 // Write the final-grade ledger side effects for a freshly-settled pick: append

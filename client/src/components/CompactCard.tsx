@@ -66,7 +66,16 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
       className={`flex flex-col overflow-hidden rounded-xl border bg-navy-deep ${grade ? "" : "border-card-border"} ${
         hardPass && !grade ? "opacity-55" : ""
       }`}
-      style={grade ? { borderColor: grade.borderColor, borderWidth: 2 } : undefined}
+      style={
+        grade
+          ? {
+              borderColor: grade.borderColor,
+              borderWidth: grade.isFinal ? 3 : 2,
+              boxShadow: grade.isFinal && grade.glow ? grade.glow : undefined,
+              opacity: grade.isFinal ? grade.dim : undefined,
+            }
+          : undefined
+      }
       data-testid={`compact-card-${pick.gameId}`}
     >
       {/* Brand header row: scope mark + tier wordmark + tier badge */}
@@ -86,12 +95,22 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
               <span className="font-display text-[9px] font-bold uppercase tracking-[0.18em] text-[#E8C14A]">LIVE</span>
             </span>
           )}
-          <TierPill tier={pick.verdictTier} />
+          {grade?.isFinal ? (
+            <span
+              className="rounded-full px-2 py-0.5 font-display text-[10px] font-bold uppercase tracking-[0.14em]"
+              style={{ color: "#020810", backgroundColor: grade.badgeColor }}
+              data-testid={`result-pill-${pick.gameId}`}
+            >
+              {grade.badgeText}
+            </span>
+          ) : (
+            <TierPill tier={pick.verdictTier} />
+          )}
         </div>
       </div>
 
       <div className="flex flex-col gap-2 p-3">
-        {grade && (
+        {grade && !grade.isFinal && (
           <div
             className="rounded px-2 py-0.5 font-display text-[10px] font-bold uppercase tracking-wider"
             style={{ color: "#020810", backgroundColor: grade.badgeColor }}
@@ -100,9 +119,17 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
             {grade.badgeText}
           </div>
         )}
-        {grade?.scoreLine && (
+        {grade && !grade.isFinal && grade.scoreLine && (
           <div className="text-[11px] font-medium text-foreground/90" data-testid={`grade-score-${pick.gameId}`}>
             {grade.scoreLine}
+          </div>
+        )}
+        {grade?.isFinal && grade.finalScoreLine && (
+          <div
+            className="font-display text-[15px] font-bold uppercase tracking-[0.06em] text-[#C0C6D0]"
+            data-testid={`final-score-${pick.gameId}`}
+          >
+            {grade.finalScoreLine}
           </div>
         )}
 

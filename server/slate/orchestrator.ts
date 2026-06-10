@@ -9,7 +9,7 @@ import { getSoccerSlate, getSoccerPick } from "../sports/soccer/slate";
 import { BANKROLL_USD, type BuiltPick } from "../sports/mlb/picksEngine";
 import { applyExposureCap } from "../core/sizing";
 import { persistPicks } from "../jobs/persistPicks";
-import { picksForDate, pickId, getBankrollState, type GradedPick } from "../gradedBook";
+import { picksForDate, pickId, getBankrollState, archivedPickIds, type GradedPick } from "../gradedBook";
 import type { ClvBadge } from "../sports/mlb/picksEngine";
 
 // Build the client-facing CLV badge from a graded row. Returns null until the
@@ -73,7 +73,11 @@ function applySlateExposureCap(slates: SportSlate[], bankroll: number): void {
   });
 }
 
-export async function getDailySlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<DailySlate> {
+export async function getDailySlate(
+  bankroll = BANKROLL_USD,
+  dateIso?: string,
+  opts: { excludeArchived?: boolean } = {},
+): Promise<DailySlate> {
   const [mlbR, nhlR, nbaR, soccerR] = await Promise.allSettled([
     getSlate(bankroll, dateIso),
     getNhlSlate(bankroll, dateIso),
@@ -105,6 +109,17 @@ export async function getDailySlate(bankroll = BANKROLL_USD, dateIso?: string): 
 
   const day = resolved?.value.operatingDay ?? operatingDay();
   attachGradedStatus([mlb, nhl, nba, soccer], day);
+
+  // Today's Board is in-flight only: drop graded/archived picks so settled bets
+  // move to the Archive / Yesterday / Track Record pages instead of cluttering it.
+  // Only applied to the live board (/api/slate); the Yesterday page passes a past
+  // date and needs its graded picks, so the exclusion is opt-in.
+  if (opts.excludeArchived) {
+    mlb.picks = excludeArchivedPicks(mlb.picks);
+    nhl.picks = excludeArchivedPicks(nhl.picks);
+    nba.picks = excludeArchivedPicks(nba.picks);
+    soccer.picks = excludeArchivedPicks(soccer.picks);
+  }
 
   // Sizing above used the configured (starting) bankroll; the board surfaces the
   // running bankroll, which adjusts as picks grade W/L.
@@ -177,6 +192,18 @@ export function decorateSlatePicks(picks: BuiltPick[], day: string): void {
       p.pickMl = row.pickMl;
     }
   }
+}
+
+// Remove finished/archived picks from a slate's pick list in place. Today's
+// Board is "in-flight only": a pick drops off the moment it grades to final
+// (archived_at is set on the final transition). Returns the filtered array so
+// callers that hold the reference can swap it back in.
+export function excludeArchivedPicks(picks: BuiltPick[]): BuiltPick[] {
+  const archived = archivedPickIds();
+  return picks.filter((p) => {
+    if (p.gradeStatus === "final") return false;
+    return !archived.has(pickId(p.gameId, p.pickType, p.pickSide));
+  });
 }
 
 // Look up a single pick across all four sports (for /pick/:id detail + briefs).

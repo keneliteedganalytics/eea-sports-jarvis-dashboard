@@ -13,7 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import { TIER_META, fmtUnits } from "@/lib/format";
-import type { AnalyticsPayload, Verdict } from "@/lib/types";
+import type { AnalyticsPayload, PropAnalyticsPayload, Verdict } from "@/lib/types";
 
 const AXIS = "#8892A0";
 const GRID = "#1d2740";
@@ -37,6 +37,15 @@ export default function Analytics() {
   }, [sport, tier, since]);
 
   const { data } = useQuery<AnalyticsPayload>({ queryKey: [`/api/analytics${qs}`] });
+
+  const propsQs = useMemo(() => {
+    const p = new URLSearchParams();
+    if (sport !== "ALL") p.set("sport", sport);
+    if (since) p.set("since", since);
+    const s = p.toString();
+    return s ? `?${s}` : "";
+  }, [sport, since]);
+  const { data: props } = useQuery<PropAnalyticsPayload>({ queryKey: [`/api/props/analytics${propsQs}`] });
 
   return (
     <div className="space-y-6" data-testid="analytics-page">
@@ -189,6 +198,57 @@ export default function Analytics() {
       {data && data.heatmap.length > 0 && (
         <Panel title="Hit-rate heatmap (tier × window)">
           <Heatmap cells={data.heatmap} />
+        </Panel>
+      )}
+
+      {/* Player props */}
+      {props && (
+        <Panel title="Player props">
+          {props.totalPicks === 0 ? (
+            <div className="text-xs text-muted-foreground" data-testid="props-analytics-empty">
+              No graded prop picks yet — this section populates once player props are settled.
+            </div>
+          ) : (
+            <div className="space-y-4" data-testid="props-analytics">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                <Kpi label="Prop picks" value={String(props.totalPicks)} />
+                <Kpi label="Record" value={`${props.record.wins}-${props.record.losses}-${props.record.pushes}`} />
+                <Kpi label="ROI" value={`${props.roiPct >= 0 ? "+" : ""}${props.roiPct.toFixed(1)}%`} good={props.roiPct >= 0} />
+                <Kpi label="Net units" value={fmtUnits(props.netUnits)} good={props.netUnits >= 0} />
+                <Kpi label="Mean CLV" value={`${props.clvMeanPct >= 0 ? "+" : ""}${props.clvMeanPct.toFixed(1)}%`} good={props.clvMeanPct >= 0} />
+              </div>
+              {props.byMarket.length > 0 && (
+                <div className="overflow-x-auto" data-testid="props-by-market">
+                  <table className="w-full text-left text-[11px]">
+                    <thead>
+                      <tr className="text-muted-foreground">
+                        <th className="py-1 pr-3">Market</th>
+                        <th className="py-1 pr-3">Bets</th>
+                        <th className="py-1 pr-3">W-L-P</th>
+                        <th className="py-1 pr-3">ROI</th>
+                        <th className="py-1">Net units</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {props.byMarket.map((m) => (
+                        <tr key={m.market_type} className="border-t border-card-border">
+                          <td className="py-1.5 pr-3 font-medium text-foreground">{m.market_type}</td>
+                          <td className="py-1.5 pr-3 tabular-nums">{m.bets}</td>
+                          <td className="py-1.5 pr-3 tabular-nums">{m.wins}-{m.losses}-{m.pushes}</td>
+                          <td className={`py-1.5 pr-3 tabular-nums ${m.roiPct >= 0 ? "text-tier-bonus" : "text-trap"}`}>
+                            {m.roiPct >= 0 ? "+" : ""}{m.roiPct.toFixed(1)}%
+                          </td>
+                          <td className={`py-1.5 tabular-nums ${m.netUnits >= 0 ? "text-tier-bonus" : "text-trap"}`}>
+                            {fmtUnits(m.netUnits)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </Panel>
       )}
     </div>

@@ -262,3 +262,92 @@ export interface AnalyticsPayload {
   heatmap: AnalyticsHeatCell[];
   clv: ClvAggregate;
 }
+
+export interface ArchiveItem {
+  pick_id: string;
+  sport: string;
+  graded_at: string;
+  pick_label: string;
+  tier: string;
+  result: "W" | "L" | "P";
+  stake_units: number;
+  stake_dollars: number;
+  pl_units: number;
+  pl_dollars: number;
+  posted_odds: number | null;
+  closing_odds: number | null;
+  clv_pct: number | null;
+  final_score: string | null;
+}
+
+export interface ArchivePage {
+  items: ArchiveItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PropRecord {
+  wins: number;
+  losses: number;
+  pushes: number;
+}
+
+export interface PropMarketBreakdown extends PropRecord {
+  market_type: string;
+  bets: number;
+  roiPct: number;
+  netUnits: number;
+}
+
+export interface PropPlayerBreakdown extends PropRecord {
+  player_name: string;
+  bets: number;
+  netUnits: number;
+}
+
+export interface PropLineDistanceBucket {
+  label: string;
+  decided: number;
+  hitRatePct: number;
+}
+
+export interface PropDataQualityBreakdown extends PropRecord {
+  data_quality_tier: string;
+  bets: number;
+}
+
+export interface PropAnalyticsPayload {
+  totalPicks: number;
+  record: PropRecord;
+  roiPct: number;
+  netUnits: number;
+  clvMeanPct: number;
+  byMarket: PropMarketBreakdown[];
+  byPlayer: PropPlayerBreakdown[];
+  byLineDistance: PropLineDistanceBucket[];
+  byDataQuality: PropDataQualityBreakdown[];
+}
+
+export interface PropBoardItem {
+  pick_id: string;
+  sport: string;
+  game_id: string;
+  player_name: string;
+  team: string | null;
+  opponent: string | null;
+  market_type: string;
+  line: number;
+  side: "over" | "under";
+  posted_odds: number | null;
+  tier: string;
+  confidence: number | null;
+  edge_pp: number | null;
+  data_quality_tier: string | null;
+}
+
+export interface PropBoardPayload {
+  sport: string;
+  date: string | null;
+  items: PropBoardItem[];
+}
