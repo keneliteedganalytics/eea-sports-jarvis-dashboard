@@ -21,10 +21,18 @@ export function normalizeTeamName(name: string): string {
     .trim();
 }
 
-// True when two team names refer to the same club. We accept either an exact
-// normalized match or a containment match in either direction (so "Yankees"
-// matches "New York Yankees" and vice-versa). The nickname (last token) is also
-// compared, which handles "NY Yankees" vs "New York Yankees".
+// True when two team names refer to the same club. We accept an exact normalized
+// match, a substring-containment match in either direction ("Yankees" ⊂ "New
+// York Yankees", "Red Sox" ⊂ "Boston Red Sox"), or a guarded nickname-tail match
+// for initialisms like "NY Yankees" ↔ "New York Yankees".
+//
+// The tail match is GUARDED to avoid a CRITICAL false positive: "Chicago White
+// Sox" and "Boston Red Sox" share the tail "sox", which previously made a White
+// Sox pick resolve to the Red Sox game; when that game was Final the prop was
+// falsely graded (the v6.7.3 corruption). We only allow a tail match when the
+// two names do NOT carry conflicting qualifier tokens before the shared tail
+// (e.g. "white" vs "red"): if each name has a distinct word the other lacks, the
+// shared nickname is a coincidence (two "Sox" clubs), not the same team.
 export function teamNamesMatch(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
   const na = normalizeTeamName(a);
@@ -32,9 +40,27 @@ export function teamNamesMatch(a: string | null | undefined, b: string | null | 
   if (!na || !nb) return false;
   if (na === nb) return true;
   if (na.includes(nb) || nb.includes(na)) return true;
-  const tailA = na.split(" ").pop()!;
-  const tailB = nb.split(" ").pop()!;
-  return tailA.length >= 3 && tailA === tailB;
+
+  const tokensA = na.split(" ");
+  const tokensB = nb.split(" ");
+  const tailA = tokensA[tokensA.length - 1];
+  const tailB = tokensB[tokensB.length - 1];
+  if (tailA.length < 3 || tailA !== tailB) return false;
+
+  // Shared tail. Compare the city/qualifier words before the nickname.
+  const bodyA = tokensA.slice(0, -1);
+  const bodyB = tokensB.slice(0, -1);
+  const setA = new Set(bodyA);
+  const setB = new Set(bodyB);
+  const aHasUnique = bodyA.some((t) => !setB.has(t));
+  const bHasUnique = bodyB.some((t) => !setA.has(t));
+  // Only one side carries extra words ("red sox" vs just "sox") → same club.
+  if (!(aHasUnique && bHasUnique)) return true;
+  // Both sides have distinct words. Same club ONLY if one body is an initialism
+  // of the other ("ny" ↔ "new york"); otherwise it's two clubs sharing a
+  // nickname ("white sox" vs "red sox") and must NOT match.
+  const initials = (parts: string[]): string => parts.map((p) => p[0] ?? "").join("");
+  return initials(bodyA) === bodyB.join("") || initials(bodyB) === bodyA.join("");
 }
 
 export interface EventTeams {

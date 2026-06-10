@@ -277,21 +277,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         side: string | null;
         line: number | null;
       }>;
-    const details = rows.map((r) => {
-      const resultM = /result=(\w+)/.exec(r.reason);
-      const plM = /pl_dollars=(-?[\d.]+)/.exec(r.reason);
-      const statusM = /gameStatus=(\w+)/.exec(r.reason);
-      return {
-        pick_id: r.pick_id,
-        player: r.player,
-        market: r.market,
-        side: r.side,
-        line: r.line,
-        originalResult: resultM ? resultM[1] : null,
-        originalPlDollars: plM ? Number(plM[1]) : null,
-        gameStatusAtUnwind: statusM ? statusM[1] : null,
-      };
-    });
+    // A pick can be unwound on more than one tick (e.g. if a re-grade slipped in
+    // between ticks before the tracker fix), so dedupe to the FIRST unwind per
+    // distinct pick_id — that carries the original phantom credit. This keeps
+    // picksUnwound + bankrollAdjustment equal to the real corruption, not the
+    // count of audit rows.
+    const seen = new Set<string>();
+    const details = rows
+      .filter((r) => {
+        if (seen.has(r.pick_id)) return false;
+        seen.add(r.pick_id);
+        return true;
+      })
+      .map((r) => {
+        const resultM = /result=(\w+)/.exec(r.reason);
+        const plM = /pl_dollars=(-?[\d.]+)/.exec(r.reason);
+        const statusM = /gameStatus=(\w+)/.exec(r.reason);
+        return {
+          pick_id: r.pick_id,
+          player: r.player,
+          market: r.market,
+          side: r.side,
+          line: r.line,
+          originalResult: resultM ? resultM[1] : null,
+          originalPlDollars: plM ? Number(plM[1]) : null,
+          gameStatusAtUnwind: statusM ? statusM[1] : null,
+        };
+      });
     const bankrollAdjustment = details.reduce((s, d) => s + (d.originalPlDollars ?? 0), 0);
     res.json({
       ran: flag.ran,

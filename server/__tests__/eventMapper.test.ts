@@ -72,6 +72,26 @@ test("teamNamesMatch: null/empty is false", () => {
   assert.equal(teamNamesMatch("Yankees", undefined), false);
 });
 
+// v6.7.5 regression: the shared-nickname false positive that drove the v6.7.3
+// false grades. "Chicago White Sox" and "Boston Red Sox" share the tail "Sox";
+// the old tail match treated them as the same club, so a White Sox pick resolved
+// to the Red Sox game — and when that game was Final, the prop was falsely graded.
+test("teamNamesMatch: two 'Sox' clubs must NOT match (v6.7.3 root cause)", () => {
+  assert.equal(teamNamesMatch("Chicago White Sox", "Boston Red Sox"), false);
+  assert.equal(teamNamesMatch("White Sox", "Red Sox"), false);
+  // Same club via city/nickname containment still matches.
+  assert.equal(teamNamesMatch("White Sox", "Chicago White Sox"), true);
+  assert.equal(teamNamesMatch("Red Sox", "Boston Red Sox"), true);
+});
+
+test("resolveGamePk: a White Sox pick resolves the White Sox game, not the Red Sox game", () => {
+  const sched = [
+    game({ gamePk: "REDSOX", homeTeamFull: "Tampa Bay Rays", awayTeamFull: "Boston Red Sox" }),
+    game({ gamePk: "WHITESOX", homeTeamFull: "Chicago White Sox", awayTeamFull: "Atlanta Braves" }),
+  ];
+  assert.equal(resolveGamePk({ team: "Chicago White Sox", opponent: "Atlanta Braves" }, sched), "WHITESOX");
+});
+
 test("resolveGamePk: exact home-team match", () => {
   const sched = [game({ gamePk: "G1" }), game({ gamePk: "G2", homeTeamFull: "Chicago Cubs", awayTeamFull: "Milwaukee Brewers" })];
   assert.equal(resolveGamePk({ team: "New York Yankees", opponent: null }, sched), "G1");
