@@ -16,6 +16,7 @@ process.env.GRADED_BOOK_PATH = path.join(tmpDir, "test_book.db");
 process.env.ADMIN_PIN = "5811";
 
 const { upsertPick, adminLockWithOverride, gradedDb, pickId } = await import("../gradedBook");
+import type { SeedBuiltPick, SeedLookup } from "../gradedBook";
 
 // Mirror the route + gate from server/routes.ts (kept tiny + self-contained).
 const ADMIN_PIN = process.env.ADMIN_PIN || "5811";
@@ -24,14 +25,21 @@ const adminLockBody = z.object({
   odds: z.number().optional(),
   stake: z.number().optional(),
   reason: z.string().min(1),
+  seedFromLive: z.boolean().optional(),
 });
+
+// Stub the live slate engine. Keyed by composite id; returns a known BuiltPick so
+// the seed-from-live path can hydrate a row that persistPicks never wrote.
+const livePicks = new Map<string, SeedBuiltPick>();
+const seedLookup: SeedLookup = async (id) => livePicks.get(id) ?? null;
+
 const app = express();
 app.use(express.json());
-app.post("/api/picks/:id/admin-lock", (req, res) => {
+app.post("/api/picks/:id/admin-lock", async (req, res) => {
   if (req.header("x-admin-pin") !== ADMIN_PIN) return res.status(403).json({ message: "admin pin required" });
   const parsed = adminLockBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: "invalid body", issues: parsed.error.issues });
-  const result = adminLockWithOverride(String(req.params.id), parsed.data);
+  const result = await adminLockWithOverride(String(req.params.id), parsed.data, seedLookup);
   if (!result) return res.status(404).json({ message: "pick not found" });
   res.json(result);
 });
@@ -115,6 +123,62 @@ await test("with pin → overrides tier/odds, locks the row, writes an audit row
   const rows = gradedDb().prepare("SELECT * FROM pick_audit WHERE pickId = ?").all(id) as Array<{ toTier: string }>;
   assert.equal(rows.length, 1);
   assert.equal(rows[0].toTier, "EDGE");
+});
+
+await test("missing id + seedFromLive omitted → still 404 (no behavior change)", async () => {
+  const res = await fetch(`${base}/api/picks/wasGame1:ML:away/admin-lock`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-admin-pin": "5811" },
+    body: JSON.stringify({ tier: "EDGE", odds: -110, reason: "no seed" }),
+  });
+  assert.equal(res.status, 404);
+  // Nothing inserted.
+  const row = gradedDb().prepare("SELECT * FROM picks WHERE id = ?").get("wasGame1:ML:away");
+  assert.equal(row, undefined);
+});
+
+await test("missing id + seedFromLive=true → hydrates from live, inserts with override, locks, audits", async () => {
+  const seedId = pickId("wasGame1", "ML", "away");
+  // The live engine now scores this PASS at 0 units, so persistPicks never wrote
+  // it. The original locked-in bet was DUAL at +120.
+  livePicks.set(seedId, {
+    gameId: "wasGame1", sport: "mlb", gameDate: "2026-06-09", gameTimeEt: "7:05 PM ET",
+    matchup: "WSH @ NYM", homeTeam: "NYM", awayTeam: "WSH",
+    homeTeamFull: "New York Mets", awayTeamFull: "Washington Nationals",
+    pickSide: "away", pickTeam: "WSH", pickTeamFull: "Washington Nationals", pickType: "ML",
+    pickMl: 130, pickBook: "FD", verdictTier: "PASS", units: 0, kellyStakeDollars: 0,
+    pickWinProb: 0.44, pickImpliedProb: 0.435, edgePp: 0.5, evPer100: 1, confidence: 51, fairMl: 125,
+  });
+
+  const res = await fetch(`${base}/api/picks/${encodeURIComponent(seedId)}/admin-lock`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-admin-pin": "5811" },
+    body: JSON.stringify({ tier: "DUAL", odds: 120, stake: 150, seedFromLive: true, reason: "original bet was DUAL +120" }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  // Row was inserted and locked with the override applied on top of live values.
+  assert.equal(body.pick.locked, 1);
+  assert.equal(body.pick.tier, "DUAL");
+  assert.equal(body.pick.lockedTier, "DUAL");
+  assert.equal(body.pick.lockedOdds, 120);
+  assert.equal(body.pick.lockedStake, 150);
+  assert.equal(body.pick.pickType, "ML");
+  assert.equal(body.pick.pickLine, null);
+  assert.ok(body.pick.lockedAt);
+
+  // Audit row written for the seeded lock.
+  assert.equal(body.audit.pickId, seedId);
+  assert.equal(body.audit.action, "admin-lock");
+  assert.equal(body.audit.toTier, "DUAL");
+  assert.equal(body.audit.reason, "original bet was DUAL +120");
+
+  // Row actually persisted in the book.
+  const row = gradedDb().prepare("SELECT * FROM picks WHERE id = ?").get(seedId) as { tier: string; locked: number; pickLine: number | null };
+  assert.equal(row.tier, "DUAL");
+  assert.equal(row.locked, 1);
+  assert.equal(row.pickLine, null);
 });
 
 await test("400 when the body is invalid (bad tier)", async () => {

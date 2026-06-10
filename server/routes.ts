@@ -44,6 +44,7 @@ const adminLockBody = z.object({
   odds: z.number().optional(),
   stake: z.number().optional(),
   reason: z.string().min(1),
+  seedFromLive: z.boolean().optional(),
 });
 
 function bankroll(): number {
@@ -149,11 +150,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // For repairing a pick whose stored tier was clobbered by a recompute before
   // the user locked it. Records the change in pick_audit. PIN-gated (403 on
   // failure). Returns the frozen pick + the audit row.
-  app.post("/api/picks/:id/admin-lock", (req: Request, res: Response) => {
+  app.post("/api/picks/:id/admin-lock", async (req: Request, res: Response) => {
     if (!requireAdminPinForbidden(req, res)) return;
     const parsed = adminLockBody.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "invalid body", issues: parsed.error.issues });
-    const result = adminLockWithOverride(String(req.params.id), parsed.data);
+    const result = await adminLockWithOverride(String(req.params.id), parsed.data);
     if (!result) return res.status(404).json({ message: "pick not found" });
     res.json(result);
   });
