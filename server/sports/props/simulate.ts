@@ -102,6 +102,7 @@ export interface SimDistribution {
   p25: number;
   p75: number;
   mean: number;
+  stdDev: number; // population standard deviation of the trial outcomes
   // P(X > line), P(X == line) for half-push handling; computed by the edge step,
   // but we expose the raw sorted samples count helpers here.
   samples: number[]; // sorted ascending (kept for percentile + over/under counts)
@@ -115,13 +116,16 @@ function percentile(sorted: number[], p: number): number {
 
 function summarize(samples: number[]): SimDistribution {
   const sorted = [...samples].sort((x, y) => x - y);
-  const mean = sorted.reduce((s, v) => s + v, 0) / Math.max(1, sorted.length);
+  const n = Math.max(1, sorted.length);
+  const mean = sorted.reduce((s, v) => s + v, 0) / n;
+  const variance = sorted.reduce((s, v) => s + (v - mean) ** 2, 0) / n;
   return {
     trials: sorted.length,
     median: percentile(sorted, 0.5),
     p25: percentile(sorted, 0.25),
     p75: percentile(sorted, 0.75),
     mean: Math.round(mean * 1000) / 1000,
+    stdDev: Math.round(Math.sqrt(variance) * 1000) / 1000,
     samples: sorted,
   };
 }

@@ -384,6 +384,22 @@ export interface PropBoardItem {
   market_label: string | null;
   stake_units: number | null;
   hundred_club: number | null;
+  // v6.7.3 live in-game tracking (merged from /api/props/live; absent → pending).
+  liveState?: "pending" | "live_clear" | "busted" | "paid";
+  currentValue?: number | null;
+  gameStatus?: "scheduled" | "live" | "final" | null;
+}
+
+export interface PropLiveTracking {
+  liveState: "pending" | "live_clear" | "busted" | "paid";
+  currentValue: number | null;
+  gameStatus: "scheduled" | "live" | "final" | null;
+  lastUpdated: string | null;
+}
+
+export interface PropLivePayload {
+  date: string;
+  tracking: Record<string, PropLiveTracking>;
 }
 
 export interface PropBoardPayload {

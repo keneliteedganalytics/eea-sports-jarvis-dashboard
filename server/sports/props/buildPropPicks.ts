@@ -11,6 +11,7 @@ import {
   propOffersForDate,
   upsertPropPick,
   setPropOfferPlayerId,
+  insertPropAudit,
   type PropOfferRow,
 } from "../../gradedBook";
 import { fetchSchedule } from "../../adapters/mlbStats";
@@ -19,6 +20,7 @@ import { parkFactorForTeam } from "../mlb/weather";
 import { nameToAbbr } from "../mlb/teams";
 import { fetchBatterProfile, fetchPitcherProfile } from "./mlbStatsProps";
 import { resolveMlbPlayerId } from "./playerResolver";
+import { findGameForEvent, lineupSpotFor } from "./eventMapper";
 import {
   simulate,
   isPitcherMarket,
@@ -193,27 +195,31 @@ export interface GroupedOffer {
   line: number; // consensus line (most common across books)
   quotes: BookQuote[];
   playerId: number | null; // resolved MLB Stats id if a prior cycle persisted it
+  eventHome: string | null; // Odds API event home team (full name) — game locator
+  eventAway: string | null; // Odds API event away team (full name) — game locator
 }
 
 // Collapse per-book offer rows into one quote set per (event, player, market),
 // keyed line = the modal line across books. Carries through any player_id already
 // persisted on the rows (stored as TEXT) so a resolved id survives across cycles.
 export function groupOffers(offers: PropOfferRow[]): GroupedOffer[] {
-  const by = new Map<string, { ev: string; player: string; market: string; lines: number[]; quotes: BookQuote[]; playerId: number | null }>();
+  const by = new Map<string, { ev: string; player: string; market: string; lines: number[]; quotes: BookQuote[]; playerId: number | null; eventHome: string | null; eventAway: string | null }>();
   for (const o of offers) {
     const k = `${o.event_id}|${o.player_name}|${o.market}`;
-    const g = by.get(k) ?? { ev: o.event_id, player: o.player_name, market: o.market, lines: [], quotes: [], playerId: null };
+    const g = by.get(k) ?? { ev: o.event_id, player: o.player_name, market: o.market, lines: [], quotes: [], playerId: null, eventHome: null, eventAway: null };
     g.lines.push(o.line);
     g.quotes.push({ book: o.book, overPrice: o.over_price, underPrice: o.under_price });
     if (g.playerId == null && o.player_id != null) {
       const parsed = Number(o.player_id);
       if (Number.isFinite(parsed) && parsed > 0) g.playerId = parsed;
     }
+    if (g.eventHome == null && o.event_home) g.eventHome = o.event_home;
+    if (g.eventAway == null && o.event_away) g.eventAway = o.event_away;
     by.set(k, g);
   }
   const out: GroupedOffer[] = [];
   for (const g of by.values()) {
-    out.push({ eventId: g.ev, player: g.player, market: g.market, line: modal(g.lines), quotes: g.quotes, playerId: g.playerId });
+    out.push({ eventId: g.ev, player: g.player, market: g.market, line: modal(g.lines), quotes: g.quotes, playerId: g.playerId, eventHome: g.eventHome, eventAway: g.eventAway });
   }
   return out;
 }
@@ -236,6 +242,7 @@ function modal(xs: number[]): number {
 
 export interface MatchupBundle {
   context: MatchupContext;
+  team: string | null;
   opponent: string | null;
 }
 
@@ -278,9 +285,9 @@ export async function buildMlbPropPicks(
   const grouped = groupOffers(offers);
   if (grouped.length === 0) return { date, considered: 0, written: 0, pickIds: [] };
 
-  // Schedule gives us venue (park factor) + opposing probable pitcher per event.
-  const schedule = await deps.schedule(date).catch(() => []);
-  const eventMeta = new Map<string, { homeAbbr: string; awayAbbr: string; venue: string; homePid: number | null; awayPid: number | null }>();
+  // Schedule gives us venue (park factor) + opposing probable pitcher + posted
+  // batting orders (for lineup-spot resolution) per event.
+  const schedule = await deps.schedule(date, { includeLineups: true }).catch(() => []);
 
   type Candidate = {
     pickId: string;
@@ -300,16 +307,6 @@ export async function buildMlbPropPicks(
   for (const g of grouped) {
     const market = g.market as PropMarket;
     if (!isBatterMarket(market) && !isPitcherMarket(market)) continue;
-
-    // Build the matchup context (park factor from the event's home venue; the
-    // opposing pitcher FIP for batter markets). Best-effort; defaults to neutral.
-    const matchup = await buildMatchup(market, g, schedule).catch(() => null);
-    const ctx: MatchupContext = matchup?.context ?? {
-      oppFipRatio: 1,
-      parkFactor: 1,
-      lineupSpot: 5,
-      oppLineupKFactor: 1,
-    };
 
     // Player profile (game logs + season). Skip when unavailable — no fabrication.
     let batterLogs = 0;
@@ -336,6 +333,18 @@ export async function buildMlbPropPicks(
       }
     }
 
+    // Build the matchup context (park factor from the event's home venue, the
+    // opposing pitcher FIP for batter markets, and the player's lineup spot from
+    // the posted batting order). The event→gamePk join now uses team matching
+    // (v6.7.3) instead of the broken `gamePk === eventId` compare. Neutral fallback.
+    const matchup = await buildMatchup(market, g, schedule, playerId).catch(() => null);
+    const ctx: MatchupContext = matchup?.context ?? {
+      oppFipRatio: 1,
+      parkFactor: 1,
+      lineupSpot: 5,
+      oppLineupKFactor: 1,
+    };
+
     if (isBatterMarket(market)) {
       const profile = await deps.batterProfile(playerId, g.player, 20).catch(() => null);
       if (!profile || !profile.available) continue;
@@ -359,6 +368,23 @@ export async function buildMlbPropPicks(
 
     const edge = computePropEdge(sim.distribution, g.line, g.quotes);
     if (!edge) continue;
+
+    // Model-outlier sanity gate (v6.7.3). A double-digit-plus edge whose median
+    // sits far from the line relative to the simulated spread is almost always a
+    // thin-sample artifact, not a real edge. PASS it and record the reason so the
+    // filtered set is queryable (SELECT * FROM pick_audit WHERE reason='model_outlier').
+    if (
+      edge.edgePp > 20 &&
+      Math.abs(sim.distribution.median - g.line) > sim.distribution.stdDev * 0.5
+    ) {
+      const auditId = `${g.eventId}:${market}:${g.player}:${edge.side}`;
+      try {
+        insertPropAudit(auditId, "prop-build", "model_outlier");
+      } catch {
+        // audit logging is best-effort; never block the build on it
+      }
+      continue;
+    }
 
     const dq = dataQualityTier(market, isBatterMarket(market) ? batterLogs : pitcherStarts, hasSeason);
     if (!qualifiesAsPick(edge, dq)) continue;
@@ -389,7 +415,7 @@ export async function buildMlbPropPicks(
       confidence,
       sampleSize,
       dq,
-      team: matchup?.context ? null : null,
+      team: matchup?.team ?? null,
       opponent: matchup?.opponent ?? null,
     });
   }
@@ -437,35 +463,71 @@ export async function buildMlbPropPicks(
   return { date, considered: candidates.length, written: pickIds.length, pickIds };
 }
 
-// Build matchup context for a market+offer using the schedule (park factor +
-// opposing probable pitcher FIP for batter markets).
+// Build matchup context for a market+offer using the schedule. The event→game
+// join matches the offer's team(s) against the schedule (v6.7.3 — the prior
+// `gamePk === eventId` compare never matched, since eventId is an Odds API hash).
+// Park factor comes from the actual home venue; the opposing-pitcher FIP is the
+// arm on the OTHER side from the player's team; the lineup spot comes from the
+// posted batting order for the player's side (fallback 5).
 async function buildMatchup(
   market: PropMarket,
   offer: GroupedOffer,
   schedule: import("../../adapters/mlbStats").ScheduleGame[],
+  playerId: number | null,
 ): Promise<MatchupBundle> {
-  const game = schedule.find((s) => s.gamePk === offer.eventId) ?? schedule[0];
+  // Locate the MLB game by the event's two clubs (the Odds event id is a hash).
+  const matched = findGameForEvent({ team: offer.eventHome, opponent: offer.eventAway }, schedule);
+
   let parkFactor = 1;
+  let team: string | null = null;
   let opponent: string | null = null;
   let oppFipRatio = 1;
+  let lineupSpot = 5;
 
-  if (game) {
-    parkFactor = parkFactorForTeam(nameToAbbr(game.homeTeamFull));
-    opponent = game.awayTeamFull;
-    // For a batter market, the relevant arm is the opposing probable starter.
-    // We don't know which team the batter is on without a roster join, so use
-    // the higher-FIP-impact side conservatively: pull the home starter's FIP as
-    // the matchup arm (best-effort; neutral when unavailable).
-    if (isBatterMarket(market) && game.homePitcherId) {
-      const sp = await fetchPitcherStats(game.homePitcherId, game.homePitcher).catch(() => null);
-      if (sp?.fip != null && sp.fip > 0) {
-        oppFipRatio = clamp(sp.fip / 4.0, 0.7, 1.4);
+  if (matched) {
+    parkFactor = parkFactorForTeam(nameToAbbr(matched.homeTeamFull));
+
+    // The props feed doesn't tell us the player's team, so place the player by
+    // which posted batting order contains the resolved id. Falls back to "home"
+    // for the opponent label (best-effort) when the lineup isn't posted yet.
+    const homeSpot = lineupSpotFor(playerId, "home", matched);
+    const awaySpot = lineupSpotFor(playerId, "away", matched);
+    let side: "home" | "away" | null = null;
+    if (homeSpot != null) {
+      side = "home";
+      lineupSpot = homeSpot;
+    } else if (awaySpot != null) {
+      side = "away";
+      lineupSpot = awaySpot;
+    }
+
+    if (side === "home") {
+      team = matched.homeTeamFull;
+      opponent = matched.awayTeamFull;
+    } else if (side === "away") {
+      team = matched.awayTeamFull;
+      opponent = matched.homeTeamFull;
+    } else {
+      opponent = matched.awayTeamFull;
+    }
+
+    // For a batter market, the relevant arm is the OPPOSING probable starter.
+    // When we couldn't place the player's side, default to the home starter.
+    if (isBatterMarket(market)) {
+      const oppPid = side === "away" ? matched.homePitcherId : matched.awayPitcherId;
+      const oppName = side === "away" ? matched.homePitcher : matched.awayPitcher;
+      if (oppPid) {
+        const sp = await fetchPitcherStats(oppPid, oppName).catch(() => null);
+        if (sp?.fip != null && sp.fip > 0) {
+          oppFipRatio = clamp(sp.fip / 4.0, 0.7, 1.4);
+        }
       }
     }
   }
   return {
+    team,
     opponent,
-    context: { oppFipRatio, parkFactor, lineupSpot: 5, oppLineupKFactor: 1 },
+    context: { oppFipRatio, parkFactor, lineupSpot, oppLineupKFactor: 1 },
   };
 }
 

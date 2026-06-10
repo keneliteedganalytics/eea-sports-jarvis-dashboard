@@ -322,6 +322,20 @@ export function gradedDb(): Database.Database {
     market_label: "TEXT",
     stake_units: "REAL",
     hundred_club: "INTEGER NOT NULL DEFAULT 0",
+    // v6.7.3 live in-game tracking: the current live disposition of the prop
+    // vs. its line (pending | live_clear | busted | paid) and the latest observed
+    // in-game stat value. Written by the live prop tracker worker.
+    live_state: "TEXT",
+    live_value: "REAL",
+    live_updated_at: "TEXT",
+  });
+  // v6.7.3: store the Odds API event's home/away team names on each offer so the
+  // event→MLB-gamePk mapper can locate the game by team (the Odds event id is a
+  // hash, not a gamePk). The player's own team is not available from the props
+  // feed, so we carry the game's two clubs instead.
+  ensureColumns(sqlite, "prop_offers", {
+    event_home: "TEXT",
+    event_away: "TEXT",
   });
   _db = sqlite;
   initBankrollState(sqlite);
@@ -746,6 +760,10 @@ export interface PropPickRow {
   market_label: string | null;
   stake_units: number | null;
   hundred_club: number | null;
+  // v6.7.3 live tracking.
+  live_state: string | null;
+  live_value: number | null;
+  live_updated_at: string | null;
 }
 
 export interface UpsertPropInput {
@@ -911,6 +929,43 @@ export function settlePropPick(
     });
 }
 
+// Dollars per unit for prop staking (display + bankroll). One unit = $375.
+export const PROP_UNIT_DOLLARS = 375;
+
+// Grade a prop to final AND apply the result to the running bankroll, exactly
+// once. Idempotent: if the pick is already graded (result set) this is a no-op,
+// so the live tracker can call it on every terminal observation without
+// double-counting. Returns true when it applied a fresh grade. Dollar stake is
+// stake_units × $375; P/L units come from the American payout.
+export function settlePropPickWithBankroll(
+  id: string,
+  result: PickResult,
+  actualValue: number,
+  plUnitsValue: number,
+): boolean {
+  const db = gradedDb();
+  const existing = db.prepare("SELECT result, stake_units, posted_odds FROM prop_picks WHERE pick_id = ?").get(id) as
+    | { result: string | null; stake_units: number | null; posted_odds: number | null }
+    | undefined;
+  if (!existing || existing.result) return false; // unknown or already graded
+  const stakeUnits = existing.stake_units ?? 0;
+  const stakeDollars = stakeUnits * PROP_UNIT_DOLLARS;
+  const plDollars =
+    result === "W"
+      ? Math.round(plUnitsValue * PROP_UNIT_DOLLARS * 100) / 100
+      : result === "L"
+        ? -stakeDollars
+        : 0;
+  settlePropPick(id, { result, actualValue, plUnits: plUnitsValue, plDollars });
+  applyGradeToBankroll(db, {
+    result,
+    stakeDollars,
+    plUnits: plUnitsValue,
+    americanOdds: existing.posted_odds,
+  });
+  return true;
+}
+
 // ── Prop offers (raw multi-book quotes) ─────────────────────────────────────
 // Storage for the line-shopping table. One row per book per market per player;
 // re-ingesting the same quote upserts it. Not graded — these are pre-pick.
@@ -922,6 +977,8 @@ export interface PropOfferRow {
   player_name: string;
   player_id: string | null;
   team: string | null;
+  event_home: string | null;
+  event_away: string | null;
   market: string;
   line: number;
   over_price: number | null;
@@ -937,6 +994,8 @@ export interface UpsertPropOfferInput {
   player_name: string;
   player_id?: string | null;
   team?: string | null;
+  event_home?: string | null;
+  event_away?: string | null;
   market: string;
   line: number;
   over_price?: number | null;
@@ -949,14 +1008,17 @@ export function upsertPropOffer(input: UpsertPropOfferInput): void {
     .prepare(
       `INSERT INTO prop_offers (
          event_id, sport, game_date, player_name, player_id, team,
+         event_home, event_away,
          market, line, over_price, under_price, book, fetched_at
        ) VALUES (
          @event_id, @sport, @game_date, @player_name, @player_id, @team,
+         @event_home, @event_away,
          @market, @line, @over_price, @under_price, @book, @fetched_at
        )
        ON CONFLICT(event_id, market, player_name, book) DO UPDATE SET
          line=@line, over_price=@over_price, under_price=@under_price,
-         game_date=@game_date, team=@team, player_id=@player_id, fetched_at=@fetched_at`,
+         game_date=@game_date, team=@team, player_id=@player_id,
+         event_home=@event_home, event_away=@event_away, fetched_at=@fetched_at`,
     )
     .run({
       event_id: input.event_id,
@@ -965,6 +1027,8 @@ export function upsertPropOffer(input: UpsertPropOfferInput): void {
       player_name: input.player_name,
       player_id: input.player_id ?? null,
       team: input.team ?? null,
+      event_home: input.event_home ?? null,
+      event_away: input.event_away ?? null,
       market: input.market,
       line: input.line,
       over_price: input.over_price ?? null,
@@ -1062,6 +1126,91 @@ export function setPropOfferPlayerId(
 // Wipe offers for a date before a fresh ingest (offers are quotes, not a ledger).
 export function clearPropOffersForDate(date: string): void {
   gradedDb().prepare("DELETE FROM prop_offers WHERE game_date = ?").run(date);
+}
+
+// ── Live prop tracking (v6.7.3) ─────────────────────────────────────────────
+
+// Write the live disposition of a prop vs. its line. Never touches a graded row
+// (result set) — a settled prop's live_state is frozen. Best-effort: a missing
+// pick is a no-op.
+export function updatePropPickLiveState(
+  pickId: string,
+  liveState: string,
+  currentValue: number | null,
+): void {
+  gradedDb()
+    .prepare(
+      `UPDATE prop_picks
+          SET live_state = @live_state,
+              live_value = @live_value,
+              live_updated_at = @now
+        WHERE pick_id = @pick_id`,
+    )
+    .run({
+      pick_id: pickId,
+      live_state: liveState,
+      live_value: currentValue,
+      now: new Date().toISOString(),
+    });
+}
+
+export interface PropLiveStateRow {
+  pick_id: string;
+  live_state: string | null;
+  live_value: number | null;
+  live_updated_at: string | null;
+}
+
+// All live-state snapshots for a slate date. prop_picks has no game_date column,
+// so resolve the slate date by joining the pick's game_id to the offer's
+// game_date (same approach as countPropPicksForDate).
+export function getPropPickLiveStates(date: string, sport?: string | null): PropLiveStateRow[] {
+  const db = gradedDb();
+  const clauses = ["o.game_date = @date"];
+  const params: Record<string, unknown> = { date };
+  if (sport && sport.toUpperCase() !== "ALL") {
+    clauses.push("p.sport = @sport");
+    params.sport = sport.toLowerCase();
+  }
+  return db
+    .prepare(
+      `SELECT DISTINCT p.pick_id AS pick_id, p.live_state AS live_state,
+              p.live_value AS live_value, p.live_updated_at AS live_updated_at
+         FROM prop_picks p
+         JOIN prop_offers o ON o.event_id = p.game_id
+        WHERE ${clauses.join(" AND ")}`,
+    )
+    .all(params) as PropLiveStateRow[];
+}
+
+// Active (ungraded) prop picks whose game falls on a date — the set the live
+// tracker polls. Joins offers for the slate date the same way as the counters.
+export function activePropPicksForDate(date: string, sport?: string | null): PropPickRow[] {
+  const db = gradedDb();
+  const clauses = ["o.game_date = @date", "p.result IS NULL"];
+  const params: Record<string, unknown> = { date };
+  if (sport && sport.toUpperCase() !== "ALL") {
+    clauses.push("p.sport = @sport");
+    params.sport = sport.toLowerCase();
+  }
+  return db
+    .prepare(
+      `SELECT DISTINCT p.* FROM prop_picks p
+         JOIN prop_offers o ON o.event_id = p.game_id
+        WHERE ${clauses.join(" AND ")}`,
+    )
+    .all(params) as PropPickRow[];
+}
+
+// Record a prop-build decision in the audit log (e.g. a model-outlier PASS).
+// Reuses the pick_audit table; tier/odds fields are nulled for non-lock actions.
+export function insertPropAudit(pickId: string, action: string, reason: string): void {
+  gradedDb()
+    .prepare(
+      `INSERT INTO pick_audit (pickId, action, fromTier, toTier, fromOdds, toOdds, reason, createdAt)
+       VALUES (@pickId, @action, NULL, NULL, NULL, NULL, @reason, @createdAt)`,
+    )
+    .run({ pickId, action, reason, createdAt: new Date().toISOString() });
 }
 
 // Write the final-grade ledger side effects for a freshly-settled pick: append

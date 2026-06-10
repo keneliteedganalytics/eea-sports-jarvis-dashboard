@@ -19,6 +19,7 @@ import { startLiveScoring, pollEspnAndUpdate } from "./jobs/liveScoring";
 import { startLockWorker } from "./jobs/lockWorker";
 import { startPropIngestWorker, getLastIngestSummary } from "./jobs/propIngest";
 import { tomorrowOperatingDay } from "./jobs/propIngest";
+import { startLivePropTracker } from "./jobs/livePropTracker";
 import { getOperatingDay } from "./sports/mlb/operatingDay";
 import { hasOddsKey, fetchMlbEvents } from "./sports/props/ingestMlbProps";
 import {
@@ -33,6 +34,7 @@ import {
   getPropPick,
   countPropOffersForDate,
   countPropPicksForDate,
+  getPropPickLiveStates,
 } from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 import { z } from "zod";
@@ -98,6 +100,7 @@ export function startBackgroundWorkers(): void {
   startLiveScoring();
   startLockWorker();
   startPropIngestWorker();
+  startLivePropTracker();
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
@@ -297,6 +300,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const sport = typeof req.query.sport === "string" ? req.query.sport : null;
     const date = parseDateParam(req.query.date) ?? null;
     res.json({ sport: sport ?? "ALL", date, items: propBoard({ sport, date }) });
+  });
+
+  // Live in-game prop tracking (v6.7.3). Returns the stored live disposition of
+  // every active prop pick on the slate — { pick_id → { liveState, currentValue,
+  // gameStatus, lastUpdated } } — so the board can poll (every 15s) and turn a
+  // card green (clearing), red (busted), or mark it PAID without a page refresh.
+  // The 60s background worker writes these states; this endpoint just reads them.
+  // Best-effort: a pick with no stored state reads as "pending".
+  app.get("/api/props/live", (req: Request, res: Response) => {
+    const sport = typeof req.query.sport === "string" ? req.query.sport : "mlb";
+    const date = parseDateParam(req.query.date) ?? getOperatingDay();
+    const tracking: Record<
+      string,
+      { liveState: string; currentValue: number | null; gameStatus: string | null; lastUpdated: string | null }
+    > = {};
+    try {
+      for (const row of getPropPickLiveStates(date, sport)) {
+        tracking[row.pick_id] = {
+          liveState: row.live_state ?? "pending",
+          currentValue: row.live_value,
+          gameStatus: null,
+          lastUpdated: row.live_updated_at,
+        };
+      }
+    } catch {
+      // best-effort; an empty tracking map reads as all-pending on the board
+    }
+    res.json({ date, tracking });
   });
 
   // Single prop-pick detail: the full row plus the parsed simulation distribution

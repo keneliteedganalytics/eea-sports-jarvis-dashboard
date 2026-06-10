@@ -52,6 +52,29 @@ function pct(rate: number | null): string {
   return rate === null ? "—" : `${Math.round(rate * 100)}%`;
 }
 
+// v6.7.3 live-state palette. While a prop is in progress the card glows green
+// (clearing) or red (busted); once the game is final and the prop won, it shows
+// a gold PAID badge and a dollar payout footer ($375/unit).
+const LIVE_GREEN = "#4ADE80";
+const LIVE_RED = "#EF4444";
+const PROP_UNIT_DOLLARS = 375;
+
+// Visual treatment for a card from its live disposition. Returns the border
+// color + box-shadow glow that override the tier border, or null for pending
+// (the default tier styling stands).
+function liveSkin(state: PropBoardItem["liveState"]): { border: string; glow: string } | null {
+  switch (state) {
+    case "live_clear":
+      return { border: LIVE_GREEN, glow: `0 0 0 1px ${LIVE_GREEN}55, 0 0 16px ${LIVE_GREEN}33` };
+    case "paid":
+      return { border: LIVE_GREEN, glow: `0 0 0 1px ${LIVE_GREEN}66, 0 0 18px ${LIVE_GREEN}44` };
+    case "busted":
+      return { border: LIVE_RED, glow: `0 0 0 1px ${LIVE_RED}55, 0 0 16px ${LIVE_RED}33` };
+    default:
+      return null;
+  }
+}
+
 // A compact distribution sketch from the stored percentiles. We don't ship raw
 // trial samples to the board, so this draws a p25–p75 box with median + mean
 // markers and a gold vertical line at the posted prop line — an honest summary
@@ -108,11 +131,22 @@ export function PropCard({ item }: { item: PropBoardItem }) {
     ? `${Math.round((item.side === "over" ? item.model_prob : 1 - item.model_prob) * 100)}% ${item.side === "over" ? "Over" : "Under"}`
     : null;
 
+  const liveState = item.liveState ?? "pending";
+  const skin = liveSkin(liveState);
+  const paidUnits = item.stake_units != null && price != null
+    ? (price > 0 ? (price / 100) * item.stake_units : (100 / Math.abs(price)) * item.stake_units)
+    : null;
+  const paidDollars = paidUnits != null ? Math.round(paidUnits * PROP_UNIT_DOLLARS * 100) / 100 : null;
+
   return (
     <article
       className="flex flex-col overflow-hidden rounded-xl border border-card-border bg-navy-deep hover-elevate"
-      style={{ borderColor: `${hex}40` }}
+      style={{
+        borderColor: skin ? skin.border : `${hex}40`,
+        boxShadow: skin ? skin.glow : undefined,
+      }}
       data-testid={`prop-card-${item.pick_id}`}
+      data-live-state={liveState}
     >
       {/* Brand header: scope mark + tier wordmark + tier pill */}
       <div className="flex items-center justify-between gap-2 border-b border-gold/10 bg-gold/[0.04] px-3.5 py-2.5">
@@ -124,13 +158,42 @@ export function PropCard({ item }: { item: PropBoardItem }) {
             {TIER_WORDMARK[item.tier] ?? "EE RECON"}
           </span>
         </div>
-        <span
-          className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.12em]"
-          style={{ color: hex, backgroundColor: `${hex}1a`, border: `1px solid ${hex}40` }}
-          data-testid={`prop-tier-${tier}`}
-        >
-          {item.tier}
-        </span>
+        <div className="flex items-center gap-1.5">
+          {liveState === "paid" && (
+            <span
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+              style={{ color: "#020810", backgroundColor: "#E8C14A", border: "1px solid #C9A227" }}
+              data-testid="prop-live-paid"
+            >
+              PAID{paidUnits != null ? ` +${paidUnits.toFixed(2)}u` : ""}
+            </span>
+          )}
+          {liveState === "busted" && (
+            <span
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+              style={{ color: LIVE_RED, backgroundColor: `${LIVE_RED}1a`, border: `1px solid ${LIVE_RED}55` }}
+              data-testid="prop-live-busted"
+            >
+              BUST
+            </span>
+          )}
+          {liveState === "live_clear" && (
+            <span
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.12em]"
+              style={{ color: LIVE_GREEN, backgroundColor: `${LIVE_GREEN}1a`, border: `1px solid ${LIVE_GREEN}55` }}
+              data-testid="prop-live-clear"
+            >
+              LIVE
+            </span>
+          )}
+          <span
+            className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.12em]"
+            style={{ color: hex, backgroundColor: `${hex}1a`, border: `1px solid ${hex}40` }}
+            data-testid={`prop-tier-${tier}`}
+          >
+            {item.tier}
+          </span>
+        </div>
       </div>
 
       <div className="flex flex-col gap-2 p-4">
@@ -198,6 +261,30 @@ export function PropCard({ item }: { item: PropBoardItem }) {
             <span className="font-display font-bold uppercase tracking-wider text-gold">{item.stake_units}u</span>
           )}
         </div>
+
+        {/* Live caption: current in-game value while tracking, or the PAID OUT
+            dollar line once the prop has won and graded ($375/unit). */}
+        {liveState !== "pending" && (
+          <div className="flex items-center justify-between border-t border-gold/10 pt-2 text-[11px]" data-testid="prop-live-footer">
+            {item.currentValue != null ? (
+              <span className="uppercase tracking-wider text-muted-foreground">
+                Live <span className="font-bold tabular-nums text-foreground">{item.currentValue}</span> / {item.line}
+              </span>
+            ) : (
+              <span />
+            )}
+            {liveState === "paid" && paidDollars != null && (
+              <span className="font-display font-bold uppercase tracking-wider" style={{ color: "#E8C14A" }}>
+                PAID OUT +${paidDollars.toLocaleString()}
+              </span>
+            )}
+            {liveState === "busted" && (
+              <span className="font-display font-bold uppercase tracking-wider" style={{ color: LIVE_RED }}>
+                BUSTED
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </article>
   );

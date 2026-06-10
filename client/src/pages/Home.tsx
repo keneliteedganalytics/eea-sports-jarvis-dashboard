@@ -5,7 +5,7 @@ import { PickCard } from "@/components/PickCard";
 import { CompactCard } from "@/components/CompactCard";
 import { fmtMoney } from "@/lib/format";
 import { PropCard } from "@/components/PropCard";
-import type { DailySlate, BuiltPick, Verdict, PropBoardPayload } from "@/lib/types";
+import type { DailySlate, BuiltPick, Verdict, PropBoardPayload, PropLivePayload } from "@/lib/types";
 
 type SportFilter = "ALL" | "MLB" | "NHL" | "NBA" | "SOCCER" | "PROPS";
 const SPORT_CHIPS: { key: SportFilter; label: string; disabled?: boolean }[] = [
@@ -241,6 +241,24 @@ function PropsBoard({ date }: { date: string }) {
     refetchOnWindowFocus: false,
   });
 
+  // v6.7.3 live in-game tracking. Poll every 15s while at least one card is still
+  // pending or live (clearing); stop polling once every prop is busted or paid.
+  const { data: liveData } = useQuery<PropLivePayload>({
+    queryKey: [`/api/props/live?date=${date}`],
+    refetchInterval: (query) => {
+      const tracking = query.state.data?.tracking ?? {};
+      const items = data?.items ?? [];
+      const active = items.some((it) => {
+        const ls = tracking[it.pick_id]?.liveState ?? "pending";
+        return ls === "pending" || ls === "live_clear";
+      });
+      return active && items.length > 0 ? 15_000 : false;
+    },
+    refetchOnWindowFocus: false,
+    enabled: (data?.items ?? []).length > 0,
+  });
+  const liveTracking = liveData?.tracking ?? {};
+
   const [tierFilter, setTierFilter] = useState<string>("ALL");
   const [sportFilter, setSportFilter] = useState<string>("ALL");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -254,7 +272,16 @@ function PropsBoard({ date }: { date: string }) {
     );
   }
 
-  const allItems = data?.items ?? [];
+  const allItems = (data?.items ?? []).map((it) => {
+    const live = liveTracking[it.pick_id];
+    if (!live) return it;
+    return {
+      ...it,
+      liveState: live.liveState,
+      currentValue: live.currentValue,
+      gameStatus: live.gameStatus,
+    };
+  });
   if (allItems.length === 0) {
     return (
       <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="props-empty">

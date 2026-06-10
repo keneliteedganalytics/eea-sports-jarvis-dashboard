@@ -23,27 +23,56 @@ export interface ScheduleGame {
   awayPitcherId: number | null;
   homePitcher: string | null;
   awayPitcher: string | null;
+  // Posted batting orders (player ids in 1..9 slot order), present only when the
+  // schedule is hydrated with lineups and a lineup has been posted. Empty until
+  // ~an hour before first pitch.
+  homeBattingOrder: number[];
+  awayBattingOrder: number[];
+}
+
+export interface FetchScheduleOpts {
+  includeLineups?: boolean;
 }
 
 interface RawTeamNode {
   team?: { id?: number; name?: string };
   probablePitcher?: { id?: number; fullName?: string };
 }
+interface RawLineups {
+  homePlayers?: { id?: number }[];
+  awayPlayers?: { id?: number }[];
+}
 interface RawGame {
   gamePk: number;
   gameDate: string;
   venue?: { name?: string };
   teams?: { home?: RawTeamNode; away?: RawTeamNode };
+  lineups?: RawLineups;
 }
 interface RawSchedule {
   dates?: { games?: RawGame[] }[];
 }
 
-export async function fetchSchedule(dateStr: string): Promise<ScheduleGame[]> {
+function lineupIds(players: { id?: number }[] | undefined): number[] {
+  if (!players) return [];
+  const ids: number[] = [];
+  for (const p of players) {
+    if (typeof p.id === "number") ids.push(p.id);
+  }
+  return ids;
+}
+
+export async function fetchSchedule(
+  dateStr: string,
+  opts: FetchScheduleOpts = {},
+): Promise<ScheduleGame[]> {
+  const hydrate = opts.includeLineups
+    ? "probablePitcher,venue,lineups"
+    : "probablePitcher,venue";
   const res = await getJson<RawSchedule>(`${BASE}/schedule`, {
     sportId: 1,
     date: dateStr,
-    hydrate: "probablePitcher,venue",
+    hydrate,
   });
   if (!res.ok || !res.data?.dates) return [];
 
@@ -68,6 +97,8 @@ export async function fetchSchedule(dateStr: string): Promise<ScheduleGame[]> {
         awayPitcherId: away?.probablePitcher?.id ?? null,
         homePitcher: home?.probablePitcher?.fullName ?? null,
         awayPitcher: away?.probablePitcher?.fullName ?? null,
+        homeBattingOrder: lineupIds(g.lineups?.homePlayers),
+        awayBattingOrder: lineupIds(g.lineups?.awayPlayers),
       });
     }
   }
