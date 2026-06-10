@@ -226,6 +226,17 @@ export function upsertPick(input: UpsertPickInput): boolean {
     return true;
   }
 
+  forceInsertPick(input);
+  return true;
+}
+
+// Insert a pending pick row unconditionally, bypassing the upsert guards (status,
+// lock, and the persistPicks units>0 / non-PASS filter). For the admin recovery
+// path that seeds a clobbered-to-PASS pick the live engine no longer persists.
+export function forceInsertPick(input: UpsertPickInput): string {
+  const db = gradedDb();
+  const id = pickId(input.gameId, input.pickType, input.pickSide);
+  const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO picks (
       id, gameId, sport, gameDate, gameTimeEt, matchup,
@@ -241,7 +252,7 @@ export function upsertPick(input: UpsertPickInput): boolean {
       @confidence, @fairMl, 'pending', @createdAt, @updatedAt
     )`,
   ).run({ ...input, id, createdAt: now, updatedAt: now });
-  return true;
+  return id;
 }
 
 // When a pick is locked, its frozen tier/stake/odds are authoritative — analytics
@@ -316,6 +327,10 @@ export interface AdminLockOverride {
   odds?: number;
   stake?: number;
   reason: string;
+  // When the pick id isn't in the book (e.g. the live engine now scores it PASS,
+  // so persistPicks never wrote it), hydrate the row from the live slate and
+  // insert it before locking. Defaults to false to preserve the 404 behavior.
+  seedFromLive?: boolean;
 }
 
 export interface AdminLockResult {
@@ -323,15 +338,102 @@ export interface AdminLockResult {
   audit: PickAuditRow;
 }
 
+// Minimal shape of the live engine's BuiltPick that this module needs to seed a
+// graded row. Kept structural (not an import) so gradedBook stays free of a
+// static dependency on the slate orchestrator, which itself imports gradedBook.
+export interface SeedBuiltPick {
+  gameId: string;
+  sport: string;
+  gameDate: string;
+  gameTimeEt: string;
+  matchup: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeTeamFull: string;
+  awayTeamFull: string;
+  pickSide: string;
+  pickTeam: string;
+  pickTeamFull: string;
+  pickType: string;
+  pickMl: number | null;
+  pickBook: string | null;
+  verdictTier: string;
+  units: number;
+  kellyStakeDollars: number;
+  pickWinProb: number | null;
+  pickImpliedProb: number | null;
+  edgePp: number | null;
+  evPer100: number | null;
+  confidence: number | null;
+  fairMl: number | null;
+}
+
+export type SeedLookup = (id: string) => Promise<SeedBuiltPick | null | undefined>;
+
+// Default seed resolver: hydrate the live engine's pick for this id. Dynamically
+// imported to avoid a static circular import (orchestrator → gradedBook).
+const defaultSeedLookup: SeedLookup = async (id) => {
+  const { getAnyPick } = await import("./slate/orchestrator");
+  return getAnyPick(id);
+};
+
+// Map a live BuiltPick into an UpsertPickInput. Mirrors persistPicks exactly,
+// including pickLine: null. Override fields are applied on top here so the
+// inserted row already carries the corrected tier/odds/stake.
+function seedToUpsertInput(pick: SeedBuiltPick, override: AdminLockOverride): UpsertPickInput {
+  return {
+    gameId: pick.gameId,
+    sport: pick.sport,
+    gameDate: pick.gameDate,
+    gameTimeEt: pick.gameTimeEt,
+    matchup: pick.matchup,
+    homeTeam: pick.homeTeam,
+    awayTeam: pick.awayTeam,
+    homeTeamFull: pick.homeTeamFull,
+    awayTeamFull: pick.awayTeamFull,
+    pickSide: pick.pickSide,
+    pickTeam: pick.pickTeam,
+    pickTeamFull: pick.pickTeamFull,
+    pickType: pick.pickType,
+    pickLine: null,
+    pickMl: override.odds ?? pick.pickMl,
+    pickBook: pick.pickBook,
+    tier: override.tier,
+    units: pick.units,
+    stakeDollars: override.stake ?? pick.kellyStakeDollars,
+    pickWinProb: pick.pickWinProb,
+    pickImpliedProb: pick.pickImpliedProb,
+    edgePp: pick.edgePp,
+    evPer100: pick.evPer100,
+    confidence: pick.confidence,
+    fairMl: pick.fairMl,
+  };
+}
+
 // Admin recovery path: override a pick's tier/odds/stake on the raw row, then
 // snapshot+lock it via confirmBet, and record the change in pick_audit. Used to
 // repair a pick whose stored tier was clobbered by a recompute before the user
 // got to lock it (the original tier/odds are authoritative, not the recompute).
-// Returns undefined when the pick id doesn't exist.
-export function adminLockWithOverride(id: string, override: AdminLockOverride): AdminLockResult | undefined {
+//
+// When the id isn't in the book and override.seedFromLive is set, the row is
+// hydrated from the live slate engine (a pick the engine now scores PASS is
+// never persisted by persistPicks, so it can't be locked otherwise) and inserted
+// with the override values applied before locking. Returns undefined when the
+// pick id doesn't exist and can't be seeded.
+export async function adminLockWithOverride(
+  id: string,
+  override: AdminLockOverride,
+  seedLookup: SeedLookup = defaultSeedLookup,
+): Promise<AdminLockResult | undefined> {
   const db = gradedDb();
-  const before = getRawPick(id);
-  if (!before) return undefined;
+  let before = getRawPick(id);
+  if (!before) {
+    if (!override.seedFromLive) return undefined;
+    const live = await seedLookup(id);
+    if (!live) return undefined;
+    forceInsertPick(seedToUpsertInput(live, override));
+    before = getRawPick(id)!;
+  }
 
   const sets: string[] = [];
   const params: Record<string, unknown> = { id };
