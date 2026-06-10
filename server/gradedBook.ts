@@ -988,6 +988,44 @@ export function propOffersForDate(date: string, sport?: string | null): PropOffe
     .all(params) as PropOfferRow[];
 }
 
+// Count of stored offers for a date (optionally a sport). Used by the ingest
+// diagnostic endpoint to confirm the upstream pull actually landed rows.
+export function countPropOffersForDate(date: string, sport?: string | null): number {
+  const db = gradedDb();
+  const clauses = ["game_date = @date"];
+  const params: Record<string, unknown> = { date };
+  if (sport && sport.toUpperCase() !== "ALL") {
+    clauses.push("sport = @sport");
+    params.sport = sport.toLowerCase();
+  }
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n FROM prop_offers WHERE ${clauses.join(" AND ")}`)
+    .get(params) as { n: number };
+  return row?.n ?? 0;
+}
+
+// Count of prop picks whose game falls on a date. prop_picks has no game_date
+// column (it's dated by posted_at), so we resolve the slate date by joining the
+// pick's game_id to the event's offers, which do carry game_date.
+export function countPropPicksForDate(date: string, sport?: string | null): number {
+  const db = gradedDb();
+  const clauses = ["o.game_date = @date"];
+  const params: Record<string, unknown> = { date };
+  if (sport && sport.toUpperCase() !== "ALL") {
+    clauses.push("p.sport = @sport");
+    params.sport = sport.toLowerCase();
+  }
+  const row = db
+    .prepare(
+      `SELECT COUNT(DISTINCT p.pick_id) AS n
+         FROM prop_picks p
+         JOIN prop_offers o ON o.event_id = p.game_id
+        WHERE ${clauses.join(" AND ")}`,
+    )
+    .get(params) as { n: number };
+  return row?.n ?? 0;
+}
+
 // All offers across books for one (event, player, market) — the line-shopping set.
 export function propOffersFor(eventId: string, playerName: string, market: string): PropOfferRow[] {
   return gradedDb()

@@ -17,7 +17,10 @@ import { startOddsPoller } from "./pollers/oddsPoller";
 import { startScratchPoller } from "./pollers/scratchPoller";
 import { startLiveScoring, pollEspnAndUpdate } from "./jobs/liveScoring";
 import { startLockWorker } from "./jobs/lockWorker";
-import { startPropIngestWorker } from "./jobs/propIngest";
+import { startPropIngestWorker, getLastIngestSummary } from "./jobs/propIngest";
+import { tomorrowOperatingDay } from "./jobs/propIngest";
+import { getOperatingDay } from "./sports/mlb/operatingDay";
+import { hasOddsKey, fetchMlbEvents } from "./sports/props/ingestMlbProps";
 import {
   confirmBet,
   adminLockWithOverride,
@@ -28,6 +31,8 @@ import {
   archivedPicks,
   propBoard,
   getPropPick,
+  countPropOffersForDate,
+  countPropPicksForDate,
 } from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 import { z } from "zod";
@@ -322,6 +327,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const sport = typeof req.query.sport === "string" ? req.query.sport : null;
     const since = parseDateParam(req.query.since) ?? null;
     res.json(buildPropAnalytics({ sport, since }));
+  });
+
+  // Prop-ingest diagnostic (v6.7.1). Surfaces the two operating days, whether an
+  // Odds API key is configured, the stored offer/pick counts per day, the last
+  // worker run summary, and a LIVE probe of how many MLB events the Odds API
+  // reports for today — so an empty board can be triaged (no key vs. no upstream
+  // events vs. ingest not yet run).
+  app.get("/api/props/debug", async (_req: Request, res: Response) => {
+    const today = getOperatingDay();
+    const tomorrow = tomorrowOperatingDay();
+    let eventsTodayProbe: number | null = null;
+    try {
+      eventsTodayProbe = hasOddsKey() ? (await fetchMlbEvents(today)).length : null;
+    } catch {
+      eventsTodayProbe = null;
+    }
+    res.json({
+      today,
+      tomorrow,
+      hasOddsKey: hasOddsKey(),
+      offersToday: countPropOffersForDate(today, "mlb"),
+      offersTomorrow: countPropOffersForDate(tomorrow, "mlb"),
+      picksToday: countPropPicksForDate(today, "mlb"),
+      picksTomorrow: countPropPicksForDate(tomorrow, "mlb"),
+      lastIngestSummary: getLastIngestSummary(),
+      eventsTodayProbe,
+    });
   });
 
   // Alerts (steam / scratch). ?since=<id> for incremental polling.
