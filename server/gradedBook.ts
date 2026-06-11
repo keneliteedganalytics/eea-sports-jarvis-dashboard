@@ -1779,8 +1779,9 @@ export function markPropPickPass(pickId: string, reason = "below_threshold"): vo
 // HARD SAFETY heal (v6.7.7): zero the stake on any ungraded PASS row that still
 // carries units. Earlier demotions (markPropPickPass / recompute) flipped tier to
 // PASS but left the original stake_units, so a demoted pick could in principle be
-// staked. Naturally idempotent — once every PASS row reads 0 this is a no-op.
-// Only touches ungraded rows (result IS NULL); never disturbs a settled result.
+// staked. Naturally idempotent — once every PASS row reads 0 this is a no-op. Also
+// reverses (and then strips) any PASS row a pre-fix tracker wrongly settled, so no
+// PASS pick leaves a result, a P/L, or a bankroll effect behind.
 export function healPassStakes(): { props: number; games: number; reversed: number } {
   const db = gradedDb();
   const props = db
@@ -1824,9 +1825,20 @@ export function healPassStakes(): { props: number; games: number; reversed: numb
          last_updated = @now
        WHERE id = 1`,
     ).run({ deltaDollars, winDec, lossDec, pushDec, plUnits: plUnitsValue, now });
-    db.prepare("UPDATE prop_picks SET stake_units = 0 WHERE pick_id = @id").run({ id: r.pick_id });
+    // Reverse the bankroll AND strip the settlement off the row so it presents as
+    // purely informational: a PASS pick has no result, no P/L, no stake.
+    db.prepare(
+      "UPDATE prop_picks SET stake_units = 0, result = NULL, pl_units = NULL, pl_dollars = NULL, graded_at = NULL WHERE pick_id = @id",
+    ).run({ id: r.pick_id });
     reversed++;
   }
+  // Display cleanup for PASS rows whose bankroll was already reversed in an earlier
+  // boot (stake_units already 0) but that still carry a stale result/P-L. Bankroll
+  // is untouched here — only the row's settlement fields are nulled so the Passes
+  // view shows a PASS pick as informational (no W/L, no P/L). Idempotent.
+  db.prepare(
+    "UPDATE prop_picks SET result = NULL, pl_units = NULL, pl_dollars = NULL, graded_at = NULL WHERE tier = 'PASS' AND result IS NOT NULL AND stake_units = 0",
+  ).run();
   return { props, games, reversed };
 }
 

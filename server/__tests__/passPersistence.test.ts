@@ -227,8 +227,17 @@ await test("healPassStakes reverses a PASS row that a pre-fix tracker wrongly se
 
   const restored = (db.prepare("SELECT current_bankroll AS b FROM bankroll_state WHERE id = 1").get() as { b: number }).b;
   assert.ok(Math.abs(restored - start) < 1e-6, `bankroll restored to pre-settle (${start}), got ${restored}`);
-  const row = db.prepare("SELECT stake_units FROM prop_picks WHERE pick_id = 'settledPass'").get() as { stake_units: number };
+  const row = db.prepare("SELECT stake_units, result, pl_units, pl_dollars FROM prop_picks WHERE pick_id = 'settledPass'").get() as Record<string, unknown>;
   assert.equal(row.stake_units, 0, "the reversed PASS row no longer carries a stake");
+  assert.equal(row.result, null, "the reversed PASS row presents as informational (no result)");
+  assert.equal(row.pl_units, null, "the reversed PASS row carries no P/L units");
+  assert.equal(row.pl_dollars, null, "the reversed PASS row carries no P/L dollars");
+
+  // Second heal must NOT move bankroll again (idempotent) but the row already reads clean.
+  const beforeSecond = (db.prepare("SELECT current_bankroll AS b FROM bankroll_state WHERE id = 1").get() as { b: number }).b;
+  healPassStakes();
+  const afterSecond = (db.prepare("SELECT current_bankroll AS b FROM bankroll_state WHERE id = 1").get() as { b: number }).b;
+  assert.ok(Math.abs(afterSecond - beforeSecond) < 1e-6, "re-running the heal never double-reverses bankroll");
 
   const leak = db.prepare("SELECT COUNT(*) AS n FROM prop_picks WHERE tier='PASS' AND stake_units > 0").get() as { n: number };
   assert.equal(leak.n, 0, "no PASS prop carries a stake after the heal, graded or not");
