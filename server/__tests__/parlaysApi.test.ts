@@ -31,8 +31,9 @@ for (const player of ["Bryan Reynolds", "Ke'Bryan Hayes"]) {
     event_home: "Miami Marlins", event_away: "Pittsburgh Pirates",
   });
 }
-upsertPropPick({ pick_id: "pit1", sport: "mlb", game_id: "PITvsMIA", player_name: "Bryan Reynolds", market_type: "batter_hits", market_label: "Hits", line: 0.5, side: "over", posted_odds: -150, tier: "SNIPER" });
-upsertPropPick({ pick_id: "pit2", sport: "mlb", game_id: "PITvsMIA", player_name: "Ke'Bryan Hayes", market_type: "batter_hits", market_label: "Hits", line: 0.5, side: "over", posted_odds: 120, tier: "SNIPER" });
+const postedAt = `${DAY}T15:00:00.000Z`;
+upsertPropPick({ pick_id: "pit1", sport: "mlb", game_id: "PITvsMIA", player_name: "Bryan Reynolds", market_type: "batter_hits", market_label: "Hits", line: 0.5, side: "over", posted_odds: -150, tier: "SNIPER", posted_at: postedAt });
+upsertPropPick({ pick_id: "pit2", sport: "mlb", game_id: "PITvsMIA", player_name: "Ke'Bryan Hayes", market_type: "batter_hits", market_label: "Hits", line: 0.5, side: "over", posted_odds: 120, tier: "SNIPER", posted_at: postedAt });
 buildVirtualParlaysForDates([DAY]);
 
 // Mirror of the real /api/parlays/board handler in routes.ts.

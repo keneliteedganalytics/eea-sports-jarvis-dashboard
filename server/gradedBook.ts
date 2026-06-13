@@ -2117,16 +2117,20 @@ export function sniperPropPicksForDates(dates: string[]): SniperParlayLeg[] {
   dates.forEach((d, i) => {
     params[`d${i}`] = d;
   });
+  // Date picks by posted_at (the SAME way propBoard does), NOT via a prop_offers
+  // game_date JOIN: that join silently drops every pick whose offer row lacks a
+  // matching game_date, which on prod means zero parlays even with live SNIPERs.
+  // Event teams are pulled with correlated subqueries so a missing offer leaves
+  // the leg in place (game_label just falls back to the pick's team/opponent).
   return db
     .prepare(
-      `SELECT DISTINCT p.*, o.game_date AS operating_day,
+      `SELECT p.*, substr(p.posted_at, 1, 10) AS operating_day,
               (SELECT oh.event_home FROM prop_offers oh WHERE oh.event_id = p.game_id
                  AND oh.event_home IS NOT NULL LIMIT 1) AS event_home,
               (SELECT oa.event_away FROM prop_offers oa WHERE oa.event_id = p.game_id
                  AND oa.event_away IS NOT NULL LIMIT 1) AS event_away
          FROM prop_picks p
-         JOIN prop_offers o ON o.event_id = p.game_id
-        WHERE p.tier = 'SNIPER' AND o.game_date IN (${placeholders})`,
+        WHERE p.tier = 'SNIPER' AND substr(p.posted_at, 1, 10) IN (${placeholders})`,
     )
     .all(params) as SniperParlayLeg[];
 }

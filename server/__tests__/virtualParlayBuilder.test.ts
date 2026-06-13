@@ -50,10 +50,11 @@ seedOffer("PITvsMIA", "Ke'Bryan Hayes", "Miami Marlins", "Pittsburgh Pirates");
 seedOffer("PITvsMIA", "Andrew McCutchen", "Miami Marlins", "Pittsburgh Pirates");
 seedOffer("NYYvsBOS", "Aaron Judge", "Boston Red Sox", "New York Yankees");
 
-upsertPropPick({ pick_id: "pit1", sport: "mlb", game_id: "PITvsMIA", player_name: "Bryan Reynolds", market_type: "batter_hits", line: 0.5, side: "over", posted_odds: -150, tier: "SNIPER" });
-upsertPropPick({ pick_id: "pit2", sport: "mlb", game_id: "PITvsMIA", player_name: "Ke'Bryan Hayes", market_type: "batter_hits", line: 0.5, side: "over", posted_odds: 120, tier: "SNIPER" });
-upsertPropPick({ pick_id: "pitEdge", sport: "mlb", game_id: "PITvsMIA", player_name: "Andrew McCutchen", market_type: "batter_hits", line: 0.5, side: "over", posted_odds: -110, tier: "EDGE" });
-upsertPropPick({ pick_id: "nyy1", sport: "mlb", game_id: "NYYvsBOS", player_name: "Aaron Judge", market_type: "batter_hits", line: 0.5, side: "over", posted_odds: -200, tier: "SNIPER" });
+const postedAt = `${DAY}T15:00:00.000Z`;
+upsertPropPick({ pick_id: "pit1", sport: "mlb", game_id: "PITvsMIA", player_name: "Bryan Reynolds", market_type: "batter_hits", line: 0.5, side: "over", posted_odds: -150, tier: "SNIPER", posted_at: postedAt });
+upsertPropPick({ pick_id: "pit2", sport: "mlb", game_id: "PITvsMIA", player_name: "Ke'Bryan Hayes", market_type: "batter_hits", line: 0.5, side: "over", posted_odds: 120, tier: "SNIPER", posted_at: postedAt });
+upsertPropPick({ pick_id: "pitEdge", sport: "mlb", game_id: "PITvsMIA", player_name: "Andrew McCutchen", market_type: "batter_hits", line: 0.5, side: "over", posted_odds: -110, tier: "EDGE", posted_at: postedAt });
+upsertPropPick({ pick_id: "nyy1", sport: "mlb", game_id: "NYYvsBOS", player_name: "Aaron Judge", market_type: "batter_hits", line: 0.5, side: "over", posted_odds: -200, tier: "SNIPER", posted_at: postedAt });
 
 let passed = 0;
 let failed = 0;

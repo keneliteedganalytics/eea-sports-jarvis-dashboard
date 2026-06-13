@@ -24,7 +24,10 @@ import { runVirtualParlayTrackForDates } from "./virtualParlayTracker";
 // One-shot idempotency flag. Once the v6.7.9 backfill has walked history, it sets
 // this so a redeploy doesn't re-walk (the build is idempotent anyway, but this
 // keeps boot cheap).
-const BACKFILL_FLAG = "virtual_parlays_v679_initialized";
+// Bumped to _b after the v6.7.9 builder was fixed to date SNIPER picks by
+// posted_at (the prior offer-join query found nothing on prod, so the first
+// backfill ran empty and set the old flag). The new flag forces a clean re-walk.
+const BACKFILL_FLAG = "virtual_parlays_v679_initialized_b";
 
 function log(message: string, source = "parlays"): void {
   const t = new Date().toLocaleTimeString("en-US", {
