@@ -12,7 +12,10 @@ export default defineConfig({
     },
   },
   root: path.resolve(import.meta.dirname, "client"),
-  base: "./",
+  // Absolute base so hashed asset URLs (/assets/...) resolve identically on a
+  // hard reload of a deep route like /parlays. A relative "./" base would make
+  // the browser request /parlays/assets/... and 404 the bundle.
+  base: "/",
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
