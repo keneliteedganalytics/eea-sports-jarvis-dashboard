@@ -9,6 +9,7 @@ import { nameToAbbr } from "../sports/mlb/teams";
 import { SOCCER_ODDS_KEYS } from "../sports/soccer/leagues";
 import { computeClv } from "../lib/clv";
 import { openLockPicksForDate, lockClosingLine, type GradedPick } from "../gradedBook";
+import { DISPLAY_TIMEZONE } from "../utils/timezone";
 
 // How early before the listed start the lock window opens (spec: now ≥ start − 60s).
 export const LOCK_LEAD_MS = 60_000;
@@ -146,7 +147,7 @@ let timer: ReturnType<typeof setInterval> | null = null;
 
 function todayEt(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

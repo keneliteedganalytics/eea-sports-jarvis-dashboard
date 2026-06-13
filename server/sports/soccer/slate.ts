@@ -3,6 +3,7 @@
 // is configured. Respects same ?date= / operating-day anchor as MLB/NHL/NBA.
 
 import { predictGame } from "./model";
+import { DISPLAY_TIMEZONE } from "../../utils/timezone";
 import { buildPick, applyDailyCap, BANKROLL_USD, type SoccerGameInput, type SoccerPick } from "./picksEngine";
 import { buildSoccerSlate } from "./data";
 import { hasOddsKey } from "../../adapters/oddsApi";
@@ -12,7 +13,7 @@ import type { TeamGoalStats } from "./model";
 
 function operatingDay(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

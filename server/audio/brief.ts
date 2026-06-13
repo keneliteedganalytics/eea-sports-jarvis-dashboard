@@ -12,6 +12,7 @@
 
 import { generate } from "../llm/claude";
 import { spellAcronym, spellMoneyLine, spellNumber, spellPercent, spellUnits } from "./spell";
+import { DISPLAY_TIMEZONE } from "../utils/timezone";
 import type { BuiltPick } from "../sports/mlb/picksEngine";
 
 const SYSTEM = `You are the Sharp Desk analyst for a sports-betting desk, briefing a fellow sharp.
@@ -67,7 +68,7 @@ export function whenPhrase(pick: BuiltPick, now: Date = new Date()): string {
 
   // Day delta from now (ET calendar dates).
   const todayEt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    timeZone: DISPLAY_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit",
   }).format(now);
   const gameDate = pick.gameDate;
 
@@ -76,14 +77,14 @@ export function whenPhrase(pick: BuiltPick, now: Date = new Date()): string {
   }
   // tomorrow?
   const tomorrow = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    timeZone: DISPLAY_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date(now.getTime() + 86_400_000));
   if (gameDate === tomorrow) {
     return daypart === "afternoon" ? "Tomorrow afternoon" : "Tomorrow night";
   }
   // weekday name
   try {
-    const wd = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "long" })
+    const wd = new Intl.DateTimeFormat("en-US", { timeZone: DISPLAY_TIMEZONE, weekday: "long" })
       .format(new Date(gameDate + "T12:00:00Z"));
     return wd;
   } catch {

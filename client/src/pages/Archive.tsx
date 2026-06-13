@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fmtMoney, fmtUnits } from "@/lib/format";
+import { DISPLAY_TIMEZONE } from "@/lib/timezone";
 import type { UnifiedPage, UnifiedItem } from "@/lib/types";
 
 type TabKey = "PLAYS" | "PASSES";
@@ -35,7 +36,7 @@ const REASON_LABEL: Record<string, string> = {
 
 function thirtyDaysAgo(): string {
   const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric", month: "2-digit", day: "2-digit",
   });
   return fmt.format(new Date(Date.now() - 30 * 86_400_000));

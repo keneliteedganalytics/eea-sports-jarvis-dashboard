@@ -1,4 +1,5 @@
 import type { Verdict } from "./types";
+import { DISPLAY_TIMEZONE } from "./timezone";
 
 export const TIER_META: Record<Verdict, { label: string; hex: string }> = {
   SNIPER: { label: "SNIPER PLAY", hex: "#E8C14A" },
@@ -34,15 +35,15 @@ export function fmtMoney(n: number): string {
   return `$${Math.round(n).toLocaleString("en-US")}`;
 }
 
-// Format a YYYY-MM-DD operating day as "Mon Jun 8" in America/New_York.
+// Format a YYYY-MM-DD operating day as "Mon Jun 8" in DISPLAY_TIMEZONE.
 // Parsed as a noon-UTC instant so the calendar date never slips a day under
-// the ET offset. Returns "" for malformed input so the header degrades cleanly.
+// the zone offset. Returns "" for malformed input so the header degrades cleanly.
 export function fmtGameDate(isoDate: string | null | undefined): string {
   if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return "";
   const d = new Date(`${isoDate}T12:00:00Z`);
   if (Number.isNaN(d.getTime())) return "";
   return new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     weekday: "short",
     month: "short",
     day: "numeric",

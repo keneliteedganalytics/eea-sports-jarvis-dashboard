@@ -13,6 +13,7 @@ import {
   type GradedPick,
 } from "../gradedBook";
 import { gradeMoneyline, gradeSpread, gradeTotal, plUnits, type Result, type Side } from "../grading";
+import { DISPLAY_TIMEZONE } from "../utils/timezone";
 
 export interface PollSummary {
   date: string;
@@ -113,7 +114,7 @@ let timer: ReturnType<typeof setInterval> | null = null;
 
 function todayEt(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

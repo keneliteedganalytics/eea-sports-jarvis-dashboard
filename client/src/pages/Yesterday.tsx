@@ -3,13 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { PickCard } from "@/components/PickCard";
 import { CompactCard } from "@/components/CompactCard";
 import { fmtUnits } from "@/lib/format";
+import { DISPLAY_TIMEZONE } from "@/lib/timezone";
 import type { DailySlate, BuiltPick, Verdict } from "@/lib/types";
 
 const QUALIFYING: Verdict[] = ["SNIPER", "EDGE", "RECON"];
 
 function yesterdayEt(): string {
   const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric", month: "2-digit", day: "2-digit",
   });
   return fmt.format(new Date(Date.now() - 86_400_000));

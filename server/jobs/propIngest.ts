@@ -9,7 +9,11 @@
 
 import { ingestMlbPropsForDate } from "../sports/props/ingestMlbProps";
 import { buildMlbPropPicks } from "../sports/props/buildPropPicks";
-import { getOperatingDay } from "../sports/mlb/operatingDay";
+import { getOperatingDay, tomorrowOperatingDay } from "../sports/mlb/operatingDay";
+
+// Re-exported from the operating-day module (single source of truth) so existing
+// importers of `propIngest.tomorrowOperatingDay` keep working unchanged.
+export { tomorrowOperatingDay };
 
 // Local logger (matches index.ts's prefixed format) so this module never imports
 // ../index — that module's top-level IIFE boots the HTTP server on import, which
@@ -22,14 +26,6 @@ function log(message: string, source = "props"): void {
 }
 
 export const PROP_INGEST_INTERVAL_MS = 30 * 60_000; // 30 minutes
-
-// Tomorrow's operating day (YYYY-MM-DD) — props are built one slate ahead.
-export function tomorrowOperatingDay(now: Date = new Date()): string {
-  const today = getOperatingDay(now);
-  const d = new Date(`${today}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + 1);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
-}
 
 // Injectable dependencies so the worker's day-routing logic is testable without
 // a live key. Production passes nothing and the real adapters are used.

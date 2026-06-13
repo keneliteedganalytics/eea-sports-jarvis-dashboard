@@ -4,6 +4,7 @@
 // by tier are aggregated over rolling 30/60/90-day windows of graded picks.
 
 import { gradedPicks, pickHistory, type GradedPick, type PickHistoryRow } from "../../gradedBook";
+import { DISPLAY_TIMEZONE } from "../../utils/timezone";
 
 export const HIT_RATE_WINDOWS = [30, 60, 90];
 
@@ -35,7 +36,7 @@ export interface TrackRecordSummary {
 
 function daysAgoIso(days: number, now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

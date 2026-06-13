@@ -2,6 +2,7 @@
 // or a deterministic demo slate when no Odds key is configured.
 
 import { predictGame } from "./model";
+import { DISPLAY_TIMEZONE } from "../../utils/timezone";
 import { buildPick, applyDailyCap, BANKROLL_USD, type NbaGameInput } from "./picksEngine";
 import { buildNbaSlate } from "./data";
 import { hasOddsKey } from "../../adapters/oddsApi";
@@ -11,7 +12,7 @@ import type { BuiltPick } from "../mlb/picksEngine";
 
 function operatingDay(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

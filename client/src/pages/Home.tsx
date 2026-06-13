@@ -4,6 +4,7 @@ import { Info } from "lucide-react";
 import { PickCard } from "@/components/PickCard";
 import { CompactCard } from "@/components/CompactCard";
 import { fmtMoney } from "@/lib/format";
+import { DISPLAY_TIMEZONE } from "@/lib/timezone";
 import { PropCard } from "@/components/PropCard";
 import type { DailySlate, BuiltPick, Verdict, PropBoardPayload, PropLivePayload } from "@/lib/types";
 
@@ -24,9 +25,9 @@ const TIER_RANK: Record<Verdict, number> = {
 const QUALIFYING: Verdict[] = ["SNIPER", "EDGE", "RECON"];
 
 function todayEt(): string {
-  // Operating-day date in YYYY-MM-DD (America/New_York).
+  // Operating-day date in YYYY-MM-DD (DISPLAY_TIMEZONE).
   const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric", month: "2-digit", day: "2-digit",
   });
   return fmt.format(new Date());

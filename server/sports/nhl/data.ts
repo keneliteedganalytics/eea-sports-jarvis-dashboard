@@ -3,6 +3,7 @@
 // gracefully: no Odds key → empty slate (slate service falls back to demo).
 
 import { fetchOddsForSport, type OddsEvent, type BookPrice } from "../../adapters/oddsApi";
+import { DISPLAY_TIMEZONE } from "../../utils/timezone";
 import { consensusSnhl, bestPrice, type Bookmaker } from "../../core/odds";
 import { computePublicSharp, type RawBookmaker } from "../../core/consensus";
 import { fetchHockeyTeamStats, fetchHockeyGoalies, type HockeyTeamStats, type GoalieAvail } from "../../adapters/apiSportsHockey";
@@ -32,7 +33,7 @@ function toBookmakers(ev: OddsEvent): Bookmaker[] {
 function etClock(iso: string): string {
   try {
     return new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/New_York",
+      timeZone: DISPLAY_TIMEZONE,
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
@@ -44,7 +45,7 @@ function etClock(iso: string): string {
 
 function operatingDay(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

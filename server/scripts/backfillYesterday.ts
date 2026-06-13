@@ -5,10 +5,11 @@
 //   Run: tsx server/scripts/backfillYesterday.ts [YYYY-MM-DD]
 
 import { pollEspnAndUpdate } from "../jobs/liveScoring";
+import { DISPLAY_TIMEZONE } from "../utils/timezone";
 
 function yesterdayEt(): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

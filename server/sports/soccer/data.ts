@@ -4,6 +4,7 @@
 // Degrades gracefully: no keys → empty slate (demo slate used by slate.ts).
 
 import { fetchOddsForSport, type OddsEvent } from "../../adapters/oddsApi";
+import { DISPLAY_TIMEZONE } from "../../utils/timezone";
 import { fetchFootballTeamStats, isFriendlyLeague, seasonForLeague } from "../../adapters/apiSportsFootball";
 import { SOCCER_LEAGUES } from "./leagues";
 import { extractDrawOdds } from "./oddsMath";
@@ -20,7 +21,7 @@ const BATCH_SIZE = 8; // parallel team-stats requests per batch
 function etClock(iso: string): string {
   try {
     return new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/New_York",
+      timeZone: DISPLAY_TIMEZONE,
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
@@ -32,7 +33,7 @@ function etClock(iso: string): string {
 
 function operatingDay(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

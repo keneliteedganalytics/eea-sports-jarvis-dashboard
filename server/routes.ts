@@ -20,11 +20,11 @@ import { startScratchPoller } from "./pollers/scratchPoller";
 import { startLiveScoring, pollEspnAndUpdate } from "./jobs/liveScoring";
 import { startLockWorker } from "./jobs/lockWorker";
 import { startPropIngestWorker, getLastIngestSummary } from "./jobs/propIngest";
-import { tomorrowOperatingDay } from "./jobs/propIngest";
 import { startLivePropTracker } from "./jobs/livePropTracker";
 import { reconciliationFlag } from "./jobs/reconcileFalseGrades";
 import { recomputeFlag } from "./jobs/recomputeProps";
-import { getOperatingDay } from "./sports/mlb/operatingDay";
+import { getOperatingDay, tomorrowOperatingDay, yesterdayOperatingDay } from "./sports/mlb/operatingDay";
+import { DISPLAY_TIMEZONE } from "./utils/timezone";
 import { hasOddsKey, fetchMlbEvents } from "./sports/props/ingestMlbProps";
 import {
   confirmBet,
@@ -194,6 +194,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // static BANKROLL_USD seed.
   app.get("/api/bankroll", (_req: Request, res: Response) => {
     res.json(getBankrollState());
+  });
+
+  // Date diagnostics (read-only). Curl this to confirm the canonical operating
+  // day matches the intended civil date in DISPLAY_TIMEZONE — the source of the
+  // "off by a day" class of bugs.
+  app.get("/api/debug/dates", (_req: Request, res: Response) => {
+    res.json({
+      serverUtc: new Date().toISOString(),
+      displayTimezone: DISPLAY_TIMEZONE,
+      operatingDay: getOperatingDay(),
+      tomorrowOperatingDay: tomorrowOperatingDay(),
+      yesterdayOperatingDay: yesterdayOperatingDay(),
+    });
   });
 
   // Persistence diagnostics (read-only, unauthenticated, low-risk). Curl this
@@ -381,9 +394,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // today's operating day). Fetches the public ESPN scoreboard, updates live
   // scores, and grades any games that have gone final.
   app.post("/api/admin/poll-now", async (req: Request, res: Response) => {
-    const date = parseDateParam(req.query.date) ?? new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date());
+    const date = parseDateParam(req.query.date) ?? getOperatingDay();
     const summary = await pollEspnAndUpdate(date);
     res.json(summary);
   });

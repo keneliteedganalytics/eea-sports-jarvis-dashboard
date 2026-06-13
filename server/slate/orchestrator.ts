@@ -3,6 +3,7 @@
 // blanks the whole board — a failed sport returns { picks: [], ok: false, error }.
 
 import { getSlate, getPick } from "../sports/mlb/slate";
+import { DISPLAY_TIMEZONE } from "../utils/timezone";
 import { getNhlSlate, getNhlPick } from "../sports/nhl/slate";
 import { getNbaSlate, getNbaPick } from "../sports/nba/slate";
 import { getSoccerSlate, getSoccerPick } from "../sports/soccer/slate";
@@ -222,7 +223,7 @@ export async function getAnyPick(id: string, bankroll = BANKROLL_USD): Promise<B
 
 function operatingDay(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
+    timeZone: DISPLAY_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
