@@ -42,6 +42,9 @@ import {
   countPropOffersForDate,
   countPropPicksForDate,
   getPropPickLiveStates,
+  getVirtualParlaysForDate,
+  getVirtualParlayStats,
+  type VirtualParlayRow,
 } from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 import { z } from "zod";
@@ -548,6 +551,92 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const sport = typeof req.query.sport === "string" ? req.query.sport : null;
     const since = parseDateParam(req.query.since) ?? null;
     res.json(buildPropAnalytics({ sport, since }));
+  });
+
+  // v6.7.9: virtual parlay board. Each game group with >=1 SNIPER prop auto-forms
+  // a $100 paper parlay that tracks as legs settle (NEVER moves the bankroll).
+  // Returns a summary strip + the day's parlays ordered live→pending→settled, each
+  // with its legs resolved (player/market/line/side/odds + live disposition).
+  app.get("/api/parlays/board", (req: Request, res: Response) => {
+    const date = parseDateParam(req.query.date) ?? getOperatingDay();
+    const sport = typeof req.query.sport === "string" ? req.query.sport : null;
+    const rows = getVirtualParlaysForDate(date, sport);
+
+    const legDisposition = (result: string | null, liveState: string | null): string => {
+      if (result === "W") return "won";
+      if (result === "L") return "busted";
+      if (liveState === "busted") return "busted";
+      if (liveState === "live_clear" || liveState === "live") return "live";
+      return "pending";
+    };
+
+    const items = rows.map((p: VirtualParlayRow) => {
+      let pickIds: string[] = [];
+      try {
+        pickIds = JSON.parse(p.leg_pick_ids ?? "[]") as string[];
+      } catch {
+        pickIds = [];
+      }
+      const legs = pickIds
+        .map((id) => getPropPick(id))
+        .filter((row): row is NonNullable<typeof row> => row != null)
+        .map((row) => ({
+          pickId: row.pick_id,
+          player: row.player_name,
+          market: row.market_label ?? row.market_type,
+          line: row.line,
+          side: row.side,
+          odds: row.posted_odds ?? row.best_price ?? null,
+          tier: row.tier,
+          result: row.result,
+          liveState: row.live_state ?? "pending",
+          currentValue: row.live_value,
+          disposition: legDisposition(row.result, row.live_state),
+        }));
+      return {
+        parlayId: p.parlay_id,
+        gameId: p.game_id,
+        gameLabel: p.game_label,
+        sport: p.sport,
+        stakeDollars: p.stake_dollars,
+        legCount: p.leg_count,
+        combinedDecimal: p.combined_decimal,
+        combinedAmerican: p.combined_american,
+        potentialPayoutDollars: p.potential_payout_dollars,
+        potentialProfitDollars: p.potential_profit_dollars,
+        status: p.status,
+        legsWon: p.legs_won,
+        legsBusted: p.legs_busted,
+        legsPending: p.legs_pending,
+        plDollars: p.pl_dollars,
+        gradedAt: p.graded_at,
+        legs,
+      };
+    });
+
+    const summary = {
+      date,
+      count: items.length,
+      live: items.filter((i) => i.status === "live").length,
+      pending: items.filter((i) => i.status === "pending").length,
+      won: items.filter((i) => i.status === "won").length,
+      busted: items.filter((i) => i.status === "busted").length,
+      // Realized P/L across SETTLED parlays on this day (paper only).
+      plDollars:
+        Math.round(
+          items
+            .filter((i) => i.status === "won" || i.status === "busted")
+            .reduce((s, i) => s + (i.plDollars ?? 0), 0) * 100,
+        ) / 100,
+    };
+
+    res.json({ summary, items });
+  });
+
+  // v6.7.9: virtual parlay analytics — aggregate paper-portfolio performance
+  // across all dates (win rate, staked, P/L, ROI, by day, by sport).
+  app.get("/api/parlays/analytics", (_req: Request, res: Response) => {
+    res.json(getVirtualParlayStats());
   });
 
   // Prop-ingest diagnostic (v6.7.1). Surfaces the two operating days, whether an

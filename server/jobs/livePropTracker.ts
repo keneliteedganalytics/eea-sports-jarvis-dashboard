@@ -30,6 +30,8 @@ import { getOperatingDay } from "../sports/mlb/operatingDay";
 import { validateGradesTick, reconcileFalseGradesV675 } from "./reconcileFalseGrades";
 import { recomputePropsV676 } from "./recomputeProps";
 import { recordPassesV677 } from "./recordPassesV677";
+import { backfillVirtualParlaysV679 } from "./virtualParlayBuilder";
+import { runVirtualParlayTrack } from "./virtualParlayTracker";
 
 function log(message: string, source = "live-props"): void {
   const t = new Date().toLocaleTimeString("en-US", {
@@ -143,6 +145,15 @@ export async function runLiveTrackTick(
   if (transitions > 0 || graded > 0) {
     log(`live tick ${date}: ${picks.length} tracked, ${transitions} state writes, ${graded} graded`);
   }
+
+  // v6.7.9: advance the virtual parlays on the same tick now that this tick's
+  // leg grades/live-states are written. Best-effort; never touches the bankroll.
+  try {
+    runVirtualParlayTrack();
+  } catch {
+    // best-effort; the next tick retries
+  }
+
   return { date, tracked: picks.length, transitions, graded };
 }
 
@@ -171,6 +182,13 @@ export function startLivePropTracker(): void {
         }
       } catch {
         // best-effort; never block the tracker on the heal
+      }
+      // v6.7.9: one-shot backfill of virtual parlays over the last 7 days. Flag-
+      // guarded + idempotent; best-effort so it never blocks the first tick.
+      try {
+        backfillVirtualParlaysV679();
+      } catch {
+        // best-effort; the build is idempotent and the cycle hook keeps it fresh
       }
     })
     .finally(() => void runLiveTrackTick().catch(() => undefined));

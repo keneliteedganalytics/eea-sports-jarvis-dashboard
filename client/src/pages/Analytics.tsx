@@ -12,8 +12,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { TIER_META, fmtUnits } from "@/lib/format";
-import type { AnalyticsPayload, PropAnalyticsPayload, Verdict } from "@/lib/types";
+import { TIER_META, fmtUnits, fmtMoney } from "@/lib/format";
+import type { AnalyticsPayload, ParlayAnalyticsPayload, PropAnalyticsPayload, Verdict } from "@/lib/types";
 
 const AXIS = "#8892A0";
 const GRID = "#1d2740";
@@ -46,6 +46,10 @@ export default function Analytics() {
     return s ? `?${s}` : "";
   }, [sport, since]);
   const { data: props } = useQuery<PropAnalyticsPayload>({ queryKey: [`/api/props/analytics${propsQs}`] });
+
+  // v6.7.9: virtual parlay (paper portfolio) aggregate. Not filtered — it's a
+  // standalone tracker across all dates/sports.
+  const { data: parlays } = useQuery<ParlayAnalyticsPayload>({ queryKey: ["/api/parlays/analytics"] });
 
   return (
     <div className="space-y-6" data-testid="analytics-page">
@@ -129,6 +133,56 @@ export default function Analytics() {
                   {t.tier} · {t.bets} played
                 </span>
               ))}
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {/* v6.7.9: virtual parlays — paper portfolio of $100-per-game SNIPER parlays */}
+      {parlays && parlays.total_parlays > 0 && (
+        <Panel title="Virtual parlays">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6" data-testid="analytics-parlays">
+            <Kpi label="Parlays" value={String(parlays.total_parlays)} />
+            <Kpi label="Cashed" value={String(parlays.won)} good />
+            <Kpi label="Busted" value={String(parlays.busted)} good={false} />
+            <Kpi label="Win rate" value={`${parlays.win_rate_pct.toFixed(1)}%`} good={parlays.win_rate_pct >= 50} />
+            <Kpi
+              label="Paper P/L"
+              value={`${parlays.total_pl_dollars >= 0 ? "+" : "−"}${fmtMoney(Math.abs(parlays.total_pl_dollars))}`}
+              good={parlays.total_pl_dollars >= 0}
+            />
+            <Kpi
+              label="ROI"
+              value={`${parlays.roi_pct >= 0 ? "+" : ""}${parlays.roi_pct.toFixed(1)}%`}
+              good={parlays.roi_pct >= 0}
+            />
+          </div>
+          {parlays.by_day.length > 0 && (
+            <div className="mt-3 overflow-x-auto" data-testid="analytics-parlays-by-day">
+              <table className="w-full text-left text-[11px]">
+                <thead>
+                  <tr className="text-muted-foreground">
+                    <th className="py-1 pr-3">Day</th>
+                    <th className="py-1 pr-3">Parlays</th>
+                    <th className="py-1 pr-3">Cashed</th>
+                    <th className="py-1 pr-3">Busted</th>
+                    <th className="py-1">P/L</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {parlays.by_day.map((d) => (
+                    <tr key={d.day} className="border-t border-card-border">
+                      <td className="py-1.5 pr-3 font-medium text-foreground">{d.day}</td>
+                      <td className="py-1.5 pr-3 tabular-nums">{d.parlays}</td>
+                      <td className="py-1.5 pr-3 tabular-nums text-tier-bonus">{d.won}</td>
+                      <td className="py-1.5 pr-3 tabular-nums text-trap">{d.busted}</td>
+                      <td className={`py-1.5 tabular-nums ${d.pl_dollars >= 0 ? "text-tier-bonus" : "text-trap"}`}>
+                        {d.pl_dollars >= 0 ? "+" : "−"}{fmtMoney(Math.abs(d.pl_dollars))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </Panel>

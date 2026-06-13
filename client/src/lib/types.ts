@@ -465,3 +465,69 @@ export interface PropBoardPayload {
   date: string | null;
   items: PropBoardItem[];
 }
+
+// ── Virtual parlays (v6.7.9) ────────────────────────────────────────────────
+
+export type ParlayStatus = "pending" | "live" | "won" | "busted";
+export type ParlayLegDisposition = "pending" | "live" | "won" | "busted";
+
+export interface ParlayLeg {
+  pickId: string;
+  player: string;
+  market: string;
+  line: number;
+  side: string;
+  odds: number | null;
+  tier: string;
+  result: "W" | "L" | "P" | null;
+  liveState: string;
+  currentValue: number | null;
+  disposition: ParlayLegDisposition;
+}
+
+export interface ParlayItem {
+  parlayId: string;
+  gameId: string;
+  gameLabel: string | null;
+  sport: string;
+  stakeDollars: number;
+  legCount: number;
+  combinedDecimal: number | null;
+  combinedAmerican: number | null;
+  potentialPayoutDollars: number | null;
+  potentialProfitDollars: number | null;
+  status: ParlayStatus;
+  legsWon: number;
+  legsBusted: number;
+  legsPending: number;
+  plDollars: number | null;
+  gradedAt: number | null;
+  legs: ParlayLeg[];
+}
+
+export interface ParlayBoardPayload {
+  summary: {
+    date: string;
+    count: number;
+    live: number;
+    pending: number;
+    won: number;
+    busted: number;
+    plDollars: number;
+  };
+  items: ParlayItem[];
+}
+
+export interface ParlayAnalyticsPayload {
+  total_parlays: number;
+  won: number;
+  busted: number;
+  pending: number;
+  live: number;
+  win_rate_pct: number;
+  total_staked: number;
+  total_pl_dollars: number;
+  roi_pct: number;
+  by_day: Array<{ day: string; parlays: number; won: number; busted: number; pl_dollars: number }>;
+  by_sport: Array<{ sport: string; parlays: number; won: number; busted: number; pl_dollars: number }>;
+}

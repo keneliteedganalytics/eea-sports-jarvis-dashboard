@@ -282,6 +282,34 @@ export function gradedDb(): Database.Database {
       value TEXT,
       updated_at TEXT
     );
+    -- v6.7.9: virtual parlay tracker. Each game group with >=1 SNIPER prop pick
+    -- auto-forms a $100 virtual (NOT real-money) parlay using every SNIPER leg in
+    -- that game. P/L tracks as legs settle. parlay_id = "<operating_day>:<game_id>"
+    -- so a re-build of the same game's slate upserts the same row (idempotent).
+    -- This table NEVER touches the bankroll — it is a paper portfolio only.
+    CREATE TABLE IF NOT EXISTS virtual_parlays (
+      parlay_id TEXT PRIMARY KEY,
+      operating_day TEXT NOT NULL,
+      game_id TEXT NOT NULL,
+      game_label TEXT,
+      sport TEXT DEFAULT 'mlb',
+      stake_dollars REAL DEFAULT 100,
+      leg_count INTEGER DEFAULT 0,
+      leg_pick_ids TEXT,
+      combined_decimal REAL,
+      combined_american INTEGER,
+      potential_payout_dollars REAL,
+      potential_profit_dollars REAL,
+      status TEXT DEFAULT 'pending',
+      legs_won INTEGER DEFAULT 0,
+      legs_busted INTEGER DEFAULT 0,
+      legs_pending INTEGER DEFAULT 0,
+      pl_dollars REAL,
+      graded_at INTEGER,
+      created_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_virtual_parlays_day ON virtual_parlays(operating_day);
+    CREATE INDEX IF NOT EXISTS idx_virtual_parlays_status ON virtual_parlays(status);
   `);
   // Migrate pre-lock databases in place (CREATE TABLE IF NOT EXISTS skips the new
   // columns on an existing table). Mirror of migrations/0001_pick_lock.sql.
@@ -1619,6 +1647,213 @@ export function setSystemState(key: string, value: string): void {
     .run({ key, value, now: new Date().toISOString() });
 }
 
+// ── Virtual parlays (v6.7.9) ────────────────────────────────────────────────
+// A paper portfolio: each game group with >=1 SNIPER prop pick auto-forms a $100
+// virtual parlay. These rows NEVER touch the bankroll — they are display-only.
+
+export interface VirtualParlayRow {
+  parlay_id: string;
+  operating_day: string;
+  game_id: string;
+  game_label: string | null;
+  sport: string;
+  stake_dollars: number;
+  leg_count: number;
+  leg_pick_ids: string; // JSON array of pick_id strings
+  combined_decimal: number | null;
+  combined_american: number | null;
+  potential_payout_dollars: number | null;
+  potential_profit_dollars: number | null;
+  status: string; // pending | live | won | busted
+  legs_won: number;
+  legs_busted: number;
+  legs_pending: number;
+  pl_dollars: number | null;
+  graded_at: number | null;
+  created_at: number | null;
+}
+
+export interface VirtualParlayUpsert {
+  parlay_id: string;
+  operating_day: string;
+  game_id: string;
+  game_label: string | null;
+  sport?: string;
+  leg_count: number;
+  leg_pick_ids: string[];
+  combined_decimal: number;
+  combined_american: number;
+  potential_payout_dollars: number;
+  potential_profit_dollars: number;
+}
+
+// Idempotent upsert keyed on parlay_id. The leg composition (count/ids/odds) is
+// only refreshed while the parlay is still 'pending' — once a leg has settled and
+// the parlay has moved to live/won/busted, the formation is frozen so a late
+// re-ingest can't rewrite a parlay that's already being graded. created_at is
+// preserved on conflict; the live-state worker owns status/legs_*/pl_dollars.
+export function upsertVirtualParlay(p: VirtualParlayUpsert): void {
+  const now = Date.now();
+  gradedDb()
+    .prepare(
+      `INSERT INTO virtual_parlays (
+         parlay_id, operating_day, game_id, game_label, sport, stake_dollars,
+         leg_count, leg_pick_ids, combined_decimal, combined_american,
+         potential_payout_dollars, potential_profit_dollars,
+         status, legs_won, legs_busted, legs_pending, pl_dollars, graded_at, created_at
+       ) VALUES (
+         @parlay_id, @operating_day, @game_id, @game_label, @sport, 100,
+         @leg_count, @leg_pick_ids, @combined_decimal, @combined_american,
+         @potential_payout_dollars, @potential_profit_dollars,
+         'pending', 0, 0, @leg_count, NULL, NULL, @now
+       )
+       ON CONFLICT(parlay_id) DO UPDATE SET
+         game_label = @game_label,
+         leg_count = CASE WHEN status = 'pending' THEN @leg_count ELSE leg_count END,
+         leg_pick_ids = CASE WHEN status = 'pending' THEN @leg_pick_ids ELSE leg_pick_ids END,
+         combined_decimal = CASE WHEN status = 'pending' THEN @combined_decimal ELSE combined_decimal END,
+         combined_american = CASE WHEN status = 'pending' THEN @combined_american ELSE combined_american END,
+         potential_payout_dollars = CASE WHEN status = 'pending' THEN @potential_payout_dollars ELSE potential_payout_dollars END,
+         potential_profit_dollars = CASE WHEN status = 'pending' THEN @potential_profit_dollars ELSE potential_profit_dollars END,
+         legs_pending = CASE WHEN status = 'pending' THEN @leg_count ELSE legs_pending END`,
+    )
+    .run({
+      parlay_id: p.parlay_id,
+      operating_day: p.operating_day,
+      game_id: p.game_id,
+      game_label: p.game_label,
+      sport: (p.sport ?? "mlb").toLowerCase(),
+      leg_count: p.leg_count,
+      leg_pick_ids: JSON.stringify(p.leg_pick_ids),
+      combined_decimal: p.combined_decimal,
+      combined_american: p.combined_american,
+      potential_payout_dollars: p.potential_payout_dollars,
+      potential_profit_dollars: p.potential_profit_dollars,
+      now,
+    });
+}
+
+// All virtual parlays for an operating day, ordered for the board: live first,
+// then pending, then settled (won/busted), each ring sorted by upside DESC.
+export function getVirtualParlaysForDate(date: string, sport?: string | null): VirtualParlayRow[] {
+  const db = gradedDb();
+  const clauses = ["operating_day = @date"];
+  const params: Record<string, unknown> = { date };
+  if (sport && sport.toUpperCase() !== "ALL") {
+    clauses.push("sport = @sport");
+    params.sport = sport.toLowerCase();
+  }
+  return db
+    .prepare(
+      `SELECT * FROM virtual_parlays WHERE ${clauses.join(" AND ")}
+        ORDER BY CASE status WHEN 'live' THEN 0 WHEN 'pending' THEN 1
+                             WHEN 'won' THEN 2 WHEN 'busted' THEN 3 ELSE 4 END,
+                 potential_profit_dollars DESC`,
+    )
+    .all(params) as VirtualParlayRow[];
+}
+
+// Persist a freshly computed live state for one parlay. The live-state worker
+// owns this; the builder never calls it. NEVER touches the bankroll.
+export function updateVirtualParlayState(
+  parlayId: string,
+  fields: {
+    status: string;
+    legs_won: number;
+    legs_busted: number;
+    legs_pending: number;
+    pl_dollars: number | null;
+  },
+): void {
+  const terminal = fields.status === "won" || fields.status === "busted";
+  gradedDb()
+    .prepare(
+      `UPDATE virtual_parlays
+          SET status = @status,
+              legs_won = @legs_won,
+              legs_busted = @legs_busted,
+              legs_pending = @legs_pending,
+              pl_dollars = @pl_dollars,
+              graded_at = CASE WHEN @terminal = 1 AND graded_at IS NULL THEN @now ELSE graded_at END
+        WHERE parlay_id = @parlay_id`,
+    )
+    .run({
+      parlay_id: parlayId,
+      status: fields.status,
+      legs_won: fields.legs_won,
+      legs_busted: fields.legs_busted,
+      legs_pending: fields.legs_pending,
+      pl_dollars: fields.pl_dollars,
+      terminal: terminal ? 1 : 0,
+      now: Date.now(),
+    });
+}
+
+export interface VirtualParlayStats {
+  total_parlays: number;
+  won: number;
+  busted: number;
+  pending: number;
+  live: number;
+  win_rate_pct: number; // wins / settled (won+busted)
+  total_staked: number; // $100 per settled parlay
+  total_pl_dollars: number;
+  roi_pct: number;
+  by_day: Array<{ day: string; parlays: number; won: number; busted: number; pl_dollars: number }>;
+  by_sport: Array<{ sport: string; parlays: number; won: number; busted: number; pl_dollars: number }>;
+}
+
+// Aggregate parlay performance across all dates. Staked/ROI count only SETTLED
+// parlays (won or busted) — a pending/live parlay hasn't resolved a result yet.
+export function getVirtualParlayStats(): VirtualParlayStats {
+  const db = gradedDb();
+  const rows = db.prepare("SELECT * FROM virtual_parlays").all() as VirtualParlayRow[];
+  const settled = rows.filter((r) => r.status === "won" || r.status === "busted");
+  const won = rows.filter((r) => r.status === "won").length;
+  const busted = rows.filter((r) => r.status === "busted").length;
+  const pending = rows.filter((r) => r.status === "pending").length;
+  const live = rows.filter((r) => r.status === "live").length;
+  const totalStaked = settled.length * 100;
+  const totalPl = settled.reduce((s, r) => s + (r.pl_dollars ?? 0), 0);
+
+  const byDayMap = new Map<string, { parlays: number; won: number; busted: number; pl_dollars: number }>();
+  const bySportMap = new Map<string, { parlays: number; won: number; busted: number; pl_dollars: number }>();
+  for (const r of rows) {
+    const d = byDayMap.get(r.operating_day) ?? { parlays: 0, won: 0, busted: 0, pl_dollars: 0 };
+    d.parlays++;
+    if (r.status === "won") d.won++;
+    if (r.status === "busted") d.busted++;
+    d.pl_dollars += r.pl_dollars ?? 0;
+    byDayMap.set(r.operating_day, d);
+
+    const sp = (r.sport ?? "mlb").toLowerCase();
+    const s = bySportMap.get(sp) ?? { parlays: 0, won: 0, busted: 0, pl_dollars: 0 };
+    s.parlays++;
+    if (r.status === "won") s.won++;
+    if (r.status === "busted") s.busted++;
+    s.pl_dollars += r.pl_dollars ?? 0;
+    bySportMap.set(sp, s);
+  }
+
+  return {
+    total_parlays: rows.length,
+    won,
+    busted,
+    pending,
+    live,
+    win_rate_pct: settled.length > 0 ? Math.round((won / settled.length) * 1000) / 10 : 0,
+    total_staked: totalStaked,
+    total_pl_dollars: Math.round(totalPl * 100) / 100,
+    roi_pct: totalStaked > 0 ? Math.round((totalPl / totalStaked) * 1000) / 10 : 0,
+    by_day: [...byDayMap.entries()]
+      .map(([day, v]) => ({ day, ...v, pl_dollars: Math.round(v.pl_dollars * 100) / 100 }))
+      .sort((a, b) => b.day.localeCompare(a.day)),
+    by_sport: [...bySportMap.entries()]
+      .map(([sport, v]) => ({ sport, ...v, pl_dollars: Math.round(v.pl_dollars * 100) / 100 }))
+      .sort((a, b) => b.parlays - a.parlays),
+  };
+}
+
 // ── False-grade reconciliation (v6.7.5) ─────────────────────────────────────
 // The v6.7.3 live tracker graded prop picks against games that had not started,
 // crediting phantom wins to the bankroll. This unwinds a single such pick: it
@@ -1860,6 +2095,40 @@ export function gradedPropPicksForDates(dates: string[]): PropPickRow[] {
         WHERE p.result IS NOT NULL AND o.game_date IN (${placeholders})`,
     )
     .all(params) as PropPickRow[];
+}
+
+// SNIPER prop picks (every status) whose game falls on one of the given operating
+// days, with the offer-side date + event teams attached. Drives the v6.7.9 virtual
+// parlay builder + live-state worker: the builder groups these by game_id to form
+// parlays; the worker reads result/live_state to settle them. game_label is built
+// from the offer's event teams (event_home vs event_away), falling back to the
+// pick's own team/opponent. Excludes PASS rows (never a real surfaced pick).
+export interface SniperParlayLeg extends PropPickRow {
+  operating_day: string;
+  event_home: string | null;
+  event_away: string | null;
+}
+
+export function sniperPropPicksForDates(dates: string[]): SniperParlayLeg[] {
+  if (dates.length === 0) return [];
+  const db = gradedDb();
+  const placeholders = dates.map((_, i) => `@d${i}`).join(", ");
+  const params: Record<string, unknown> = {};
+  dates.forEach((d, i) => {
+    params[`d${i}`] = d;
+  });
+  return db
+    .prepare(
+      `SELECT DISTINCT p.*, o.game_date AS operating_day,
+              (SELECT oh.event_home FROM prop_offers oh WHERE oh.event_id = p.game_id
+                 AND oh.event_home IS NOT NULL LIMIT 1) AS event_home,
+              (SELECT oa.event_away FROM prop_offers oa WHERE oa.event_id = p.game_id
+                 AND oa.event_away IS NOT NULL LIMIT 1) AS event_away
+         FROM prop_picks p
+         JOIN prop_offers o ON o.event_id = p.game_id
+        WHERE p.tier = 'SNIPER' AND o.game_date IN (${placeholders})`,
+    )
+    .all(params) as SniperParlayLeg[];
 }
 
 // Write the final-grade ledger side effects for a freshly-settled pick: append

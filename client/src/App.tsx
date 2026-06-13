@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
 import Home from "@/pages/Home";
 import PickDetail from "@/pages/PickDetail";
+import Parlays from "@/pages/Parlays";
 import Analytics from "@/pages/Analytics";
 import TrackRecord from "@/pages/TrackRecord";
 import Yesterday from "@/pages/Yesterday";
@@ -19,6 +20,7 @@ function AppRouter() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/pick/:id" component={PickDetail} />
+      <Route path="/parlays" component={Parlays} />
       <Route path="/analytics" component={Analytics} />
       <Route path="/track-record" component={TrackRecord} />
       <Route path="/yesterday" component={Yesterday} />

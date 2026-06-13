@@ -10,6 +10,7 @@
 import { ingestMlbPropsForDate } from "../sports/props/ingestMlbProps";
 import { buildMlbPropPicks } from "../sports/props/buildPropPicks";
 import { getOperatingDay, tomorrowOperatingDay } from "../sports/mlb/operatingDay";
+import { runVirtualParlayBuild } from "./virtualParlayBuilder";
 
 // Re-exported from the operating-day module (single source of truth) so existing
 // importers of `propIngest.tomorrowOperatingDay` keep working unchanged.
@@ -80,6 +81,14 @@ export async function runBothCycles(
   const tomorrowDate = tomorrowOperatingDay(now);
   const today = await runPropCycle(todayDate, deps).catch(() => ({ date: todayDate, offers: 0, written: 0 }));
   const tomorrow = await runPropCycle(tomorrowDate, deps).catch(() => ({ date: tomorrowDate, offers: 0, written: 0 }));
+  // v6.7.9: after the picks are fresh, (re)form the per-game virtual parlays for
+  // today + tomorrow. Idempotent + best-effort: a builder throw can't disrupt the
+  // ingest summary or the bankroll (virtual parlays are paper only).
+  try {
+    runVirtualParlayBuild(now);
+  } catch {
+    // best-effort; the next cycle retries
+  }
   lastIngestSummary = { ranAt: new Date().toISOString(), today, tomorrow };
   return lastIngestSummary;
 }

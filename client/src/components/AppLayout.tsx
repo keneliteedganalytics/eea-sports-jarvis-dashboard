@@ -60,6 +60,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
           <div className="ml-auto flex items-center gap-2">
             <Link
+              href="/parlays"
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                isActive("/parlays") ? "bg-gold/15 text-gold" : "text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid="link-parlays"
+            >
+              Parlays
+            </Link>
+            <Link
               href="/analytics"
               className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                 isActive("/analytics") ? "bg-gold/15 text-gold" : "text-muted-foreground hover:text-foreground"
