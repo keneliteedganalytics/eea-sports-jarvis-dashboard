@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import { ArrowDown, ArrowUp, ExternalLink } from "lucide-react";
 import { TierPill } from "./TierPill";
@@ -11,11 +12,12 @@ import { TotalRow } from "./TotalRow";
 import { PropsPanel } from "./PropsPanel";
 import { BetPlacedButton } from "./BetPlacedButton";
 import { DraftKingsButton } from "./DraftKingsButton";
+import { DkTapThroughSheet } from "./DkTapThroughSheet";
 import { ClvBadge } from "./ClvBadge";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { fmtGameDate, fmtGameTime, fmtLine, fmtMoney, fmtPct, fmtUnits, lineMovement, TIER_LABEL } from "@/lib/format";
 import { gradeVisual } from "@/lib/grade";
-import type { BuiltPick } from "@/lib/types";
+import type { BuiltPick, DkSlipPayload } from "@/lib/types";
 
 const STEAM_CENTS = 10;
 
@@ -38,12 +40,22 @@ export function PickCard({
   const move = lineMovement(openMl, pick.pickMl);
   const isSteam = move.cents >= STEAM_CENTS;
 
-  // v6.9.3: handler for loading all SNIPERs for this game into DK.
+  // v6.9.4: state for per-game tap-through sheet.
+  const [gameTapThroughOpen, setGameTapThroughOpen] = useState(false);
+  const [gameTapThroughPayload, setGameTapThroughPayload] = useState<DkSlipPayload | null>(null);
+
+  // v6.9.3/6.9.4: handler for loading all SNIPERs for this game into DK.
   function handleLoadGameSnipers() {
     const url = `/api/dk/slip?scope=game&gameId=${encodeURIComponent(pick.gameId)}`;
     fetch(url)
       .then((r) => r.json())
-      .then((slip: { deepLink: string | null; webFallback: string | null }) => {
+      .then((slip: DkSlipPayload) => {
+        // v6.9.4: tap-through fallback when composite link unavailable.
+        if (slip.count === 0 && slip.perEventLinks.length > 0) {
+          setGameTapThroughPayload(slip);
+          setGameTapThroughOpen(true);
+          return;
+        }
         const target = slip.deepLink ?? slip.webFallback;
         if (!target) return;
         window.location.href = target;
@@ -234,19 +246,30 @@ export function PickCard({
           <DraftKingsButton dk={pick.dk} />
         )}
 
-        {/* v6.9.3: Load all SNIPERs for this game — mobile + SNIPER + related props only. */}
+        {/* v6.9.3/6.9.4: Load all SNIPERs for this game — mobile + SNIPER + related props only.
+             v6.9.4 adds tap-through sheet when composite link unavailable. */}
         {isMobile && pick.verdictTier === "SNIPER" && relatedSniperPropCount >= 1 && (
-          <button
-            type="button"
-            onClick={handleLoadGameSnipers}
-            className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 font-display text-[12px] font-bold uppercase tracking-[0.14em] text-black transition-opacity active:opacity-80"
-            style={{ backgroundColor: "#53D337" }}
-            data-testid={`dk-game-slip-${pick.gameId}`}
-            aria-label="Load all SNIPER picks for this game on DraftKings"
-          >
-            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-            Load all SNIPERs for this game
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={handleLoadGameSnipers}
+              className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 font-display text-[12px] font-bold uppercase tracking-[0.14em] text-black transition-opacity active:opacity-80"
+              style={{ backgroundColor: "#53D337" }}
+              data-testid={`dk-game-slip-${pick.gameId}`}
+              aria-label="Load all SNIPER picks for this game on DraftKings"
+            >
+              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+              Load all SNIPERs for this game
+            </button>
+            {/* v6.9.4: tap-through sheet (only rendered when fallback triggered) */}
+            {gameTapThroughOpen && gameTapThroughPayload && (
+              <DkTapThroughSheet
+                payload={gameTapThroughPayload}
+                open={gameTapThroughOpen}
+                onClose={() => setGameTapThroughOpen(false)}
+              />
+            )}
+          </>
         )}
 
         {/* Matchup + date/time + Pick */}

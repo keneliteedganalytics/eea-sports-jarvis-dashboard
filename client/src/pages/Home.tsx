@@ -7,6 +7,7 @@ import { fmtMoney } from "@/lib/format";
 import { DISPLAY_TIMEZONE } from "@/lib/timezone";
 import { PropCard } from "@/components/PropCard";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { DkTapThroughSheet } from "@/components/DkTapThroughSheet";
 import type { DailySlate, BuiltPick, Verdict, PropBoardPayload, PropLivePayload, DkSlipPayload } from "@/lib/types";
 
 type SportFilter = "ALL" | "MLB" | "NHL" | "NBA" | "SOCCER" | "PROPS";
@@ -49,6 +50,7 @@ export default function Home() {
   });
   const [sport, setSport] = useState<SportFilter>("ALL");
   const [showAll, setShowAll] = useState(false); // default: plays only
+  const [tapThroughOpen, setTapThroughOpen] = useState(false);
 
   // Keep date in sync if the URL changes (e.g. browser back/forward).
   useEffect(() => {
@@ -134,8 +136,29 @@ export default function Home() {
     enabled: isMobile,
   });
 
+  // v6.9.4: determine whether to use the composite deep-link or tap-through.
+  const sniperHasCompositeLink = !!(
+    sniperSlipData && sniperSlipData.count > 0 && sniperSlipData.deepLink
+  );
+  const sniperHasTapThrough = !!(
+    sniperSlipData &&
+    sniperSlipData.count === 0 &&
+    sniperSlipData.perEventLinks.length > 0
+  );
+  // Total count to show in label: count (composite) or perEventLinks.length (tap-through).
+  const sniperDisplayCount = sniperSlipData
+    ? sniperSlipData.count > 0
+      ? sniperSlipData.count + sniperSlipData.skipped
+      : sniperSlipData.perEventLinks.length
+    : 0;
+
   function handleLoadAllSnipers() {
     if (!sniperSlipData) return;
+    // Tap-through fallback: open the sheet when no composite link is available.
+    if (sniperHasTapThrough) {
+      setTapThroughOpen(true);
+      return;
+    }
     const url = sniperSlipData.deepLink ?? sniperSlipData.webFallback ?? null;
     if (!url) return;
     window.location.href = url;
@@ -156,7 +179,7 @@ export default function Home() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Today's Board</h1>
           <p className="text-[11px] uppercase tracking-wider text-gold-dark" data-testid="engine-subtitle">
-            Engine v6.9.0 · Bankroll {data ? fmtMoney(data.bankroll) : "$25,000"}
+            Engine v6.9.4 · Bankroll {data ? fmtMoney(data.bankroll) : "$25,000"}
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {data
@@ -259,20 +282,35 @@ export default function Home() {
         </div>
       )}
 
-      {/* v6.9.3: Load all SNIPERs to DK — mobile-only, shown when 2+ SNIPER picks exist. */}
-      {isMobile && sport !== "PROPS" && sniperSlipData && sniperSlipData.count + sniperSlipData.skipped >= 2 && (
-        <button
-          type="button"
-          onClick={handleLoadAllSnipers}
-          disabled={sniperSlipData.count === 0}
-          className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 font-display text-[13px] font-bold uppercase tracking-[0.14em] text-black transition-opacity active:opacity-80 disabled:opacity-40"
-          style={{ backgroundColor: "#53D337" }}
-          data-testid="dk-load-all-snipers"
-          aria-label={`Load all ${sniperSlipData.count + sniperSlipData.skipped} SNIPERs to DraftKings`}
-        >
-          <ExternalLink className="h-4 w-4 shrink-0" />
-          Load all {sniperSlipData.count + sniperSlipData.skipped} SNIPERs to DK
-        </button>
+      {/* v6.9.4: Load all SNIPERs to DK — mobile-only.
+          • Composite link available → behaves as today (count > 0).
+          • Tap-through fallback → enabled when perEventLinks.length > 0 (count === 0).
+          • Both empty → button disabled. */}
+      {isMobile && sport !== "PROPS" && sniperSlipData && (sniperHasCompositeLink || sniperHasTapThrough) && (
+        <>
+          <button
+            type="button"
+            onClick={handleLoadAllSnipers}
+            disabled={!sniperHasCompositeLink && !sniperHasTapThrough}
+            className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 font-display text-[13px] font-bold uppercase tracking-[0.14em] text-black transition-opacity active:opacity-80 disabled:opacity-40"
+            style={{ backgroundColor: "#53D337" }}
+            data-testid="dk-load-all-snipers"
+            aria-label={`Load all ${sniperDisplayCount} SNIPERs to DraftKings`}
+          >
+            <ExternalLink className="h-4 w-4 shrink-0" />
+            {sniperHasTapThrough
+              ? `Load ${sniperDisplayCount} SNIPERs to DK (tap-through)`
+              : `Load all ${sniperDisplayCount} SNIPERs to DK`}
+          </button>
+          {/* v6.9.4: tap-through sheet */}
+          {tapThroughOpen && sniperSlipData && (
+            <DkTapThroughSheet
+              payload={sniperSlipData}
+              open={tapThroughOpen}
+              onClose={() => setTapThroughOpen(false)}
+            />
+          )}
+        </>
       )}
 
       {data && visible.length > 0 && (

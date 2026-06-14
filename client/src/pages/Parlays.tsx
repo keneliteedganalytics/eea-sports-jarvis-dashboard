@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
+import { DkTapThroughSheet } from "@/components/DkTapThroughSheet";
 import { fmtLine, fmtMoney } from "@/lib/format";
 import { DISPLAY_TIMEZONE } from "@/lib/timezone";
 import { SignalsBar } from "@/components/cards/SignalsBar";
@@ -64,6 +65,7 @@ export default function Parlays() {
   // v6.9.3: DK slip loader — pre-fetch the slip for today so the button
   // knows the leg count before the user taps it. Mobile-only.
   const isMobile = useIsMobile();
+  const [parlayTapThroughOpen, setParlayTapThroughOpen] = useState(false);
   const { data: slipData } = useQuery<DkSlipPayload>({
     queryKey: [`/api/dk/slip?scope=parlays&date=${date}`],
     staleTime: 2 * 60 * 1000,
@@ -72,8 +74,24 @@ export default function Parlays() {
     enabled: isMobile,
   });
 
+  // v6.9.4: tap-through fallback helpers.
+  const parlayHasCompositeLink = !!(slipData && slipData.count > 0 && slipData.deepLink);
+  const parlayHasTapThrough = !!(
+    slipData && slipData.count === 0 && slipData.perEventLinks.length > 0
+  );
+  const parlayDisplayCount = slipData
+    ? slipData.count > 0
+      ? slipData.count + slipData.skipped
+      : slipData.perEventLinks.length
+    : 0;
+
   function handleLoadAllParlays() {
     if (!slipData) return;
+    // Tap-through fallback: open the sheet when no composite link is available.
+    if (parlayHasTapThrough) {
+      setParlayTapThroughOpen(true);
+      return;
+    }
     const url = slipData.deepLink ?? slipData.webFallback ?? null;
     if (!url) return;
     window.location.href = url;
@@ -90,7 +108,7 @@ export default function Parlays() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Virtual Bets</h1>
           <p className="text-[11px] uppercase tracking-wider text-gold-dark" data-testid="engine-subtitle">
-            Engine v6.9.0 · Bankroll $25,000
+            Engine v6.9.4 · Bankroll $25,000
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Each SNIPER pick is tracked as its own $100 paper bet. P/L tracks live as picks settle —
@@ -125,28 +143,40 @@ export default function Parlays() {
         </div>
       )}
 
-      {/* v6.9.3: Load all SNIPER parlays to DK — mobile-only, shown when >=2 legs available. */}
-      {isMobile && slipData && slipData.count + slipData.skipped >= 2 && (
+      {/* v6.9.4: Load all SNIPER parlays to DK — mobile-only.
+          • Composite link → behaves as before.
+          • Tap-through fallback → enabled when perEventLinks.length > 0 (count === 0). */}
+      {isMobile && slipData && (parlayHasCompositeLink || parlayHasTapThrough) && (
         <div className="space-y-1.5" data-testid="dk-load-all-parlays-wrapper">
           <button
             type="button"
             onClick={handleLoadAllParlays}
-            disabled={slipData.count === 0}
+            disabled={!parlayHasCompositeLink && !parlayHasTapThrough}
             className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 font-display text-[13px] font-bold uppercase tracking-[0.14em] text-black transition-opacity active:opacity-80 disabled:opacity-40"
             style={{ backgroundColor: "#53D337" }}
             data-testid="dk-load-all-parlays"
             aria-label="Load all SNIPER parlays to DraftKings"
           >
             <ExternalLink className="h-4 w-4 shrink-0" />
-            Load all SNIPER parlays to DraftKings
+            {parlayHasTapThrough
+              ? "Load all SNIPER parlays to DK (tap-through)"
+              : "Load all SNIPER parlays to DraftKings"}
             <span className="ml-1 rounded-full bg-black/20 px-1.5 py-0.5 text-[11px]">
-              {slipData.count + slipData.skipped} legs
+              {parlayDisplayCount} legs
             </span>
           </button>
-          {slipData.skipped > 0 && (
+          {slipData.skipped > 0 && !parlayHasTapThrough && (
             <p className="text-center text-[11px] text-muted-foreground" data-testid="dk-slip-skipped-note">
               {slipData.skipped} pick{slipData.skipped !== 1 ? "s" : ""} couldn’t be auto-loaded — tap individual cards instead.
             </p>
+          )}
+          {/* v6.9.4: tap-through sheet */}
+          {parlayTapThroughOpen && slipData && (
+            <DkTapThroughSheet
+              payload={slipData}
+              open={parlayTapThroughOpen}
+              onClose={() => setParlayTapThroughOpen(false)}
+            />
           )}
         </div>
       )}
