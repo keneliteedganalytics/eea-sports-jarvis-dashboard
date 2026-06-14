@@ -27,11 +27,13 @@ function test(name: string, fn: () => void) {
 
 console.log("v6.9.0 — assembleSignals serialization");
 
+// Model/market are 0..1 fractions (as the engine emits them); sharp/predict are
+// 0-100 percents. The serializer must NOT shrink the fractional fields by 100.
 const base: SignalSourceFields = {
   pickSide: "home",
-  pickWinProb: 60,
+  pickWinProb: 0.6,
   edgePp: 6,
-  pickImpliedProb: 52,
+  pickImpliedProb: 0.52,
   sharpPct: 56,
   predictPct: 58,
   openingLine: -110,
@@ -86,7 +88,7 @@ test("prism velocity is negative when the line drifts away from our side", () =>
 test("absent inputs degrade each source to null (model-only pick)", () => {
   const s = assembleSignals({
     pickSide: "away",
-    pickWinProb: 55,
+    pickWinProb: 0.55,
     edgePp: 7,
     pickImpliedProb: null,
     sharpPct: null,

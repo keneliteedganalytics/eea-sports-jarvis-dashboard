@@ -22,23 +22,32 @@ import type { PickSignals, Signal } from "../../../shared/types/signals";
 // works across surfaces without importing the heavyweight engine types.
 export interface SignalSourceFields {
   pickSide: "home" | "away" | "over" | "under" | null;
-  // Model: our projection probability (0-100) for the pick side, and its edge.
-  pickWinProb: number | null;   // 0-100
+  // Model: our projection probability (FRACTION 0..1) for the pick side, + edge.
+  pickWinProb: number | null;   // 0..1 (engine emits homeWinProb/awayWinProb)
   edgePp: number | null;        // percentage points vs posted price
-  // Market baseline: implied probability of the posted price for the pick side.
-  pickImpliedProb: number | null; // 0-100
-  // Sharp: implied probability from sharp books for the pick side (0-100).
+  // Market baseline: implied probability (FRACTION 0..1) of the posted price.
+  pickImpliedProb: number | null; // 0..1 (engine emits pickFairMkt)
+  // Sharp: implied probability from sharp books for the pick side (PERCENT 0-100).
   sharpPct: number | null;
-  // Predict: prediction-market win prob for the pick side (0-100).
+  // Predict: prediction-market win prob for the pick side (PERCENT 0-100).
   predictPct: number | null;
   // Prism inputs: pick-side American line at open and now (for velocity).
   openingLine: number | null;
   currentLine: number | null;
 }
 
+// Normalize a 0-100 PERCENT field to a 0..1 probability.
 function pctToProb(pct: number | null): number | null {
   if (pct === null || !Number.isFinite(pct)) return null;
   return Math.round((pct / 100) * 1000) / 1000;
+}
+
+// Normalize a field that is ALREADY a 0..1 fraction (engine win/implied probs).
+// Guards against an accidental 0-100 input by scaling values clearly > 1.
+function fracToProb(frac: number | null): number | null {
+  if (frac === null || !Number.isFinite(frac)) return null;
+  const p = frac > 1 ? frac / 100 : frac;
+  return Math.round(p * 1000) / 1000;
 }
 
 // American odds → implied probability (0..1), de-vig-free (raw).
@@ -53,15 +62,18 @@ function edgeVsMarket(prob: number | null, marketProb: number | null): number | 
   return Math.round((prob - marketProb) * 1000) / 10; // pp, 1 decimal
 }
 
-// Build the MARKET baseline signal (no edge vs itself).
+// Build the MARKET baseline signal (no edge vs itself). pickImpliedProb is a
+// 0..1 fraction from the engine, so do NOT divide by 100.
 function marketSignal(f: SignalSourceFields): Signal | null {
-  const prob = pctToProb(f.pickImpliedProb);
+  const prob = fracToProb(f.pickImpliedProb);
   if (prob === null) return null;
   return { prob, edgePp: 0, side: f.pickSide };
 }
 
+// MODEL is our projection. pickWinProb is a 0..1 fraction from the engine, so do
+// NOT divide by 100.
 function modelSignal(f: SignalSourceFields): Signal | null {
-  const prob = pctToProb(f.pickWinProb);
+  const prob = fracToProb(f.pickWinProb);
   if (prob === null && f.edgePp === null) return null;
   return { prob, edgePp: f.edgePp ?? null, side: f.pickSide };
 }
@@ -69,13 +81,13 @@ function modelSignal(f: SignalSourceFields): Signal | null {
 function sharpSignal(f: SignalSourceFields): Signal | null {
   const prob = pctToProb(f.sharpPct);
   if (prob === null) return null;
-  return { prob, edgePp: edgeVsMarket(prob, pctToProb(f.pickImpliedProb)), side: f.pickSide };
+  return { prob, edgePp: edgeVsMarket(prob, fracToProb(f.pickImpliedProb)), side: f.pickSide };
 }
 
 function predictSignal(f: SignalSourceFields): Signal | null {
   const prob = pctToProb(f.predictPct);
   if (prob === null) return null;
-  return { prob, edgePp: edgeVsMarket(prob, pctToProb(f.pickImpliedProb)), side: f.pickSide };
+  return { prob, edgePp: edgeVsMarket(prob, fracToProb(f.pickImpliedProb)), side: f.pickSide };
 }
 
 // PRISM = line velocity. We translate the open→current move on the pick side into
@@ -100,4 +112,35 @@ export function assembleSignals(f: SignalSourceFields): PickSignals {
     prism: prismSignal(f),
     predict: predictSignal(f),
   };
+}
+
+// v6.9.1 — prop-surface adapter. A prop pick exposes a different field set than a
+// game line, so we map it onto SignalSourceFields and reuse the same serializer:
+//   market  ← implied prob of the posted (or best-book) price for the pick side
+//   model   ← the simulator's projected hit rate (model_prob, already 0..1)
+//   prism   ← posted→closing odds velocity on the pick side
+//   sharp   ← null (no distinct sharp-book prop feed yet)
+//   predict ← null (prediction markets don't price player props)
+export interface PropSignalSourceFields {
+  side: "over" | "under" | null;
+  modelProb: number | null;       // 0..1 simulator hit rate
+  edgePp: number | null;          // pp vs posted price
+  postedOdds: number | null;      // American, the price we took
+  bestPrice: number | null;       // American, best-book fallback for market baseline
+  closingOdds: number | null;     // American, for prism velocity
+}
+
+export function assemblePropSignals(p: PropSignalSourceFields): PickSignals {
+  const marketAmerican = p.postedOdds ?? p.bestPrice;
+  const marketProb = americanToProb(marketAmerican);
+  return assembleSignals({
+    pickSide: p.side,
+    pickWinProb: p.modelProb,
+    edgePp: p.edgePp,
+    pickImpliedProb: marketProb, // already a 0..1 fraction → fracToProb keeps it
+    sharpPct: null,
+    predictPct: null,
+    openingLine: p.postedOdds,   // open→close velocity uses the price we took as "open"
+    currentLine: p.closingOdds,
+  });
 }
