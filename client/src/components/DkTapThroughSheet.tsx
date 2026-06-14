@@ -1,8 +1,11 @@
-// v6.9.4 — DK tap-through fallback sheet.
+// v6.9.5 — DK tap-through fallback sheet.
 // When the DK multi-leg composite deep link cannot be built (all selectionIds
 // are null), the three multi-leg buttons open this modal instead.  It lists
 // every pick as a tappable row so the user can load each event in DK one at a
 // time and check them off as they go.
+//
+// All deepLink values are https://sportsbook.draftkings.com/ universal links
+// — iOS routes these to the DK app (or web) without invalid-address errors.
 //
 // SessionStorage key: `dk-tapthrough-${date}-${scope}` — persists the "done"
 // bitmask across the deep-link round-trip so the sheet looks the same when

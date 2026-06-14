@@ -38,10 +38,11 @@ console.log("v6.9.2 — DraftKingsButton (Brand Board v3)");
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
+// v6.9.5: deepLink is now an https:// universal link (no more dk:// scheme)
 const sampleDk = {
   selectionId: "sel_999",
   eventId: "odds_event_abc",
-  deepLink: "dk://bet?selectionIds=sel_999",
+  deepLink: "https://sportsbook.draftkings.com/leagues/baseball/mlb",
 };
 
 // We render the button's core logic inline (same as the component but without

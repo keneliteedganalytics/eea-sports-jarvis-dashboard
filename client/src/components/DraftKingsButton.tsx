@@ -1,8 +1,10 @@
-// v6.9.2 — DraftKings one-tap deep-link button.
+// v6.9.5 — DraftKings one-tap deep-link button.
 // Renders only on mobile (≤768 px) when the pick carries a `dk` payload,
-// which is set exclusively on SNIPER-tier picks. Taps attempt the DK native
-// app deep link first; after 1.5 s (if the page is still visible) it falls
-// back to the DraftKings sportsbook web URL.
+// which is set exclusively on SNIPER-tier picks.
+//
+// All deepLink values are now https://sportsbook.draftkings.com/ universal
+// links — iOS routes these to the DK app when installed, web sportsbook
+// otherwise. No dk:// custom scheme, no 1.5 s fallback timer needed.
 
 import { ExternalLink } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -20,17 +22,11 @@ interface DraftKingsButtonProps {
 }
 
 function handleDkTap(dk: DkPayload): void {
-  const url = dk.deepLink || (dk.selectionId ? `dk://bet?selectionIds=${dk.selectionId}` : null);
+  // deepLink is always a valid https:// universal link — navigate directly.
+  // iOS universal link handling routes to the DK app if installed.
+  const url = dk.deepLink;
   if (!url) return;
-
-  const fallback = dk.selectionId
-    ? `https://sportsbook.draftkings.com/event/${dk.eventId}?selectionIds=${dk.selectionId}`
-    : `https://sportsbook.draftkings.com/event/${dk.eventId}`;
-
   window.location.href = url;
-  setTimeout(() => {
-    if (!document.hidden) window.location.href = fallback;
-  }, 1500);
 }
 
 export function DraftKingsButton({ dk, label = "Load on DraftKings" }: DraftKingsButtonProps) {

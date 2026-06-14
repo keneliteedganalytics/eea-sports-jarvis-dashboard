@@ -13,6 +13,7 @@ import type { ModelResult } from "./model";
 import { SOLID_IP_MIN, type PitcherStats } from "./pitchers";
 import type { TeamOffense } from "./ratings";
 import type { OddsEvent } from "../../adapters/oddsApi";
+import { pickToDkLink } from "../../lib/dkLinks";
 import {
   movementForPick,
   sharpConfidenceDelta,
@@ -754,6 +755,7 @@ export function buildPick(
 }
 
 // Build the DK one-tap payload from the OddsEvent's per-side DK fields.
+// v6.9.5: deepLink is always a valid https://sportsbook.draftkings.com/ URL.
 // Returns null for non-SNIPER tiers to keep the payload lean.
 export function buildDkPayload(
   ev: import("../../adapters/oddsApi").OddsEvent | null,
@@ -763,8 +765,10 @@ export function buildDkPayload(
   if (tier !== "SNIPER") return null;
   if (!ev?.dkEventId) return null;
   const selectionId = side === "home" ? ev.dkHomeSelectionId : ev.dkAwaySelectionId;
-  const deepLink = (side === "home" ? ev.dkHomeDeepLink : ev.dkAwayDeepLink) ??
-    `dk://bet?event=${encodeURIComponent(side === "home" ? ev.homeTeamFull : ev.awayTeamFull)}&market=h2h`;
+  // Use the adapter-supplied deep link if it’s already a valid DK https URL;
+  // otherwise pickToDkLink() returns a reliable sport-level league page.
+  const rawLink = side === "home" ? ev.dkHomeDeepLink : ev.dkAwayDeepLink;
+  const deepLink = pickToDkLink({ dk: { deepLink: rawLink }, sport: "mlb" });
   return { selectionId, eventId: ev.dkEventId, deepLink };
 }
 

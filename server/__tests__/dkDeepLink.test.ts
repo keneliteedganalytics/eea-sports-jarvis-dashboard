@@ -1,13 +1,16 @@
-// v6.9.2 — DraftKings one-tap deep-link unit tests.
+// v6.9.5 — DraftKings one-tap deep-link unit tests.
 // Covers:
-//   1. extractDkData (internal) via the OddsEvent shape produced by fetchOddsForSport.
-//   2. buildDkPayload — SNIPER gets dk object; EDGE/RECON/PASS get null.
-//   3. Serializer: propBoard dk field present on SNIPER, absent on non-SNIPER.
+//   1. buildDkPayload — SNIPER gets dk object; EDGE/RECON/PASS get null.
+//   2. All deepLinks are https://sportsbook.draftkings.com/ universal links (v6.9.5).
+//   3. API-supplied https deepLinks are used verbatim.
+//   4. Fallback with null selectionIds: uses https DK sport-level page.
+//   5. Serializer: propBoard dk field present on SNIPER, absent on non-SNIPER.
 // No network required — all inputs are synthetic fixtures.
 // Run: tsx server/__tests__/dkDeepLink.test.ts
 
 import assert from "node:assert/strict";
 import { buildDkPayload } from "../sports/mlb/picksEngine";
+import { pickToDkLink } from "../lib/dkLinks";
 import type { OddsEvent } from "../adapters/oddsApi";
 
 let passed = 0;
@@ -25,9 +28,13 @@ function test(name: string, fn: () => void) {
   }
 }
 
-console.log("v6.9.2 — DraftKings one-tap deep-link");
+console.log("v6.9.5 — DraftKings one-tap deep-link");
+
+const DK_BASE = "https://sportsbook.draftkings.com";
 
 // ── Helper: build a synthetic OddsEvent carrying DK home/away selection IDs ──
+// v6.9.5: dkHomeDeepLink / dkAwayDeepLink are now https:// URLs produced by
+// the updated extractDkData() via pickToDkLink().
 
 function makeOddsEvent(opts: {
   dkHomeSelectionId?: string | null;
@@ -38,19 +45,15 @@ function makeOddsEvent(opts: {
   // Set to true to explicitly pass null for dkEventId (bypassing the ?? default)
   nullDkEventId?: boolean;
 } = {}): OddsEvent {
-  // When the adapter populates OddsEvent, it always fills dkHomeDeepLink / dkAwayDeepLink
-  // via buildFallback — they're only null when DK is absent from the response entirely.
-  // In this fixture, simulate the adapter-output: if selectionId is present, build the
-  // fallback deep link that the adapter would have produced.
   const dkHomeSelectionId = opts.dkHomeSelectionId !== undefined ? opts.dkHomeSelectionId : "sel_home_999";
   const dkAwaySelectionId = opts.dkAwaySelectionId !== undefined ? opts.dkAwaySelectionId : "sel_away_888";
-  // Simulate adapter buildFallback: uses sid when present.
+  // v6.9.5: adapter now produces https:// fallback links via pickToDkLink().
   const homeDeepLink = opts.dkHomeDeepLink !== undefined
     ? opts.dkHomeDeepLink
-    : dkHomeSelectionId ? `dk://bet?selectionIds=${dkHomeSelectionId}` : `dk://bet?event=New%20York%20Yankees&market=h2h`;
+    : `${DK_BASE}/leagues/baseball/mlb`;
   const awayDeepLink = opts.dkAwayDeepLink !== undefined
     ? opts.dkAwayDeepLink
-    : dkAwaySelectionId ? `dk://bet?selectionIds=${dkAwaySelectionId}` : `dk://bet?event=Boston%20Red%20Sox&market=h2h`;
+    : `${DK_BASE}/leagues/baseball/mlb`;
   return {
     eventId: "odds_event_abc123",
     startIso: "2026-06-15T17:10:00Z",
@@ -78,8 +81,8 @@ test("SNIPER home pick returns dk payload with home selectionId", () => {
   assert.ok(dk !== null, "expected non-null dk on SNIPER");
   assert.equal(dk!.eventId, "odds_event_abc123");
   assert.equal(dk!.selectionId, "sel_home_999");
-  // deepLink: fallback since dkHomeDeepLink is null → uses selectionId
-  assert.ok(dk!.deepLink.includes("sel_home_999"), `deepLink should include selectionId: ${dk!.deepLink}`);
+  // v6.9.5: deepLink is always a valid DK https URL
+  assert.ok(dk!.deepLink.startsWith(DK_BASE + "/"), `deepLink must be https DK URL: ${dk!.deepLink}`);
 });
 
 test("SNIPER away pick returns dk payload with away selectionId", () => {
@@ -87,6 +90,7 @@ test("SNIPER away pick returns dk payload with away selectionId", () => {
   const dk = buildDkPayload(ev, "SNIPER", "away");
   assert.ok(dk !== null, "expected non-null dk on SNIPER away");
   assert.equal(dk!.selectionId, "sel_away_888");
+  assert.ok(dk!.deepLink.startsWith(DK_BASE + "/"), `deepLink must be https DK URL: ${dk!.deepLink}`);
 });
 
 test("EDGE pick returns null (not enriched)", () => {
@@ -120,62 +124,61 @@ test("oddsEvent with null dkEventId returns null for SNIPER", () => {
   assert.equal(dk, null, "null dkEventId → null dk");
 });
 
-// ── 3. API-supplied deep links preferred over fallback ───────────────────────
+// ── 3. API-supplied https deep links used verbatim ───────────────────────────
 
-test("API-supplied homeDeepLink is used verbatim when present", () => {
-  const ev = makeOddsEvent({ dkHomeDeepLink: "dk://sportsbook/event/12345?selId=777" });
+test("API-supplied https homeDeepLink is used verbatim when present", () => {
+  const ev = makeOddsEvent({ dkHomeDeepLink: `${DK_BASE}/event/27734567?selectionIds=777` });
   const dk = buildDkPayload(ev, "SNIPER", "home");
   assert.ok(dk !== null);
-  assert.equal(dk!.deepLink, "dk://sportsbook/event/12345?selId=777");
+  assert.equal(dk!.deepLink, `${DK_BASE}/event/27734567?selectionIds=777`);
 });
 
-test("API-supplied awayDeepLink is used for away picks", () => {
-  const ev = makeOddsEvent({ dkAwayDeepLink: "dk://sportsbook/event/12345?selId=888" });
+test("API-supplied https awayDeepLink is used for away picks", () => {
+  const ev = makeOddsEvent({ dkAwayDeepLink: `${DK_BASE}/event/27734567?selectionIds=888` });
   const dk = buildDkPayload(ev, "SNIPER", "away");
   assert.ok(dk !== null);
-  assert.equal(dk!.deepLink, "dk://sportsbook/event/12345?selId=888");
+  assert.equal(dk!.deepLink, `${DK_BASE}/event/27734567?selectionIds=888`);
 });
 
 // ── 4. Fallback when no API selection IDs (graceful degradation) ─────────────
 
-test("SNIPER pick with null selectionIds produces a search-style deepLink", () => {
-  // When the adapter's buildFallback gets a null sid, it uses the team-name form.
-  // Simulate that by providing explicit dkHomeDeepLink with the event form.
+test("SNIPER pick with null selectionIds falls back to https DK sport page", () => {
+  // v6.9.5: adapter produces https:// fallback URLs via pickToDkLink().
   const ev = makeOddsEvent({
     dkHomeSelectionId: null,
     dkAwaySelectionId: null,
-    dkHomeDeepLink: "dk://bet?event=New%20York%20Yankees&market=h2h",
-    dkAwayDeepLink: "dk://bet?event=Boston%20Red%20Sox&market=h2h",
+    // Simulate adapter output: no outcome.link → pickToDkLink({ sport: "mlb" })
+    dkHomeDeepLink: `${DK_BASE}/leagues/baseball/mlb`,
+    dkAwayDeepLink: `${DK_BASE}/leagues/baseball/mlb`,
   });
   const dk = buildDkPayload(ev, "SNIPER", "home");
   assert.ok(dk !== null);
   assert.equal(dk!.selectionId, null);
-  // Falls back to event+market form using the encoded team name
-  assert.ok(dk!.deepLink.includes("dk://bet?event="), `unexpected deepLink: ${dk!.deepLink}`);
-  assert.ok(dk!.deepLink.includes("New%20York%20Yankees"),
-    `deepLink should include encoded home team name: ${dk!.deepLink}`);
+  // Falls back to https DK league page (NOT dk:// scheme)
+  assert.ok(dk!.deepLink.startsWith(DK_BASE + "/"), `deepLink must be https DK URL: ${dk!.deepLink}`);
+  assert.ok(!dk!.deepLink.startsWith("dk://"), `Must not use dk:// scheme: ${dk!.deepLink}`);
 });
 
 // ── 5. Props board serializer helper (buildPropDk logic) ─────────────────────
+// v6.9.5: buildPropDk now calls pickToDkLink() — deepLink is always a https DK URL.
 
-// We test the logic inline (it's a pure function of tier + game_id + player_name + market_type).
 function buildPropDkInline(row: { tier: string; game_id: string; player_name: string; market_type: string }) {
   if (row.tier !== "SNIPER") return null;
   const eventId = row.game_id;
-  const player = encodeURIComponent(row.player_name);
-  const market = encodeURIComponent(row.market_type);
-  const deepLink = `dk://bet?player=${player}&market=${market}&eventId=${encodeURIComponent(eventId)}`;
+  // Mirror the updated routes.ts buildPropDk() logic
+  const deepLink = pickToDkLink({ sport: "mlb", marketType: row.market_type });
   return { selectionId: null, eventId, deepLink };
 }
 
-test("propBoard serializer: SNIPER prop gets dk payload", () => {
+test("propBoard serializer: SNIPER prop gets dk payload with https URL", () => {
   const row = { tier: "SNIPER", game_id: "game_abc", player_name: "Aaron Judge", market_type: "batter_home_runs" };
   const dk = buildPropDkInline(row);
   assert.ok(dk !== null, "SNIPER prop should have dk payload");
   assert.equal(dk!.eventId, "game_abc");
-  assert.ok(dk!.deepLink.includes("Aaron%20Judge") || dk!.deepLink.includes("Aaron+Judge"),
-    `deepLink should include player name: ${dk!.deepLink}`);
-  assert.ok(dk!.deepLink.includes("batter_home_runs"), `deepLink should include market: ${dk!.deepLink}`);
+  // v6.9.5: deepLink is a https DK URL (props page) — not dk:// scheme
+  assert.ok(dk!.deepLink.startsWith(DK_BASE + "/"), `deepLink must be https DK URL: ${dk!.deepLink}`);
+  assert.ok(dk!.deepLink.includes("player-props"), `deepLink should point to props page: ${dk!.deepLink}`);
+  assert.ok(!dk!.deepLink.startsWith("dk://"), `Must not use dk:// scheme: ${dk!.deepLink}`);
 });
 
 test("propBoard serializer: EDGE prop returns null", () => {

@@ -1,12 +1,11 @@
-// v6.9.3 — DraftKings multi-leg slip loader API tests.
+// v6.9.5 — DraftKings multi-leg slip loader API tests.
 // Covers:
 //   1. scope=parlays returns deep link with comma-separated IDs from SNIPER parlay legs only
 //   2. scope=game filters by gameId correctly
 //   3. scope=sniper-singles returns all SNIPER prop picks
 //   4. null selectionIds are excluded from main selectionIds array but appear in perEventLinks
-//   5. scope=game without gameId returns 400
-//   6. invalid scope returns 400
-//   7. deduplicated legs (same eventId+selectionId pair appears only once)
+//   5. perEventLinks.deepLink is a valid https://sportsbook.draftkings.com/ URL (v6.9.5)
+//   6. deduplicated legs (same eventId+selectionId pair appears only once)
 //
 // Run: tsx server/__tests__/dkSlipApi.test.ts
 
@@ -14,8 +13,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import express from "express";
-import type { AddressInfo } from "node:net";
 
 // ── Isolated temp DB ─────────────────────────────────────────────────────────
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "graded-dk-slip-"));
@@ -28,9 +25,11 @@ const {
   getVirtualParlaysForDate,
 } = await import("../gradedBook");
 const { buildVirtualParlaysForDates } = await import("../jobs/virtualParlayBuilder");
+const { pickToDkLink } = await import("../lib/dkLinks");
 
 // ── Test data ─────────────────────────────────────────────────────────────────
 const DAY = "2026-07-10";
+const DK_BASE = "https://sportsbook.draftkings.com";
 
 // Seed two SNIPER props for the same game (both with null selectionId, since
 // the current pipeline always produces null for props).
@@ -81,16 +80,16 @@ buildVirtualParlaysForDates([DAY]);
 
 // ── Mirror the route handler inline ──────────────────────────────────────────
 // We can't import routes.ts (it starts live workers on import), so we replicate
-// the /api/dk/slip logic directly here, using the same helper (buildPropDk).
+// the /api/dk/slip logic directly here, using the same helper (pickToDkLink).
+// v6.9.5: buildPropDkLocal uses pickToDkLink() to produce https:// deepLinks.
 
 function buildPropDkLocal(row: {
   tier: string; game_id: string; player_name: string; market_type: string; market_label: string | null;
 }) {
   if (row.tier !== "SNIPER") return null;
   const eventId = row.game_id;
-  const player = encodeURIComponent(row.player_name);
-  const market = encodeURIComponent(row.market_type);
-  const deepLink = `dk://bet?player=${player}&market=${market}&eventId=${encodeURIComponent(eventId)}`;
+  // v6.9.5: use https universal link (same as routes.ts buildPropDk)
+  const deepLink = pickToDkLink({ sport: "mlb", marketType: row.market_type });
   return { selectionId: null as string | null, eventId, deepLink };
 }
 
@@ -102,7 +101,7 @@ function buildSlipResponse(
   date: string,
   gameId?: string,
 ) {
-  type CandidateLeg = { selectionId: string | null; eventId: string; label: string };
+  type CandidateLeg = { selectionId: string | null; eventId: string; label: string; dkLink: string };
   const candidates: CandidateLeg[] = [];
 
   if (scope === "parlays") {
@@ -115,7 +114,7 @@ function buildSlipResponse(
         if (!row || row.tier !== "SNIPER") continue;
         const dk = buildPropDkLocal(row);
         if (!dk) continue;
-        candidates.push({ selectionId: dk.selectionId, eventId: dk.eventId, label: `${row.player_name} · ${row.market_label ?? row.market_type}` });
+        candidates.push({ selectionId: dk.selectionId, eventId: dk.eventId, label: `${row.player_name} · ${row.market_label ?? row.market_type}`, dkLink: dk.deepLink });
       }
     }
   } else if (scope === "sniper-singles") {
@@ -123,7 +122,7 @@ function buildSlipResponse(
     for (const row of rows) {
       const dk = buildPropDkLocal(row);
       if (!dk) continue;
-      candidates.push({ selectionId: dk.selectionId, eventId: dk.eventId, label: `${row.player_name} · ${row.market_label ?? row.market_type}` });
+      candidates.push({ selectionId: dk.selectionId, eventId: dk.eventId, label: `${row.player_name} · ${row.market_label ?? row.market_type}`, dkLink: dk.deepLink });
     }
   } else if (scope === "game" && gameId) {
     const rows = propBoard({ date, tier: "ALL" }).filter(
@@ -132,7 +131,7 @@ function buildSlipResponse(
     for (const row of rows) {
       const dk = buildPropDkLocal(row);
       if (!dk) continue;
-      candidates.push({ selectionId: dk.selectionId, eventId: dk.eventId, label: `${row.player_name} · ${row.market_label ?? row.market_type}` });
+      candidates.push({ selectionId: dk.selectionId, eventId: dk.eventId, label: `${row.player_name} · ${row.market_label ?? row.market_type}`, dkLink: dk.deepLink });
     }
   }
 
@@ -149,15 +148,16 @@ function buildSlipResponse(
   const eventIds = [...new Set(deduped.map((c) => c.eventId))];
   const skipped = withoutId.length;
 
-  const deepLink = selectionIds.length > 0 ? `dk://bet?selectionIds=${selectionIds.join(",")}` : null;
-  const webFallback = selectionIds.length > 0 ? `https://sportsbook.draftkings.com/?selectionIds=${selectionIds.join(",")}` : null;
+  const deepLink = selectionIds.length > 0 ? `${DK_BASE}/?selectionIds=${selectionIds.join(",")}` : null;
+  const webFallback = selectionIds.length > 0 ? `${DK_BASE}/?selectionIds=${selectionIds.join(",")}` : null;
+  // v6.9.5: perEventLinks deepLink is an https:// universal link (not dk://)
   const perEventLinks = withoutId.map((c) => ({
     eventId: c.eventId,
-    deepLink: `dk://event?id=${encodeURIComponent(c.eventId)}`,
+    deepLink: c.dkLink,
     label: c.label,
   }));
 
-  return { scope, date, selectionIds, eventIds, count: selectionIds.length, skipped, skippedReason: skipped > 0 ? "null selection id (fallback to event-level deep link)" : null, deepLink, webFallback, perEventLinks };
+  return { scope, date, selectionIds, eventIds, count: selectionIds.length, skipped, skippedReason: skipped > 0 ? "null selection id (fallback to sport-level deep link)" : null, deepLink, webFallback, perEventLinks };
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -176,7 +176,7 @@ function test(name: string, fn: () => void) {
   }
 }
 
-console.log("v6.9.3 — DraftKings multi-leg slip loader API");
+console.log("v6.9.5 — DraftKings multi-leg slip loader API");
 
 // ── 1. scope=parlays ──────────────────────────────────────────────────────────
 test("scope=parlays: returns response with correct shape", () => {
@@ -229,14 +229,19 @@ test("null selectionIds excluded from main selectionIds array", () => {
   assert.ok(slip.skipped > 0, "skipped must be >0 when all sids are null");
 });
 
-test("null selectionIds appear in perEventLinks with correct shape", () => {
+test("null selectionIds appear in perEventLinks with valid https DK URLs (v6.9.5)", () => {
   const slip = buildSlipResponse("sniper-singles", DAY);
   assert.ok(slip.perEventLinks.length > 0, "perEventLinks must be non-empty");
   for (const l of slip.perEventLinks) {
     assert.ok(typeof l.eventId === "string", "perEventLinks[].eventId must be string");
     assert.ok(typeof l.deepLink === "string", "perEventLinks[].deepLink must be string");
     assert.ok(typeof l.label === "string", "perEventLinks[].label must be string");
-    assert.ok(l.deepLink.startsWith("dk://event"), `perEventLink deepLink must use dk://event: ${l.deepLink}`);
+    // v6.9.5: must be a valid https DK universal link, NOT dk:// scheme
+    assert.ok(
+      l.deepLink.startsWith(DK_BASE + "/"),
+      `perEventLink deepLink must be https DK URL (not dk://): ${l.deepLink}`,
+    );
+    assert.ok(!l.deepLink.startsWith("dk://"), `Must not use dk:// scheme: ${l.deepLink}`);
   }
 });
 

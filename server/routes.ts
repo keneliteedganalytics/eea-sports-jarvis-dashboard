@@ -57,11 +57,11 @@ import type { PolySport } from "./adapters/polymarket";
 import { assemblePropSignals } from "./sports/signals/assembleSignals";
 import type { PropPickRow } from "./gradedBook";
 import { z } from "zod";
+import { pickToDkLink } from "./lib/dkLinks";
 
-// v6.9.2 — build the DraftKings deep-link payload for a SNIPER prop pick.
-// Prop picks don't carry DK selection IDs from the ingestion pipeline (the per-event
-// endpoint doesn't include sid/link on prop outcomes with the current plan),
-// so we always use the search-style deep link keyed to the player name + market.
+// v6.9.5 — build the DraftKings deep-link payload for a SNIPER prop pick.
+// Uses https://sportsbook.draftkings.com/ universal links that iOS routes to
+// the DK app (or web sportsbook) without invalid-address errors.
 // Returns null for non-SNIPER tiers.
 function buildPropDk(
   row: PropPickRow,
@@ -69,10 +69,8 @@ function buildPropDk(
   if (row.tier !== "SNIPER") return null;
   // game_id doubles as the odds-api event ID for props in the current schema.
   const eventId = row.game_id;
-  // Build a search-style deep link with the available identifiers.
-  const player = encodeURIComponent(row.player_name);
-  const market = encodeURIComponent(row.market_type);
-  const deepLink = `dk://bet?player=${player}&market=${market}&eventId=${encodeURIComponent(eventId)}`;
+  const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba" | "soccer";
+  const deepLink = pickToDkLink({ sport, marketType: row.market_type });
   return { selectionId: null, eventId, deepLink };
 }
 
@@ -877,11 +875,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
 
     // Collect candidate picks depending on scope.
-    // Each entry: { selectionId: string|null, eventId: string, label: string }
+    // Each entry: { selectionId: string|null, eventId: string, label: string, dk: DkLinkInput }
+    // dk is carried forward so perEventLinks can call pickToDkLink() with the right sport+market.
+    type DkLinkInput = Parameters<typeof pickToDkLink>[0];
     type CandidateLeg = {
       selectionId: string | null;
       eventId: string;
       label: string;
+      dk: DkLinkInput;
     };
     const candidates: CandidateLeg[] = [];
 
@@ -896,10 +897,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           if (!row || row.tier !== "SNIPER") continue;
           const dk = buildPropDk(row);
           if (!dk) continue;
+          const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba" | "soccer";
           candidates.push({
             selectionId: dk.selectionId,
             eventId: dk.eventId,
             label: `${row.player_name} · ${row.market_label ?? row.market_type}`,
+            dk: { sport, marketType: row.market_type },
           });
         }
       }
@@ -909,10 +912,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const row of rows) {
         const dk = buildPropDk(row);
         if (!dk) continue;
+        const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba" | "soccer";
         candidates.push({
           selectionId: dk.selectionId,
           eventId: dk.eventId,
           label: `${row.player_name} · ${row.market_label ?? row.market_type}`,
+          dk: { sport, marketType: row.market_type },
         });
       }
     } else if (scope === "game" && gameId) {
@@ -923,10 +928,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const row of rows) {
         const dk = buildPropDk(row);
         if (!dk) continue;
+        const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba" | "soccer";
         candidates.push({
           selectionId: dk.selectionId,
           eventId: dk.eventId,
           label: `${row.player_name} · ${row.market_label ?? row.market_type}`,
+          dk: { sport, marketType: row.market_type },
         });
       }
     }
@@ -963,9 +970,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         : null;
 
     // Per-event fallback links for picks without selection IDs.
+    // v6.9.5: use https universal links — iOS routes these to the DK app (or web)
+    // without invalid-address errors.
     const perEventLinks = withoutId.map((c) => ({
       eventId: c.eventId,
-      deepLink: `dk://event?id=${encodeURIComponent(c.eventId)}`,
+      deepLink: c.dk ? pickToDkLink(c.dk) : pickToDkLink({ sport: "mlb" }),
       label: c.label,
     }));
 
@@ -978,7 +987,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       skipped,
       skippedReason:
         skipped > 0
-          ? "null selection id (fallback to event-level deep link)"
+          ? "null selection id (fallback to sport-level deep link)"
           : null,
       deepLink,
       webFallback,

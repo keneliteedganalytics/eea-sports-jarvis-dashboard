@@ -5,6 +5,7 @@
 import { getJson } from "./http";
 import { nameToAbbr } from "../sports/mlb/teams";
 import { TRUSTED_BOOKS } from "../core/odds";
+import { pickToDkLink } from "../lib/dkLinks";
 
 const BASE = "https://api.the-odds-api.com/v4/sports";
 
@@ -148,10 +149,11 @@ function consensusTotal(events: RawBookmaker[]): TotalConsensus {
   };
 }
 
-// v6.9.2: Extract DraftKings selection IDs and deep-link URLs from a raw event.
+// v6.9.5: Extract DraftKings selection IDs and deep-link URLs from a raw event.
 // DK is the "draftkings" bookmaker key; outcomes sometimes carry .sid (selection ID)
-// and .link (a direct deep-link). When those fields are absent we build a search-style
-// fallback deep link using the event ID and team names so the button always has a URL.
+// and .link (a direct deep-link / universal link). When those fields are absent we
+// call pickToDkLink() which returns a valid https://sportsbook.draftkings.com/…
+// URL that iOS routes to the DK app (or web sportsbook) without errors.
 function extractDkData(
   ev: RawEvent,
 ): {
@@ -179,15 +181,10 @@ function extractDkData(
   const dkHomeSelectionId = homeOutcome?.sid ?? null;
   const dkAwaySelectionId = awayOutcome?.sid ?? null;
 
-  // Prefer API-supplied deep link; fall back to search-style deep link using
-  // the selection ID when available, otherwise the event name.
-  const buildFallback = (teamName: string, sid: string | null): string => {
-    if (sid) return `dk://bet?selectionIds=${sid}`;
-    return `dk://bet?event=${encodeURIComponent(teamName)}&market=h2h`;
-  };
-
-  const dkHomeDeepLink = homeOutcome?.link ?? buildFallback(ev.home_team, dkHomeSelectionId);
-  const dkAwayDeepLink = awayOutcome?.link ?? buildFallback(ev.away_team, dkAwaySelectionId);
+  // Prefer API-supplied outcome.link (a real DK universal link) if present.
+  // Fall back to pickToDkLink() which always returns a valid https URL.
+  const dkHomeDeepLink = homeOutcome?.link ?? pickToDkLink({ sport: "mlb" });
+  const dkAwayDeepLink = awayOutcome?.link ?? pickToDkLink({ sport: "mlb" });
 
   return { dkEventId, dkHomeSelectionId, dkAwaySelectionId, dkHomeDeepLink, dkAwayDeepLink };
 }
