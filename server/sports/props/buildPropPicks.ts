@@ -32,6 +32,7 @@ import {
 import { computePropEdge, qualifiesAsPick, type BookQuote, type PropEdgeResult } from "./edge";
 import { computeHitRates, hitRateAligned, type HitRates } from "./hitRates";
 import { bigDogTaperFactor, pickRankScore } from "../units";
+import { isChalkierThanSniperCap } from "../../core/tier";
 
 // ── Operating constants (spec §5) ──────────────────────────────────────────
 
@@ -62,9 +63,10 @@ export interface TierContext {
   l10: HitRates["l10"];
   l20: HitRates["l20"];
   dataQualityTier: string; // HIGH | MEDIUM | LOW
+  american?: number | null; // v6.8.1: the pick's price, for the SNIPER chalk cap
 }
 
-// SNIPER: edge ≥ 8 AND L20 aligned AND data HIGH
+// SNIPER: edge ≥ 8 AND L20 aligned AND data HIGH AND price not chalkier than cap
 // EDGE:   edge ≥ 6 AND L10 aligned
 // RECON:  edge ≥ 4
 // "aligned": OVER → window rate ≥ 0.50; UNDER → ≤ 0.50.
@@ -73,7 +75,10 @@ export function assignPropTier(ctx: TierContext): PropTier {
   if (
     ctx.edgePp >= PROP_SNIPER_EDGE &&
     dq === "HIGH" &&
-    hitRateAligned(ctx.l20, ctx.side)
+    hitRateAligned(ctx.l20, ctx.side) &&
+    // v6.8.1: heavy chalk can't be SNIPER. Fall through so a chalk pick that
+    // still clears EDGE becomes EDGE (else RECON/PASS).
+    !isChalkierThanSniperCap(ctx.american)
   ) {
     return "SNIPER";
   }
@@ -298,7 +303,8 @@ export async function buildMlbPropPicks(
     | "model_outlier_v676"
     | "below_threshold"
     | "low_data_quality"
-    | "daily_cap";
+    | "daily_cap"
+    | "chalk_cap";
   function recordPass(args: {
     pickId: string;
     offer: GroupedOffer;
@@ -485,9 +491,15 @@ export async function buildMlbPropPicks(
       continue;
     }
 
-    const tier = assignPropTier({ edgePp: edge.edgePp, side: edge.side, l10: hitRates.l10, l20: hitRates.l20, dataQualityTier: dq });
+    const tier = assignPropTier({ edgePp: edge.edgePp, side: edge.side, l10: hitRates.l10, l20: hitRates.l20, dataQualityTier: dq, american: edge.bestPrice });
     if (tier === "PASS") {
-      recordPass({ pickId, offer: g, side: edge.side, price: edge.bestPrice, reason: "below_threshold", edge, dist: sim.distribution, dq, hitRates, team, opponent });
+      // v6.8.1: distinguish a chalk-capped PASS — a pick that would have been
+      // SNIPER but for its price being chalkier than the cap (and which also
+      // failed EDGE/RECON) — so it surfaces under the chalk_cap chip.
+      const blockedByChalk =
+        isChalkierThanSniperCap(edge.bestPrice) &&
+        assignPropTier({ edgePp: edge.edgePp, side: edge.side, l10: hitRates.l10, l20: hitRates.l20, dataQualityTier: dq, american: null }) === "SNIPER";
+      recordPass({ pickId, offer: g, side: edge.side, price: edge.bestPrice, reason: blockedByChalk ? "chalk_cap" : "below_threshold", edge, dist: sim.distribution, dq, hitRates, team, opponent });
       continue;
     }
 

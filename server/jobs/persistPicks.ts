@@ -52,6 +52,7 @@ export function persistPick(pick: BuiltPick): boolean {
 function gamePassReason(pick: BuiltPick): string {
   const r = (pick.hardPassReason ?? pick.passReason ?? "").toLowerCase();
   if (!r) return "daily_cap";
+  if (r.includes("chalk")) return "chalk_cap"; // v6.8.1 SNIPER chalk cap
   if (r.includes("data") || r.includes("sample")) return "low_data_quality";
   return "below_threshold";
 }

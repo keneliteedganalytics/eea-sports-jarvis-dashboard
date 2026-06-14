@@ -26,6 +26,32 @@ export const TIER_RECON_WINPROB = 0.2;
 // ── EV-per-100 ceiling for SNIPER (v6.6) ────────────────────────────
 export const TIER_SNIPER_EV_MAX = 25;
 
+// ── SNIPER chalk cap (v6.8.1) ───────────────────────────────────────
+// 7-day data: SNIPER hits 71.8% but posts −4.3% ROI because heavy chalk pays
+// $12–$30 yet costs $100 when it busts. SNIPER is reserved for viable prices: a
+// negative-American price chalkier (more negative) than this cap cannot be
+// SNIPER — it demotes to EDGE if it still clears EDGE, else PASS. Boundary is
+// EXCLUSIVE: −250 stays SNIPER; only −251 and chalkier demote. Env-overridable
+// via SNIPER_MAX_CHALK_AMERICAN (must be negative) so we can dial without a
+// redeploy. Single source of truth for both game-line and prop surfaces.
+export const SNIPER_MAX_CHALK_AMERICAN = (() => {
+  const env = Number(process.env.SNIPER_MAX_CHALK_AMERICAN);
+  return Number.isFinite(env) && env < 0 ? env : -250;
+})();
+
+// True when a price is chalkier than the SNIPER cap (e.g. −300 < −250). A null
+// price is never chalk (can't disqualify what we can't price).
+export function isChalkierThanSniperCap(american: number | null | undefined): boolean {
+  return american != null && american < SNIPER_MAX_CHALK_AMERICAN;
+}
+
+// A short audit string for a chalk-capped demotion, e.g. "chalk cap (-300 past
+// -250)". Used as the game-line passReason so persistPicks can attribute it to
+// the chalk_cap chip. The word "chalk" is the marker gamePassReason keys on.
+export function chalkCapReason(american: number | null | undefined): string {
+  return `chalk cap (${american} past ${SNIPER_MAX_CHALK_AMERICAN})`;
+}
+
 // ── Hard PASS gate thresholds (v6.6) ────────────────────────────────
 export const HARD_PASS_TRAP_GAP_PP = 25; // trapSignal AND gap > 25 → PASS (was 30)
 export const HARD_PASS_EV_PER_100 = 30; // EV/$100 above this is a calibration artifact
@@ -131,7 +157,10 @@ function computeBaseTier(edge: number, conf: number, input: TierInput): Verdict 
     conf >= TIER_SNIPER_CONF &&
     ev <= TIER_SNIPER_EV_MAX &&
     wp >= TIER_SNIPER_WINPROB &&
-    dqHigh
+    dqHigh &&
+    // v6.8.1: heavy chalk can't be SNIPER. Fall through to the EDGE check so a
+    // chalk pick that still clears EDGE becomes EDGE (else RECON/PASS).
+    !isChalkierThanSniperCap(input.oddsAmerican)
   ) {
     return "SNIPER";
   }

@@ -9,13 +9,13 @@ type SportChip = "ALL" | "MLB" | "NHL" | "NBA" | "SOCCER";
 type TypeChip = "ALL" | "game" | "prop";
 type ResultChip = "ALL" | "W" | "L" | "P";
 type TierChip = "ALL" | "SNIPER" | "EDGE" | "RECON";
-type ReasonChip = "ALL" | "outlier" | "model_outlier_v676" | "below_threshold" | "low_data_quality" | "daily_cap";
+type ReasonChip = "ALL" | "outlier" | "model_outlier_v676" | "below_threshold" | "low_data_quality" | "daily_cap" | "chalk_cap";
 
 const SPORTS: SportChip[] = ["ALL", "MLB", "NHL", "NBA", "SOCCER"];
 const TYPES: TypeChip[] = ["ALL", "game", "prop"];
 const RESULTS: ResultChip[] = ["ALL", "W", "L", "P"];
 const TIERS: TierChip[] = ["ALL", "SNIPER", "EDGE", "RECON"];
-const REASONS: ReasonChip[] = ["ALL", "outlier", "model_outlier_v676", "below_threshold", "low_data_quality", "daily_cap"];
+const REASONS: ReasonChip[] = ["ALL", "outlier", "model_outlier_v676", "below_threshold", "low_data_quality", "daily_cap", "chalk_cap"];
 const PAGE_SIZE = 50;
 
 const RESULT_META: Record<string, { label: string; color: string }> = {
@@ -30,6 +30,7 @@ const REASON_LABEL: Record<string, string> = {
   below_threshold: "BELOW THRESHOLD",
   low_data_quality: "LOW DATA",
   daily_cap: "DAILY CAP",
+  chalk_cap: "CHALK CAP",
   low_win_prob: "LOW WIN%",
   other: "OTHER",
 };

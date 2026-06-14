@@ -1,7 +1,7 @@
 // Picks engine — ported from sports-engine sports/mlb/picks_engine.py.
 // Confidence (7-component), Kelly sizing, verdict tier, daily 6-pick cap.
 
-import { assignTier, downgradeTier, evaluateHardGates } from "../../core/tier";
+import { assignTier, downgradeTier, evaluateHardGates, isChalkierThanSniperCap, chalkCapReason } from "../../core/tier";
 import { convictionUnits, applyJuicePenalty, unitsToStake, computeUnit } from "../../core/sizing";
 import { taperBigDogStake, capEvPer100, pickRankScore } from "../units";
 import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
@@ -570,6 +570,12 @@ export function buildPick(
   let passReason: string | null = hardGate.fired ? hardGate.reason : null;
 
   let tier = assignTier(tierInput);
+  // v6.8.1: if this pick is chalkier than the SNIPER cap and it landed on PASS,
+  // attribute the PASS to the chalk cap (persistPicks maps "chalk" → chalk_cap).
+  // A chalk pick that still clears EDGE stays EDGE — no reason override.
+  if (tier === "PASS" && !passReason && isChalkierThanSniperCap(pickMl)) {
+    passReason = chalkCapReason(pickMl);
+  }
   if (lineupForcesDowngrade(lineup.status) && tier !== "PASS") {
     tier = downgradeTier(tier);
   }
