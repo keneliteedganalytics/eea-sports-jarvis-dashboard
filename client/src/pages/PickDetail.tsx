@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useRoute } from "wouter";
 import { ArrowLeft } from "lucide-react";
 import { TierPill } from "@/components/TierPill";
-import { SignalBars } from "@/components/SignalBars";
+import { SignalsBar } from "@/components/cards/SignalsBar";
 import { HitRateFooter } from "@/components/HitRateFooter";
 import { JarvisPlayer } from "@/components/JarvisPlayer";
 import { WhyPanel } from "@/components/WhyPanel";
@@ -70,11 +70,7 @@ export default function PickDetail() {
             </div>
 
             <div className="mt-4">
-              <SignalBars
-                publicPct={(data.pickImpliedProb ?? 0) * 100}
-                sharpPct={(data.pickWinProb ?? 0) * 100}
-                prismPct={data.polymarket.found ? data.polymarket.pct ?? null : null}
-              />
+              <SignalsBar signals={data.signals} />
             </div>
           </div>
 

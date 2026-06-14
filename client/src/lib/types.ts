@@ -3,6 +3,20 @@
 
 export type Verdict = "SNIPER" | "EDGE" | "RECON" | "PASS";
 
+// v6.9.1 — five-source signal block (mirror of shared/types/signals.ts).
+export interface Signal {
+  prob: number | null; // fair win/cover prob for our side, 0..1
+  edgePp: number | null; // edge in pp vs the posted price (or velocity for prism)
+  side: "home" | "away" | "over" | "under" | null;
+}
+export interface PickSignals {
+  market: Signal | null;
+  sharp: Signal | null;
+  model: Signal | null;
+  prism: Signal | null;
+  predict: Signal | null;
+}
+
 export interface Market {
   available: boolean;
   pick: string | null;
@@ -93,6 +107,8 @@ export interface BuiltPick {
   polymarket: { found: boolean; pct?: number | null; reason?: string };
   publicPct: number | null;
   sharpPct: number | null;
+  // v6.9.1 — five-source signal block assembled at serialization.
+  signals?: PickSignals | null;
   awaySp?: { available?: boolean; pitcher?: string; era?: number | null; fip?: number | null; ip?: number | null; whip?: number | null; svPct?: number | null };
   homeSp?: { available?: boolean; pitcher?: string; era?: number | null; fip?: number | null; ip?: number | null; whip?: number | null; svPct?: number | null };
   // NHL-only goalie fields (undefined on MLB/NBA picks)
@@ -446,6 +462,8 @@ export interface PropBoardItem {
   liveState?: "pending" | "live_clear" | "busted" | "paid";
   currentValue?: number | null;
   gameStatus?: "scheduled" | "live" | "final" | null;
+  // v6.9.1 — five-source signal block assembled at serialization.
+  signals?: PickSignals | null;
 }
 
 export interface PropLiveTracking {
@@ -483,6 +501,7 @@ export interface ParlayLeg {
   liveState: string;
   currentValue: number | null;
   disposition: ParlayLegDisposition;
+  signals?: PickSignals | null;
 }
 
 export interface ParlayItem {
@@ -503,6 +522,7 @@ export interface ParlayItem {
   plDollars: number | null;
   gradedAt: number | null;
   legs: ParlayLeg[];
+  signals?: PickSignals | null;
 }
 
 export interface ParlayBoardPayload {

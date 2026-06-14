@@ -107,7 +107,10 @@ export default function Home() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Today's Board</h1>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[11px] uppercase tracking-wider text-gold-dark" data-testid="engine-subtitle">
+            Engine v6.9.0 · Bankroll {data ? fmtMoney(data.bankroll) : "$25,000"}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
             {data
               ? `Operating day ${data.operatingDay} · bankroll ${fmtMoney(data.bankroll)} · ${allPicks.length} games`
               : "Loading slate…"}

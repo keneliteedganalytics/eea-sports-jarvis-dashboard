@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import { TierPill } from "./TierPill";
 import { ScopeFull } from "./ScopeFull";
-import { SignalBars } from "./SignalBars";
+import { SignalsBar } from "./cards/SignalsBar";
 import { SpreadRow } from "./SpreadRow";
 import { TotalRow } from "./TotalRow";
 import { ClvBadge } from "./ClvBadge";
@@ -53,11 +53,6 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
   // Projected score
   const showProjScore = pick.projAwayScore != null && pick.projHomeScore != null;
 
-  // Signal bars — always rendered (PRISM/public/sharp show "—" when unavailable).
-  const publicPct = pick.publicPct;
-  const sharpPct = pick.sharpPct;
-  const prismPct = pick.polymarket.found ? pick.polymarket.pct ?? null : null;
-  const prismReason = !pick.polymarket.found ? (pick.polymarket.reason ?? "No Polymarket market available") : null;
 
   const grade = gradeVisual(pick);
 
@@ -187,8 +182,8 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
           <TotalRow market={pick.markets.total} />
         </div>
 
-        {/* Public / Sharp / PRISM bars — always rendered */}
-        <SignalBars publicPct={publicPct} sharpPct={sharpPct} prismPct={prismPct} prismReason={prismReason} />
+        {/* v6.9.1 five-source SignalsBar (Brand Board v3) */}
+        <SignalsBar signals={pick.signals} />
 
         {/* Reason text */}
         {hardPass ? (

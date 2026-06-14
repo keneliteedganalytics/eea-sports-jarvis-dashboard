@@ -22,19 +22,30 @@ function tierHex(tier: string): string {
   return TIER_META[tier as Verdict]?.hex ?? "#8892A0";
 }
 
+// v6.9.1 — engine-version segmented toggle. Maps the user-facing labels to the
+// API's ?engineVersion= values; defaults to the current (v6.9.0) engine.
+type EngineVersion = "current" | "legacy" | "ALL";
+const ENGINE_OPTIONS: { value: EngineVersion; label: string }[] = [
+  { value: "current", label: "v6.9.0 (Current)" },
+  { value: "legacy", label: "Legacy" },
+  { value: "ALL", label: "All" },
+];
+
 export default function Analytics() {
   const [sport, setSport] = useState("ALL");
   const [tier, setTier] = useState("ALL");
   const [since, setSince] = useState("");
+  const [engineVersion, setEngineVersion] = useState<EngineVersion>("current");
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
     if (sport !== "ALL") p.set("sport", sport);
     if (tier !== "ALL") p.set("tier", tier);
     if (since) p.set("since", since);
+    if (engineVersion !== "current") p.set("engineVersion", engineVersion);
     const s = p.toString();
     return s ? `?${s}` : "";
-  }, [sport, tier, since]);
+  }, [sport, tier, since, engineVersion]);
 
   const { data } = useQuery<AnalyticsPayload>({ queryKey: [`/api/analytics${qs}`] });
 
@@ -42,9 +53,10 @@ export default function Analytics() {
     const p = new URLSearchParams();
     if (sport !== "ALL") p.set("sport", sport);
     if (since) p.set("since", since);
+    if (engineVersion !== "current") p.set("engineVersion", engineVersion);
     const s = p.toString();
     return s ? `?${s}` : "";
-  }, [sport, since]);
+  }, [sport, since, engineVersion]);
   const { data: props } = useQuery<PropAnalyticsPayload>({ queryKey: [`/api/props/analytics${propsQs}`] });
 
   // v6.7.9: virtual parlay (paper portfolio) aggregate. Not filtered — it's a
@@ -55,9 +67,33 @@ export default function Analytics() {
     <div className="space-y-6" data-testid="analytics-page">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Analytics</h1>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-[11px] uppercase tracking-wider text-gold-dark" data-testid="engine-subtitle">
+          Engine v6.9.0 · Bankroll $25,000
+        </p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
           Performance across the graded book — win rate by tier, ROI by sport, closing-line value, and drawdown.
         </p>
+      </div>
+
+      {/* v6.9.1 engine-version segmented toggle */}
+      <div className="flex flex-wrap items-center gap-2" data-testid="engine-version-toggle">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Engine</span>
+        <div className="inline-flex overflow-hidden rounded-lg border border-card-border">
+          {ENGINE_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setEngineVersion(opt.value)}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                engineVersion === opt.value
+                  ? "bg-gold text-navy-bg"
+                  : "bg-navy-card text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid={`engine-version-${opt.value}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Filters */}

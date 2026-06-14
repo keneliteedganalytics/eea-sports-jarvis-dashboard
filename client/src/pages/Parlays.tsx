@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fmtLine, fmtMoney } from "@/lib/format";
 import { DISPLAY_TIMEZONE } from "@/lib/timezone";
+import { SignalsBar } from "@/components/cards/SignalsBar";
 import type {
   ParlayBoardPayload,
   ParlayItem,
@@ -61,7 +62,10 @@ export default function Parlays() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Virtual Bets</h1>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[11px] uppercase tracking-wider text-gold-dark" data-testid="engine-subtitle">
+            Engine v6.9.0 · Bankroll $25,000
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
             Each SNIPER pick is tracked as its own $100 paper bet. P/L tracks live as picks settle —
             not real money, never touches the bankroll.
           </p>
@@ -178,6 +182,13 @@ function ParlayCard({ parlay }: { parlay: ParlayItem }) {
           )}
         </span>
       </div>
+
+      {/* v6.9.1 five-source SignalsBar for this single pick */}
+      {(parlay.signals ?? leg?.signals) && (
+        <div className="mt-3">
+          <SignalsBar signals={parlay.signals ?? leg?.signals} />
+        </div>
+      )}
     </div>
   );
 }

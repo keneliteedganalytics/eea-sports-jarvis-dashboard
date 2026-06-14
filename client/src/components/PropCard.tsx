@@ -1,4 +1,5 @@
 import { ScopeFull } from "./ScopeFull";
+import { SignalsBar } from "./cards/SignalsBar";
 import { fmtLine } from "@/lib/format";
 import type { PropBoardItem, PropHitRates, Verdict } from "@/lib/types";
 
@@ -240,6 +241,9 @@ export function PropCard({ item }: { item: PropBoardItem }) {
 
         {/* Distribution sketch with a vertical line at the prop line */}
         <DistSketch item={item} />
+
+        {/* v6.9.1 five-source SignalsBar (Brand Board v3) */}
+        {item.signals && <SignalsBar signals={item.signals} />}
 
         {/* Hit-rate row */}
         {hr && (
