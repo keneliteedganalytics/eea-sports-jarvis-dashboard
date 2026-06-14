@@ -31,6 +31,7 @@ import { validateGradesTick, reconcileFalseGradesV675 } from "./reconcileFalseGr
 import { recomputePropsV676 } from "./recomputeProps";
 import { backfillChalkCapV681 } from "./backfillChalkCap";
 import { recordPassesV677 } from "./recordPassesV677";
+import { logPillarTierDiff } from "./pillarTierDiff";
 import { backfillVirtualParlaysV680 } from "./virtualParlayBuilder";
 import { runVirtualParlayTrack } from "./virtualParlayTracker";
 
@@ -205,6 +206,13 @@ export function startLivePropTracker(): void {
         backfillVirtualParlaysV680();
       } catch {
         // best-effort; the build is idempotent and the cycle hook keeps it fresh
+      }
+      // v6.9.0: one-time SHADOW tier-diff — logs how many undecided SNIPER picks
+      // WOULD move under the strict multi-signal gate. Read-only; no mutation.
+      try {
+        logPillarTierDiff();
+      } catch {
+        // best-effort; purely informational
       }
     })
     .finally(() => void runLiveTrackTick().catch(() => undefined));

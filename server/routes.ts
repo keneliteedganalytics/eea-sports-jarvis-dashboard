@@ -50,6 +50,7 @@ import {
   type VirtualParlayRow,
 } from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
+import { registerPillarDebugRoutes } from "./sources/pillarsDebug";
 import { z } from "zod";
 
 const STUB_SPORTS = ["ncaaf", "ncaab", "nfl"];
@@ -427,6 +428,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const summary = backfillChalkCapV681();
     res.json(summary);
   });
+
+  // v6.9.0 Foxtail pillars — read-only debug surface. Each pillar can be probed
+  // live (recent form, injuries, run distribution, pitch mix, bullpen load) and a
+  // /api/picks/debug?gameId= consolidates the contributions for one game.
+  registerPillarDebugRoutes(app);
 
   // Admin: run one live-scoring pass for a date (?date=YYYY-MM-DD, default
   // today's operating day). Fetches the public ESPN scoreboard, updates live
