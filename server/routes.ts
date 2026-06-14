@@ -23,6 +23,8 @@ import { startPropIngestWorker, getLastIngestSummary } from "./jobs/propIngest";
 import { startLivePropTracker } from "./jobs/livePropTracker";
 import { reconciliationFlag } from "./jobs/reconcileFalseGrades";
 import { recomputeFlag } from "./jobs/recomputeProps";
+import { backfillChalkCapV681, chalkCapBackfillFlag, BACKFILL_FLAG } from "./jobs/backfillChalkCap";
+import { isChalkierThanSniperCap, SNIPER_MAX_CHALK_AMERICAN } from "./core/tier";
 import { getOperatingDay, tomorrowOperatingDay, yesterdayOperatingDay } from "./sports/mlb/operatingDay";
 import { DISPLAY_TIMEZONE } from "./utils/timezone";
 import { hasOddsKey, fetchMlbEvents } from "./sports/props/ingestMlbProps";
@@ -44,6 +46,7 @@ import {
   getPropPickLiveStates,
   getVirtualParlaysForDate,
   getVirtualParlayStats,
+  setSystemState,
   type VirtualParlayRow,
 } from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
@@ -391,6 +394,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         max: sniperEdges[sniperEdges.length - 1] ?? null,
       },
     });
+  });
+
+  // Diagnostic + manual trigger for the v6.8.1 SNIPER chalk-cap backfill. GET
+  // reports whether the one-shot ran plus a live count of any undecided SNIPER
+  // picks still chalkier than the cap (should be 0 once it has run). POST with a
+  // valid admin PIN resets the flag and re-runs it in-process — used to apply the
+  // demotion on a deploy without waiting for the next boot. Idempotent either way.
+  app.get("/api/debug/chalk-backfill", (_req: Request, res: Response) => {
+    const flag = chalkCapBackfillFlag();
+    const db = gradedDb();
+    const props = db
+      .prepare("SELECT posted_odds, best_price FROM prop_picks WHERE result IS NULL AND tier = 'SNIPER'")
+      .all() as Array<{ posted_odds: number | null; best_price: number | null }>;
+    const games = db
+      .prepare("SELECT pickMl FROM picks WHERE status != 'final' AND locked = 0 AND tier = 'SNIPER'")
+      .all() as Array<{ pickMl: number | null }>;
+    const chalkProps = props.filter((p) => isChalkierThanSniperCap(p.posted_odds ?? p.best_price ?? null)).length;
+    const chalkGames = games.filter((g) => isChalkierThanSniperCap(g.pickMl)).length;
+    res.json({
+      ran: flag.ran,
+      completedAt: flag.completedAt,
+      cap: SNIPER_MAX_CHALK_AMERICAN,
+      undecidedSniper: { props: props.length, games: games.length },
+      stillChalkierThanCap: { props: chalkProps, games: chalkGames },
+    });
+  });
+
+  app.post("/api/debug/chalk-backfill", (req: Request, res: Response) => {
+    if (!requireAdminPin(req, res)) return;
+    setSystemState(BACKFILL_FLAG, "false"); // clear the guard so the one-shot re-runs
+    const summary = backfillChalkCapV681();
+    res.json(summary);
   });
 
   // Admin: run one live-scoring pass for a date (?date=YYYY-MM-DD, default

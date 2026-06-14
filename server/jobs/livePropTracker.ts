@@ -29,6 +29,7 @@ import {
 import { getOperatingDay } from "../sports/mlb/operatingDay";
 import { validateGradesTick, reconcileFalseGradesV675 } from "./reconcileFalseGrades";
 import { recomputePropsV676 } from "./recomputeProps";
+import { backfillChalkCapV681 } from "./backfillChalkCap";
 import { recordPassesV677 } from "./recordPassesV677";
 import { backfillVirtualParlaysV680 } from "./virtualParlayBuilder";
 import { runVirtualParlayTrack } from "./virtualParlayTracker";
@@ -170,6 +171,20 @@ export function startLivePropTracker(): void {
   void reconcileFalseGradesV675()
     .catch(() => undefined)
     .then(() => recomputePropsV676().catch(() => undefined))
+    .then(() => {
+      // v6.8.1: re-tier undecided SNIPER picks (any date, both surfaces) that are
+      // chalkier than the cap. The per-day recompute above only touches today, so
+      // this catches stale chalk SNIPERs from prior slates the board still shows.
+      // One-shot + flag-guarded; demoted PASS rows are stake-zeroed by the heal below.
+      try {
+        const b = backfillChalkCapV681();
+        if (!b.alreadyCompleted && (b.demotedToEdge || b.demotedToPass)) {
+          log(`chalk-cap backfill: ${b.demotedToEdge} → EDGE/RECON, ${b.demotedToPass} → PASS (chalk_cap)`);
+        }
+      } catch {
+        // best-effort; idempotent, retries on next boot
+      }
+    })
     .then(() => recordPassesV677().catch(() => undefined))
     .then(() => {
       // HARD SAFETY: after any demotion/backfill, zero the stake on every PASS

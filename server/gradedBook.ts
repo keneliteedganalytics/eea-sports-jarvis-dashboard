@@ -1296,6 +1296,27 @@ export function undecidedPropPicksForDay(date: string, sport?: string | null): P
     .all(params) as PropPickRow[];
 }
 
+// v6.8.1: every undecided SNIPER prop pick across ALL dates (not scoped to the
+// operating day). The chalk-cap backfill needs this because the board surfaces
+// undecided picks from prior slates, but the per-day build/recompute only touch
+// today — so a pre-cap chalk SNIPER posted days ago would otherwise keep its
+// SNIPER tier forever. result IS NULL keeps graded rows untouched.
+export function undecidedSniperProps(): PropPickRow[] {
+  return gradedDb()
+    .prepare("SELECT * FROM prop_picks WHERE result IS NULL AND tier = 'SNIPER'")
+    .all() as PropPickRow[];
+}
+
+// v6.8.1: re-tier an undecided prop in place WITHOUT re-simulating (the chalk cap
+// changes only the tier, not the edge/sim). Demotion targets EDGE/RECON; PASS
+// goes through markPropPickPass so the stake is zeroed. result IS NULL guards
+// graded rows.
+export function setPropPickTier(pickId: string, tier: string): void {
+  gradedDb()
+    .prepare("UPDATE prop_picks SET tier = @tier WHERE pick_id = @id AND result IS NULL")
+    .run({ id: pickId, tier });
+}
+
 // All graded prop picks for analytics, optional sport + since filters.
 export function gradedPropPicks(opts: { sport?: string | null; since?: string | null } = {}): PropPickRow[] {
   const db = gradedDb();
@@ -2569,6 +2590,33 @@ export function lockClosingLine(
 export function picksForDate(date: string): GradedPick[] {
   const rows = gradedDb().prepare("SELECT * FROM picks WHERE gameDate = ? ORDER BY gameTimeEt").all(date) as GradedPick[];
   return rows.map((r) => applyLock(r)!);
+}
+
+// v6.8.1: every undecided, UNLOCKED SNIPER game-line pick across all dates — the
+// chalk-cap backfill's game-line counterpart. status != 'final' keeps settled
+// picks out; locked = 0 protects a bet the user already confirmed (its tier is
+// frozen and must never be re-tiered).
+export function undecidedSniperGamePicks(): GradedPick[] {
+  return gradedDb()
+    .prepare("SELECT * FROM picks WHERE status != 'final' AND locked = 0 AND tier = 'SNIPER'")
+    .all() as GradedPick[];
+}
+
+// v6.8.1: re-tier an undecided, unlocked game pick in place. Demotion to PASS
+// also stamps the pass_reason and zeroes the stake (a PASS row is informational
+// and must never settle). status/locked guards mirror the read above.
+export function setGamePickTier(id: string, tier: string, passReason: string | null = null): void {
+  if (tier === "PASS") {
+    gradedDb()
+      .prepare(
+        "UPDATE picks SET tier = 'PASS', pass_reason = @reason, units = 0, stakeDollars = 0 WHERE id = @id AND status != 'final' AND locked = 0",
+      )
+      .run({ id, reason: passReason });
+    return;
+  }
+  gradedDb()
+    .prepare("UPDATE picks SET tier = @tier WHERE id = @id AND status != 'final' AND locked = 0")
+    .run({ id, tier });
 }
 
 // Update the live in-progress fields (score + status detail) without grading.
