@@ -855,6 +855,137 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     fs.createReadStream(path).pipe(res);
   });
 
+  // v6.9.3 — DraftKings multi-leg slip loader.
+  // GET /api/dk/slip?scope=parlays|sniper-singles|game&gameId=<id>
+  //
+  // Aggregates SNIPER selection IDs from today's picks and returns a composite
+  // deep link for loading multiple legs into the DK native app or web fallback.
+  // Selection IDs from the-odds-api may be null; nulls are excluded from the
+  // primary deep link but surfaced in perEventLinks for graceful degradation.
+  app.get("/api/dk/slip", (req: Request, res: Response) => {
+    const scope = typeof req.query.scope === "string" ? req.query.scope : "parlays";
+    const gameId = typeof req.query.gameId === "string" ? req.query.gameId : null;
+    const date = parseDateParam(req.query.date) ?? getOperatingDay();
+
+    if (![
+      "parlays", "sniper-singles", "game",
+    ].includes(scope)) {
+      return res.status(400).json({ message: "scope must be parlays, sniper-singles, or game" });
+    }
+    if (scope === "game" && !gameId) {
+      return res.status(400).json({ message: "gameId is required for scope=game" });
+    }
+
+    // Collect candidate picks depending on scope.
+    // Each entry: { selectionId: string|null, eventId: string, label: string }
+    type CandidateLeg = {
+      selectionId: string | null;
+      eventId: string;
+      label: string;
+    };
+    const candidates: CandidateLeg[] = [];
+
+    if (scope === "parlays") {
+      // All virtual parlay legs for today with tier=SNIPER and dk populated.
+      const parlays = getVirtualParlaysForDate(date);
+      for (const p of parlays) {
+        let pickIds: string[] = [];
+        try { pickIds = JSON.parse(p.leg_pick_ids ?? "[]") as string[]; } catch { pickIds = []; }
+        for (const id of pickIds) {
+          const row = getPropPick(id);
+          if (!row || row.tier !== "SNIPER") continue;
+          const dk = buildPropDk(row);
+          if (!dk) continue;
+          candidates.push({
+            selectionId: dk.selectionId,
+            eventId: dk.eventId,
+            label: `${row.player_name} · ${row.market_label ?? row.market_type}`,
+          });
+        }
+      }
+    } else if (scope === "sniper-singles") {
+      // All SNIPER prop picks for today (game-line + props).
+      const rows = propBoard({ date, tier: "ALL" }).filter((r) => r.tier === "SNIPER");
+      for (const row of rows) {
+        const dk = buildPropDk(row);
+        if (!dk) continue;
+        candidates.push({
+          selectionId: dk.selectionId,
+          eventId: dk.eventId,
+          label: `${row.player_name} · ${row.market_label ?? row.market_type}`,
+        });
+      }
+    } else if (scope === "game" && gameId) {
+      // All SNIPER prop picks for a single game.
+      const rows = propBoard({ date, tier: "ALL" }).filter(
+        (r) => r.tier === "SNIPER" && r.game_id === gameId,
+      );
+      for (const row of rows) {
+        const dk = buildPropDk(row);
+        if (!dk) continue;
+        candidates.push({
+          selectionId: dk.selectionId,
+          eventId: dk.eventId,
+          label: `${row.player_name} · ${row.market_label ?? row.market_type}`,
+        });
+      }
+    }
+
+    // Deduplicate: for legs with a non-null selectionId, deduplicate by selectionId
+    // so the same bet can't appear in the slip twice. For null selectionIds, deduplicate
+    // by label (player+market) so the same prop pick can't appear twice via different
+    // code paths, while still allowing multiple different players on the same game.
+    const seen = new Set<string>();
+    const deduped: CandidateLeg[] = [];
+    for (const c of candidates) {
+      const key = c.selectionId !== null ? `sid:${c.selectionId}` : `label:${c.label}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduped.push(c);
+      }
+    }
+
+    const withId = deduped.filter((c) => c.selectionId !== null);
+    const withoutId = deduped.filter((c) => c.selectionId === null);
+
+    const selectionIds = withId.map((c) => c.selectionId as string);
+    const eventIds = [...new Set(deduped.map((c) => c.eventId))];
+    const skipped = withoutId.length;
+
+    // Build composite deep links.
+    const deepLink =
+      selectionIds.length > 0
+        ? `dk://bet?selectionIds=${selectionIds.join(",")}`
+        : null;
+    const webFallback =
+      selectionIds.length > 0
+        ? `https://sportsbook.draftkings.com/?selectionIds=${selectionIds.join(",")}`
+        : null;
+
+    // Per-event fallback links for picks without selection IDs.
+    const perEventLinks = withoutId.map((c) => ({
+      eventId: c.eventId,
+      deepLink: `dk://event?id=${encodeURIComponent(c.eventId)}`,
+      label: c.label,
+    }));
+
+    return res.json({
+      scope,
+      date,
+      selectionIds,
+      eventIds,
+      count: selectionIds.length,
+      skipped,
+      skippedReason:
+        skipped > 0
+          ? "null selection id (fallback to event-level deep link)"
+          : null,
+      deepLink,
+      webFallback,
+      perEventLinks,
+    });
+  });
+
   // Stub sport tabs — same engine, model not yet wired.
   app.get("/api/:sport/slate", (req: Request, res: Response) => {
     const sport = String(req.params.sport);

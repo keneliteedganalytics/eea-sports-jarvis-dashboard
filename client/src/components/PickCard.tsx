@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, ExternalLink } from "lucide-react";
 import { TierPill } from "./TierPill";
 import { ScopeFull } from "./ScopeFull";
 import { SignalsBar } from "./cards/SignalsBar";
@@ -12,6 +12,7 @@ import { PropsPanel } from "./PropsPanel";
 import { BetPlacedButton } from "./BetPlacedButton";
 import { DraftKingsButton } from "./DraftKingsButton";
 import { ClvBadge } from "./ClvBadge";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { fmtGameDate, fmtGameTime, fmtLine, fmtMoney, fmtPct, fmtUnits, lineMovement, TIER_LABEL } from "@/lib/format";
 import { gradeVisual } from "@/lib/grade";
 import type { BuiltPick } from "@/lib/types";
@@ -20,10 +21,42 @@ const STEAM_CENTS = 10;
 
 const SPREAD_LABEL: Record<string, string> = { mlb: "RL", nhl: "PL", nba: "SPR", soccer: "AH" };
 
-export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number }) {
+export function PickCard({
+  pick,
+  bankroll,
+  relatedSniperPropCount = 0,
+}: {
+  pick: BuiltPick;
+  bankroll: number;
+  // v6.9.3: count of SNIPER prop picks for this game (excluding any game-line pick).
+  // When >= 1, show a "Load all SNIPERs for this game" multi-leg button below the
+  // primary DK button (mobile-only, SNIPER game picks only).
+  relatedSniperPropCount?: number;
+}) {
+  const isMobile = useIsMobile();
   const openMl = pick.pickSide === "home" ? pick.openHomeMl : pick.openAwayMl;
   const move = lineMovement(openMl, pick.pickMl);
   const isSteam = move.cents >= STEAM_CENTS;
+
+  // v6.9.3: handler for loading all SNIPERs for this game into DK.
+  function handleLoadGameSnipers() {
+    const url = `/api/dk/slip?scope=game&gameId=${encodeURIComponent(pick.gameId)}`;
+    fetch(url)
+      .then((r) => r.json())
+      .then((slip: { deepLink: string | null; webFallback: string | null }) => {
+        const target = slip.deepLink ?? slip.webFallback;
+        if (!target) return;
+        window.location.href = target;
+        setTimeout(() => {
+          if (!document.hidden && slip.webFallback && target !== slip.webFallback) {
+            window.location.href = slip.webFallback;
+          }
+        }, 1500);
+      })
+      .catch(() => {
+        // Swallow silently — button is best-effort only.
+      });
+  }
 
   // MLB pitcher row data
   const isMLB = pick.sport === "mlb";
@@ -199,6 +232,21 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
         {/* v6.9.2: DraftKings one-tap deep-link (mobile + SNIPER only). */}
         {pick.verdictTier === "SNIPER" && (
           <DraftKingsButton dk={pick.dk} />
+        )}
+
+        {/* v6.9.3: Load all SNIPERs for this game — mobile + SNIPER + related props only. */}
+        {isMobile && pick.verdictTier === "SNIPER" && relatedSniperPropCount >= 1 && (
+          <button
+            type="button"
+            onClick={handleLoadGameSnipers}
+            className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 font-display text-[12px] font-bold uppercase tracking-[0.14em] text-black transition-opacity active:opacity-80"
+            style={{ backgroundColor: "#53D337" }}
+            data-testid={`dk-game-slip-${pick.gameId}`}
+            aria-label="Load all SNIPER picks for this game on DraftKings"
+          >
+            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+            Load all SNIPERs for this game
+          </button>
         )}
 
         {/* Matchup + date/time + Pick */}

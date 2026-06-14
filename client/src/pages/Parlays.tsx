@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ExternalLink } from "lucide-react";
 import { fmtLine, fmtMoney } from "@/lib/format";
 import { DISPLAY_TIMEZONE } from "@/lib/timezone";
 import { SignalsBar } from "@/components/cards/SignalsBar";
 import { DraftKingsButton } from "@/components/DraftKingsButton";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type {
   ParlayBoardPayload,
   ParlayItem,
   ParlayLeg,
   ParlayStatus,
+  DkSlipPayload,
 } from "@/lib/types";
 
 function todayEt(): string {
@@ -58,6 +61,29 @@ export default function Parlays() {
   const summary = data?.summary;
   const items = data?.items ?? [];
 
+  // v6.9.3: DK slip loader — pre-fetch the slip for today so the button
+  // knows the leg count before the user taps it. Mobile-only.
+  const isMobile = useIsMobile();
+  const { data: slipData } = useQuery<DkSlipPayload>({
+    queryKey: [`/api/dk/slip?scope=parlays&date=${date}`],
+    staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    // Only bother fetching when on mobile; the button is hidden on desktop.
+    enabled: isMobile,
+  });
+
+  function handleLoadAllParlays() {
+    if (!slipData) return;
+    const url = slipData.deepLink ?? slipData.webFallback ?? null;
+    if (!url) return;
+    window.location.href = url;
+    setTimeout(() => {
+      if (!document.hidden && slipData.webFallback && url !== slipData.webFallback) {
+        window.location.href = slipData.webFallback;
+      }
+    }, 1500);
+  }
+
   return (
     <div className="space-y-6" data-testid="parlays-page">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -96,6 +122,32 @@ export default function Parlays() {
             value={`${summary.plDollars >= 0 ? "+" : "−"}${fmtMoney(Math.abs(summary.plDollars))}`}
             tone={summary.plDollars >= 0 ? "good" : "bad"}
           />
+        </div>
+      )}
+
+      {/* v6.9.3: Load all SNIPER parlays to DK — mobile-only, shown when >=2 legs available. */}
+      {isMobile && slipData && slipData.count + slipData.skipped >= 2 && (
+        <div className="space-y-1.5" data-testid="dk-load-all-parlays-wrapper">
+          <button
+            type="button"
+            onClick={handleLoadAllParlays}
+            disabled={slipData.count === 0}
+            className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 font-display text-[13px] font-bold uppercase tracking-[0.14em] text-black transition-opacity active:opacity-80 disabled:opacity-40"
+            style={{ backgroundColor: "#53D337" }}
+            data-testid="dk-load-all-parlays"
+            aria-label="Load all SNIPER parlays to DraftKings"
+          >
+            <ExternalLink className="h-4 w-4 shrink-0" />
+            Load all SNIPER parlays to DraftKings
+            <span className="ml-1 rounded-full bg-black/20 px-1.5 py-0.5 text-[11px]">
+              {slipData.count + slipData.skipped} legs
+            </span>
+          </button>
+          {slipData.skipped > 0 && (
+            <p className="text-center text-[11px] text-muted-foreground" data-testid="dk-slip-skipped-note">
+              {slipData.skipped} pick{slipData.skipped !== 1 ? "s" : ""} couldn’t be auto-loaded — tap individual cards instead.
+            </p>
+          )}
         </div>
       )}
 

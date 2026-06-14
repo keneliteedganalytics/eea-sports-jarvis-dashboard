@@ -1,12 +1,13 @@
 import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Info } from "lucide-react";
+import { Info, ExternalLink } from "lucide-react";
 import { PickCard } from "@/components/PickCard";
 import { CompactCard } from "@/components/CompactCard";
 import { fmtMoney } from "@/lib/format";
 import { DISPLAY_TIMEZONE } from "@/lib/timezone";
 import { PropCard } from "@/components/PropCard";
-import type { DailySlate, BuiltPick, Verdict, PropBoardPayload, PropLivePayload } from "@/lib/types";
+import { useIsMobile } from "@/hooks/use-mobile";
+import type { DailySlate, BuiltPick, Verdict, PropBoardPayload, PropLivePayload, DkSlipPayload } from "@/lib/types";
 
 type SportFilter = "ALL" | "MLB" | "NHL" | "NBA" | "SOCCER" | "PROPS";
 const SPORT_CHIPS: { key: SportFilter; label: string; disabled?: boolean }[] = [
@@ -101,6 +102,53 @@ export default function Home() {
     }
     return c;
   }, [allPicks]);
+
+  // v6.9.3: mobile-only queries for multi-leg DK slip loader.
+  const isMobile = useIsMobile();
+
+  // Prop board — fetched at Home level so we can compute relatedSniperPropCount
+  // per game card (how many SNIPER props share that game_id).
+  const { data: propBoardData } = useQuery<PropBoardPayload>({
+    queryKey: [`/api/props/board?date=${date}`],
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    enabled: isMobile,
+  });
+
+  // Per-game SNIPER prop counts: { [gameId]: number }
+  const sniperPropCountByGame = useMemo<Record<string, number>>(() => {
+    const propItems = propBoardData?.items ?? [];
+    const map: Record<string, number> = {};
+    for (const it of propItems) {
+      if (it.tier !== "SNIPER") continue;
+      map[it.game_id] = (map[it.game_id] ?? 0) + 1;
+    }
+    return map;
+  }, [propBoardData]);
+
+  // Slip query for the sniper-singles aggregator button above the grid.
+  const { data: sniperSlipData } = useQuery<DkSlipPayload>({
+    queryKey: [`/api/dk/slip?scope=sniper-singles&date=${date}`],
+    staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    enabled: isMobile,
+  });
+
+  function handleLoadAllSnipers() {
+    if (!sniperSlipData) return;
+    const url = sniperSlipData.deepLink ?? sniperSlipData.webFallback ?? null;
+    if (!url) return;
+    window.location.href = url;
+    setTimeout(() => {
+      if (
+        !document.hidden &&
+        sniperSlipData.webFallback &&
+        url !== sniperSlipData.webFallback
+      ) {
+        window.location.href = sniperSlipData.webFallback;
+      }
+    }, 1500);
+  }
 
   return (
     <div className="space-y-5">
@@ -211,11 +259,32 @@ export default function Home() {
         </div>
       )}
 
+      {/* v6.9.3: Load all SNIPERs to DK — mobile-only, shown when 2+ SNIPER picks exist. */}
+      {isMobile && sport !== "PROPS" && sniperSlipData && sniperSlipData.count + sniperSlipData.skipped >= 2 && (
+        <button
+          type="button"
+          onClick={handleLoadAllSnipers}
+          disabled={sniperSlipData.count === 0}
+          className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 font-display text-[13px] font-bold uppercase tracking-[0.14em] text-black transition-opacity active:opacity-80 disabled:opacity-40"
+          style={{ backgroundColor: "#53D337" }}
+          data-testid="dk-load-all-snipers"
+          aria-label={`Load all ${sniperSlipData.count + sniperSlipData.skipped} SNIPERs to DraftKings`}
+        >
+          <ExternalLink className="h-4 w-4 shrink-0" />
+          Load all {sniperSlipData.count + sniperSlipData.skipped} SNIPERs to DK
+        </button>
+      )}
+
       {data && visible.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="pick-grid">
           {visible.map((p) =>
             cardState(p) === "qualifying" ? (
-              <PickCard key={p.gameId} pick={p} bankroll={data.bankroll} />
+              <PickCard
+                key={p.gameId}
+                pick={p}
+                bankroll={data.bankroll}
+                relatedSniperPropCount={sniperPropCountByGame[p.gameId] ?? 0}
+              />
             ) : (
               <CompactCard key={p.gameId} pick={p} />
             ),

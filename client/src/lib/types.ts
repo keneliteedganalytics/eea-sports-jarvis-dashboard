@@ -543,6 +543,20 @@ export interface ParlayBoardPayload {
   items: ParlayItem[];
 }
 
+// v6.9.3 — DK multi-leg slip loader response shape.
+export interface DkSlipPayload {
+  scope: string;
+  date: string;
+  selectionIds: string[];
+  eventIds: string[];
+  count: number;
+  skipped: number;
+  skippedReason: string | null;
+  deepLink: string | null;
+  webFallback: string | null;
+  perEventLinks: Array<{ eventId: string; deepLink: string; label: string }>;
+}
+
 export interface ParlayAnalyticsPayload {
   total_parlays: number;
   won: number;
