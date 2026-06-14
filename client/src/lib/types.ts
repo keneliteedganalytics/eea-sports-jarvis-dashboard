@@ -109,6 +109,8 @@ export interface BuiltPick {
   sharpPct: number | null;
   // v6.9.1 — five-source signal block assembled at serialization.
   signals?: PickSignals | null;
+  // v6.9.2: DraftKings one-tap deep-link. Present only on SNIPER picks; null otherwise.
+  dk?: { selectionId: string | null; eventId: string; deepLink: string } | null;
   awaySp?: { available?: boolean; pitcher?: string; era?: number | null; fip?: number | null; ip?: number | null; whip?: number | null; svPct?: number | null };
   homeSp?: { available?: boolean; pitcher?: string; era?: number | null; fip?: number | null; ip?: number | null; whip?: number | null; svPct?: number | null };
   // NHL-only goalie fields (undefined on MLB/NBA picks)
@@ -464,6 +466,8 @@ export interface PropBoardItem {
   gameStatus?: "scheduled" | "live" | "final" | null;
   // v6.9.1 — five-source signal block assembled at serialization.
   signals?: PickSignals | null;
+  // v6.9.2: DraftKings one-tap deep-link. Present only on SNIPER picks; null otherwise.
+  dk?: { selectionId: string | null; eventId: string; deepLink: string } | null;
 }
 
 export interface PropLiveTracking {
@@ -502,6 +506,7 @@ export interface ParlayLeg {
   currentValue: number | null;
   disposition: ParlayLegDisposition;
   signals?: PickSignals | null;
+  dk?: { selectionId: string | null; eventId: string; deepLink: string } | null;
 }
 
 export interface ParlayItem {

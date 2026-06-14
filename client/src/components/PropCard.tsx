@@ -1,5 +1,6 @@
 import { ScopeFull } from "./ScopeFull";
 import { SignalsBar } from "./cards/SignalsBar";
+import { DraftKingsButton } from "./DraftKingsButton";
 import { fmtLine } from "@/lib/format";
 import type { PropBoardItem, PropHitRates, Verdict } from "@/lib/types";
 
@@ -244,6 +245,11 @@ export function PropCard({ item }: { item: PropBoardItem }) {
 
         {/* v6.9.1 five-source SignalsBar (Brand Board v3) */}
         {item.signals && <SignalsBar signals={item.signals} />}
+
+        {/* v6.9.2: DraftKings one-tap deep-link (mobile + SNIPER only). */}
+        {item.tier === "SNIPER" && (
+          <DraftKingsButton dk={item.dk} />
+        )}
 
         {/* Hit-rate row */}
         {hr && (

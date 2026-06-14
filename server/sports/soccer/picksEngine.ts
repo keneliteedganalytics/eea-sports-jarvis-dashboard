@@ -474,6 +474,8 @@ export function buildPick(
     drawProb: model.drawProb,
     mlDraw: game.mlDraw ?? null,
     fairDrawMl: model.fairDrawMl,
+    // v6.9.2: DK one-tap not available for soccer markets.
+    dk: null,
   };
 }
 

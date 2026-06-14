@@ -10,6 +10,7 @@ import { SpreadRow } from "./SpreadRow";
 import { TotalRow } from "./TotalRow";
 import { PropsPanel } from "./PropsPanel";
 import { BetPlacedButton } from "./BetPlacedButton";
+import { DraftKingsButton } from "./DraftKingsButton";
 import { ClvBadge } from "./ClvBadge";
 import { fmtGameDate, fmtGameTime, fmtLine, fmtMoney, fmtPct, fmtUnits, lineMovement, TIER_LABEL } from "@/lib/format";
 import { gradeVisual } from "@/lib/grade";
@@ -193,6 +194,11 @@ export function PickCard({ pick, bankroll }: { pick: BuiltPick; bankroll: number
             confirmed so the tier/stake/odds can't be silently re-tiered. */}
         {!pick.phantomEdge && pick.units > 0 && pick.verdictTier !== "PASS" && pick.gradeStatus !== "final" && (
           <BetPlacedButton pick={pick} />
+        )}
+
+        {/* v6.9.2: DraftKings one-tap deep-link (mobile + SNIPER only). */}
+        {pick.verdictTier === "SNIPER" && (
+          <DraftKingsButton dk={pick.dk} />
         )}
 
         {/* Matchup + date/time + Pick */}

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fmtLine, fmtMoney } from "@/lib/format";
 import { DISPLAY_TIMEZONE } from "@/lib/timezone";
 import { SignalsBar } from "@/components/cards/SignalsBar";
+import { DraftKingsButton } from "@/components/DraftKingsButton";
 import type {
   ParlayBoardPayload,
   ParlayItem,
@@ -187,6 +188,13 @@ function ParlayCard({ parlay }: { parlay: ParlayItem }) {
       {(parlay.signals ?? leg?.signals) && (
         <div className="mt-3">
           <SignalsBar signals={parlay.signals ?? leg?.signals} />
+        </div>
+      )}
+
+      {/* v6.9.2: DraftKings one-tap deep-link (mobile + SNIPER only). */}
+      {leg && leg.tier === "SNIPER" && (
+        <div className="mt-2">
+          <DraftKingsButton dk={leg.dk} />
         </div>
       )}
     </div>

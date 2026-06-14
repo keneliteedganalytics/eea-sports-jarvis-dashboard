@@ -9,6 +9,7 @@ import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
 import { buildTwoWayMarket } from "../../core/markets";
 import { emptyMarket, type Market, type MarketSet, type Side, type Verdict } from "../../core/types";
 import type { BuiltPick, PolymarketData } from "../mlb/picksEngine";
+import { buildDkPayload } from "../mlb/picksEngine";
 import type { NhlModelResult, GoalieStats, TeamHockeyStats } from "./model";
 
 export const BANKROLL_USD = 25000;
@@ -53,6 +54,8 @@ export interface NhlGameInput {
   _publicPct?: number | null;
   _sharpPct?: number | null;
   _polymarketData?: PolymarketData;
+  // v6.9.2: raw OddsEvent carried for DK deep-link extraction.
+  _oddsEvent?: import("../../adapters/oddsApi").OddsEvent | null;
 }
 
 // Goals-model confidence: base 30, edge magnitude, data completeness, alignment.
@@ -280,6 +283,8 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
       ? Math.round((100 - game._sharpPct) * 10) / 10
       : (game._sharpPct ?? null),
     modelNotes: model.modelNotes,
+    // v6.9.2: DraftKings one-tap deep-link — SNIPER only, null on every other tier.
+    dk: buildDkPayload(game._oddsEvent ?? null, verdictTier, pickSide),
   };
 }
 

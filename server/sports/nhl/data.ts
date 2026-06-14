@@ -131,6 +131,7 @@ export async function buildNhlSlate(now: Date = new Date()): Promise<NhlSlateBui
       _polymarketData: polyResult.found
         ? { found: true, pct: polyResult.pct }
         : { found: false, pct: null, reason: polyResult.reason },
+      _oddsEvent: ev,
     } as NhlGameInput);
   }
 

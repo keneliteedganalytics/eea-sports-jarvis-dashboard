@@ -58,6 +58,24 @@ import { assemblePropSignals } from "./sports/signals/assembleSignals";
 import type { PropPickRow } from "./gradedBook";
 import { z } from "zod";
 
+// v6.9.2 — build the DraftKings deep-link payload for a SNIPER prop pick.
+// Prop picks don't carry DK selection IDs from the ingestion pipeline (the per-event
+// endpoint doesn't include sid/link on prop outcomes with the current plan),
+// so we always use the search-style deep link keyed to the player name + market.
+// Returns null for non-SNIPER tiers.
+function buildPropDk(
+  row: PropPickRow,
+): { selectionId: string | null; eventId: string; deepLink: string } | null {
+  if (row.tier !== "SNIPER") return null;
+  // game_id doubles as the odds-api event ID for props in the current schema.
+  const eventId = row.game_id;
+  // Build a search-style deep link with the available identifiers.
+  const player = encodeURIComponent(row.player_name);
+  const market = encodeURIComponent(row.market_type);
+  const deepLink = `dk://bet?player=${player}&market=${market}&eventId=${encodeURIComponent(eventId)}`;
+  return { selectionId: null, eventId, deepLink };
+}
+
 // v6.9.1 — build a prop pick's five-source PickSignals from its stored fields,
 // so the props board and parlay legs render the same SignalsBar as game lines.
 function propSignalsFor(row: PropPickRow) {
@@ -593,6 +611,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       currentValue: row.live_value,
       gameStatus: row.live_status ?? null,
       signals: propSignalsFor(row),
+      dk: buildPropDk(row),
     }));
     res.json({ sport: sport ?? "ALL", date, items });
   });
@@ -698,6 +717,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           currentValue: row.live_value,
           disposition: legDisposition(row.result, row.live_state),
           signals: propSignalsFor(row),
+          dk: buildPropDk(row),
         }));
       return {
         parlayId: p.parlay_id,

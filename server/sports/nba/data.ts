@@ -133,6 +133,7 @@ export async function buildNbaSlate(now: Date = new Date()): Promise<NbaSlateBui
       _awayInjuryPts: injuryByFullName.get(ev.awayTeamFull)?.outPts ?? null,
       _homeInjuries: injuryByFullName.get(ev.homeTeamFull)?.players ?? [],
       _awayInjuries: injuryByFullName.get(ev.awayTeamFull)?.players ?? [],
+      _oddsEvent: ev,
     });
   }
 

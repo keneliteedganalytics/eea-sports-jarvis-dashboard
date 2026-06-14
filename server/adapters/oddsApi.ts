@@ -42,12 +42,21 @@ export interface OddsEvent {
   total: TotalConsensus;
   // Raw bookmaker objects — used by the consensus/public-sharp calc
   rawBookmakers: RawBookmaker[];
+  // v6.9.2: DraftKings one-tap deep-link data (null when DK not in the response)
+  dkEventId: string | null;
+  dkHomeSelectionId: string | null;
+  dkAwaySelectionId: string | null;
+  dkHomeDeepLink: string | null;
+  dkAwayDeepLink: string | null;
 }
 
 interface RawOutcome {
   name: string;
   price: number;
   point?: number;
+  // The Odds API DraftKings-specific fields (not always present)
+  sid?: string;
+  link?: string;
 }
 interface RawMarket {
   key: string;
@@ -64,6 +73,8 @@ interface RawEvent {
   home_team: string;
   away_team: string;
   bookmakers: RawBookmaker[];
+  // DraftKings sometimes includes an event-level deep link
+  event_link?: string;
 }
 
 export function hasOddsKey(): boolean {
@@ -137,6 +148,50 @@ function consensusTotal(events: RawBookmaker[]): TotalConsensus {
   };
 }
 
+// v6.9.2: Extract DraftKings selection IDs and deep-link URLs from a raw event.
+// DK is the "draftkings" bookmaker key; outcomes sometimes carry .sid (selection ID)
+// and .link (a direct deep-link). When those fields are absent we build a search-style
+// fallback deep link using the event ID and team names so the button always has a URL.
+function extractDkData(
+  ev: RawEvent,
+): {
+  dkEventId: string | null;
+  dkHomeSelectionId: string | null;
+  dkAwaySelectionId: string | null;
+  dkHomeDeepLink: string | null;
+  dkAwayDeepLink: string | null;
+} {
+  const dk = (ev.bookmakers ?? []).find((bm) => bm.key === "draftkings");
+  if (!dk) {
+    return {
+      dkEventId: null,
+      dkHomeSelectionId: null,
+      dkAwaySelectionId: null,
+      dkHomeDeepLink: null,
+      dkAwayDeepLink: null,
+    };
+  }
+  const h2h = dk.markets?.find((m) => m.key === "h2h");
+  const homeOutcome = h2h?.outcomes.find((o) => o.name === ev.home_team);
+  const awayOutcome = h2h?.outcomes.find((o) => o.name === ev.away_team);
+
+  const dkEventId = ev.id;
+  const dkHomeSelectionId = homeOutcome?.sid ?? null;
+  const dkAwaySelectionId = awayOutcome?.sid ?? null;
+
+  // Prefer API-supplied deep link; fall back to search-style deep link using
+  // the selection ID when available, otherwise the event name.
+  const buildFallback = (teamName: string, sid: string | null): string => {
+    if (sid) return `dk://bet?selectionIds=${sid}`;
+    return `dk://bet?event=${encodeURIComponent(teamName)}&market=h2h`;
+  };
+
+  const dkHomeDeepLink = homeOutcome?.link ?? buildFallback(ev.home_team, dkHomeSelectionId);
+  const dkAwayDeepLink = awayOutcome?.link ?? buildFallback(ev.away_team, dkAwaySelectionId);
+
+  return { dkEventId, dkHomeSelectionId, dkAwaySelectionId, dkHomeDeepLink, dkAwayDeepLink };
+}
+
 // Generic fetch for any Odds API sport key. nameMapper converts a full team name
 // to a tri-code (sport-specific). Defaults to the MLB mapper for back-compat.
 export async function fetchOddsForSport(
@@ -164,6 +219,7 @@ export async function fetchOddsForSport(
       const away = h2h.outcomes.find((o) => o.name === ev.away_team)?.price ?? null;
       books.push({ book: bm.key, homePrice: home, awayPrice: away });
     }
+    const dk = extractDkData(ev);
     return {
       eventId: ev.id,
       startIso: ev.commence_time,
@@ -175,6 +231,11 @@ export async function fetchOddsForSport(
       spread: consensusSpread(ev.bookmakers ?? [], ev.home_team, ev.away_team),
       total: consensusTotal(ev.bookmakers ?? []),
       rawBookmakers: ev.bookmakers ?? [],
+      dkEventId: dk.dkEventId,
+      dkHomeSelectionId: dk.dkHomeSelectionId,
+      dkAwaySelectionId: dk.dkAwaySelectionId,
+      dkHomeDeepLink: dk.dkHomeDeepLink,
+      dkAwayDeepLink: dk.dkAwayDeepLink,
     };
   });
 }

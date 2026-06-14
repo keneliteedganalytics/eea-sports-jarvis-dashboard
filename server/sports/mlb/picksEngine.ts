@@ -223,6 +223,8 @@ export interface BuiltPick {
   // v6.9.0: five-source PickSignals, assembled at the serialization layer for the
   // SignalsBar UI. Additive + read-only — does NOT feed the tier engine.
   signals?: PickSignals;
+  // v6.9.2: DraftKings one-tap deep-link. Present only on SNIPER picks; null otherwise.
+  dk?: { selectionId: string | null; eventId: string; deepLink: string } | null;
 }
 
 // 7-component confidence with elite-fade & sparse penalties (MLB variant).
@@ -746,7 +748,24 @@ export function buildPick(
     lineupStatus: lineup.status,
     lineupMissingStar: lineup.missingStar,
     modelNotes: model.modelNotes,
+    // v6.9.2: DraftKings one-tap deep-link — SNIPER only, null on every other tier.
+    dk: buildDkPayload(game._oddsEvent ?? null, verdictTier, pickSide),
   };
+}
+
+// Build the DK one-tap payload from the OddsEvent's per-side DK fields.
+// Returns null for non-SNIPER tiers to keep the payload lean.
+export function buildDkPayload(
+  ev: import("../../adapters/oddsApi").OddsEvent | null,
+  tier: string,
+  side: "home" | "away",
+): { selectionId: string | null; eventId: string; deepLink: string } | null {
+  if (tier !== "SNIPER") return null;
+  if (!ev?.dkEventId) return null;
+  const selectionId = side === "home" ? ev.dkHomeSelectionId : ev.dkAwaySelectionId;
+  const deepLink = (side === "home" ? ev.dkHomeDeepLink : ev.dkAwayDeepLink) ??
+    `dk://bet?event=${encodeURIComponent(side === "home" ? ev.homeTeamFull : ev.awayTeamFull)}&market=h2h`;
+  return { selectionId, eventId: ev.dkEventId, deepLink };
 }
 
 // Daily cap: sort by edge desc (within tier rank), take the top N actionable
