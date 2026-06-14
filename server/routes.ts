@@ -54,7 +54,23 @@ import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 import { registerPillarDebugRoutes } from "./sources/pillarsDebug";
 import { fetchPredictionMarketForGame } from "./adapters/predictionMarkets";
 import type { PolySport } from "./adapters/polymarket";
+import { assemblePropSignals } from "./sports/signals/assembleSignals";
+import type { PropPickRow } from "./gradedBook";
 import { z } from "zod";
+
+// v6.9.1 — build a prop pick's five-source PickSignals from its stored fields,
+// so the props board and parlay legs render the same SignalsBar as game lines.
+function propSignalsFor(row: PropPickRow) {
+  const side = row.side === "over" || row.side === "under" ? row.side : null;
+  return assemblePropSignals({
+    side,
+    modelProb: row.model_prob,
+    edgePp: row.edge_pp,
+    postedOdds: row.posted_odds,
+    bestPrice: row.best_price,
+    closingOdds: row.closing_odds,
+  });
+}
 
 const STUB_SPORTS = ["ncaaf", "ncaab", "nfl"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -576,6 +592,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       liveState: row.live_state ?? "pending",
       currentValue: row.live_value,
       gameStatus: row.live_status ?? null,
+      signals: propSignalsFor(row),
     }));
     res.json({ sport: sport ?? "ALL", date, items });
   });
@@ -625,6 +642,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         trials: row.sim_trials,
         modelProb: row.model_prob,
       },
+      signals: propSignalsFor(row),
       hitRates,
       matchup,
     });
@@ -635,7 +653,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/props/analytics", (req: Request, res: Response) => {
     const sport = typeof req.query.sport === "string" ? req.query.sport : null;
     const since = parseDateParam(req.query.since) ?? null;
-    res.json(buildPropAnalytics({ sport, since }));
+    const engineVersion =
+      typeof req.query.engineVersion === "string" ? req.query.engineVersion : null;
+    res.json(buildPropAnalytics({ sport, since, engineVersion }));
   });
 
   // v6.7.9: virtual parlay board. Each game group with >=1 SNIPER prop auto-forms
@@ -677,11 +697,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           liveState: row.live_state ?? "pending",
           currentValue: row.live_value,
           disposition: legDisposition(row.result, row.live_state),
+          signals: propSignalsFor(row),
         }));
       return {
         parlayId: p.parlay_id,
         gameId: p.game_id,
         gameLabel: p.game_label,
+        // v6.9.1: virtual parlays are one single per SNIPER pick, so mirror the
+        // (only) leg's signals to the parlay level for the SignalsBar on the card.
+        signals: legs[0]?.signals ?? null,
         sport: p.sport,
         stakeDollars: p.stake_dollars,
         legCount: p.leg_count,

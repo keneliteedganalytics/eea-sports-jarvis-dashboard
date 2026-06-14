@@ -77,7 +77,9 @@ function roi(netUnits: number, staked: number): number {
   return staked > 0 ? Math.round((netUnits / staked) * 1000) / 10 : 0;
 }
 
-export function buildPropAnalytics(opts: { sport?: string | null; since?: string | null } = {}): PropAnalyticsPayload {
+export function buildPropAnalytics(
+  opts: { sport?: string | null; since?: string | null; engineVersion?: string | null } = {},
+): PropAnalyticsPayload {
   const rows = gradedPropPicks(opts);
 
   const record = emptyRecord();
