@@ -138,11 +138,11 @@ export default function Analytics() {
         </Panel>
       )}
 
-      {/* v6.7.9: virtual parlays — paper portfolio of $100-per-game SNIPER parlays */}
+      {/* v6.8.0: virtual bets — paper portfolio of $100-per-pick SNIPER singles */}
       {parlays && parlays.total_parlays > 0 && (
-        <Panel title="Virtual parlays">
+        <Panel title="Virtual bets">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6" data-testid="analytics-parlays">
-            <Kpi label="Parlays" value={String(parlays.total_parlays)} />
+            <Kpi label="Bets" value={String(parlays.total_parlays)} />
             <Kpi label="Cashed" value={String(parlays.won)} good />
             <Kpi label="Busted" value={String(parlays.busted)} good={false} />
             <Kpi label="Win rate" value={`${parlays.win_rate_pct.toFixed(1)}%`} good={parlays.win_rate_pct >= 50} />

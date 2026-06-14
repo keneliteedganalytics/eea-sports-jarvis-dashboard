@@ -60,10 +60,10 @@ export default function Parlays() {
     <div className="space-y-6" data-testid="parlays-page">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Virtual Parlays</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Virtual Bets</h1>
           <p className="text-xs text-muted-foreground">
-            A paper portfolio: every game with a SNIPER prop auto-forms a $100 parlay using all its
-            SNIPER legs. P/L tracks live as legs settle — not real money, never touches the bankroll.
+            Each SNIPER pick is tracked as its own $100 paper bet. P/L tracks live as picks settle —
+            not real money, never touches the bankroll.
           </p>
         </div>
         <div className="flex flex-col gap-1">
@@ -81,7 +81,7 @@ export default function Parlays() {
       {/* Summary strip */}
       {summary && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6" data-testid="parlays-summary">
-          <Stat label="Parlays" value={String(summary.count)} />
+          <Stat label="Bets" value={String(summary.count)} />
           <Stat label="Live" value={String(summary.live)} tone="gold" />
           <Stat label="Pending" value={String(summary.pending)} />
           <Stat label="Cashed" value={String(summary.won)} tone="good" />
@@ -105,7 +105,7 @@ export default function Parlays() {
           className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground"
           data-testid="parlays-empty"
         >
-          No virtual parlays for this day — they form automatically once a game has a SNIPER prop.
+          No virtual bets for this day — one forms automatically for each SNIPER pick.
         </div>
       )}
 
@@ -122,6 +122,11 @@ function ParlayCard({ parlay }: { parlay: ParlayItem }) {
   const meta = STATUS_META[parlay.status];
   const profit = parlay.potentialProfitDollars ?? 0;
   const settled = parlay.status === "won" || parlay.status === "busted";
+  // Each card is a single $100 bet: its one leg IS the pick.
+  const leg = parlay.legs[0];
+  const pickTitle = leg
+    ? `${leg.player} · ${leg.side?.toUpperCase() ?? ""} ${fmtLine(leg.line)} ${leg.market}`.trim()
+    : (parlay.gameLabel ?? parlay.gameId);
 
   return (
     <div
@@ -129,16 +134,19 @@ function ParlayCard({ parlay }: { parlay: ParlayItem }) {
       data-testid={`parlay-card-${parlay.parlayId}`}
     >
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="font-display text-sm font-bold uppercase tracking-[0.16em] text-foreground">
-            {parlay.gameLabel ?? parlay.gameId}
-          </h2>
-          <div className="mt-0.5 text-[11px] uppercase tracking-wider text-muted-foreground">
-            {parlay.legCount}-leg · ${Math.round(parlay.stakeDollars)} stake
+        <div className="flex min-w-0 items-start gap-2">
+          {leg && <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${LEG_DOT[leg.disposition]}`} />}
+          <div className="min-w-0">
+            <h2 className="font-display text-sm font-bold uppercase tracking-[0.12em] text-foreground">
+              {pickTitle}
+            </h2>
+            <div className="mt-0.5 truncate text-[11px] uppercase tracking-wider text-muted-foreground">
+              {parlay.gameLabel ?? parlay.gameId} · ${Math.round(parlay.stakeDollars)} stake
+            </div>
           </div>
         </div>
         <span
-          className={`rounded-full px-2.5 py-1 font-display text-[10px] font-bold uppercase tracking-[0.14em] ${meta.chip}`}
+          className={`shrink-0 rounded-full px-2.5 py-1 font-display text-[10px] font-bold uppercase tracking-[0.14em] ${meta.chip}`}
           data-testid={`parlay-status-${parlay.parlayId}`}
         >
           {meta.label}
@@ -170,25 +178,6 @@ function ParlayCard({ parlay }: { parlay: ParlayItem }) {
           )}
         </span>
       </div>
-
-      {/* Progress */}
-      <div className="mt-2 text-[11px] text-muted-foreground" data-testid={`parlay-progress-${parlay.parlayId}`}>
-        {parlay.legsWon} won · {parlay.legsBusted} busted · {parlay.legsPending} pending
-      </div>
-
-      {/* Legs */}
-      <ul className="mt-3 space-y-1.5" data-testid={`parlay-legs-${parlay.parlayId}`}>
-        {parlay.legs.map((leg) => (
-          <li key={leg.pickId} className="flex items-center gap-2 text-xs">
-            <span className={`h-2 w-2 shrink-0 rounded-full ${LEG_DOT[leg.disposition]}`} />
-            <span className="font-medium text-foreground">{leg.player}</span>
-            <span className="text-muted-foreground">
-              {leg.side?.toUpperCase()} {leg.line} {leg.market}
-            </span>
-            <span className="ml-auto tabular-nums text-muted-foreground">{americanText(leg.odds)}</span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

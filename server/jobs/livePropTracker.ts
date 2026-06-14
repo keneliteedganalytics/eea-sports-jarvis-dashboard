@@ -30,7 +30,7 @@ import { getOperatingDay } from "../sports/mlb/operatingDay";
 import { validateGradesTick, reconcileFalseGradesV675 } from "./reconcileFalseGrades";
 import { recomputePropsV676 } from "./recomputeProps";
 import { recordPassesV677 } from "./recordPassesV677";
-import { backfillVirtualParlaysV679 } from "./virtualParlayBuilder";
+import { backfillVirtualParlaysV680 } from "./virtualParlayBuilder";
 import { runVirtualParlayTrack } from "./virtualParlayTracker";
 
 function log(message: string, source = "live-props"): void {
@@ -183,10 +183,11 @@ export function startLivePropTracker(): void {
       } catch {
         // best-effort; never block the tracker on the heal
       }
-      // v6.7.9: one-shot backfill of virtual parlays over the last 7 days. Flag-
-      // guarded + idempotent; best-effort so it never blocks the first tick.
+      // v6.8.0: one-shot backfill of virtual singles over the last 7 days. Flag-
+      // guarded + idempotent; wipes the old per-game groupings then rebuilds as
+      // singles. Best-effort so it never blocks the first tick.
       try {
-        backfillVirtualParlaysV679();
+        backfillVirtualParlaysV680();
       } catch {
         // best-effort; the build is idempotent and the cycle hook keeps it fresh
       }

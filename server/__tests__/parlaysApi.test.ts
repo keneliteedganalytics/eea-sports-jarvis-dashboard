@@ -1,7 +1,8 @@
-// Integration: GET /api/parlays/board + /api/parlays/analytics (v6.7.9). Mounts
-// copies of the real handlers over a temp graded book, seeds two SNIPER legs in a
-// game, builds the parlay, and asserts the board shape (summary + items + nested
-// legs) and the analytics aggregate. Run: tsx server/__tests__/parlaysApi.test.ts
+// Integration: GET /api/parlays/board + /api/parlays/analytics (v6.8.0). Mounts
+// copies of the real handlers over a temp graded book, seeds two SNIPER picks in a
+// game, builds the singles, and asserts the board shape (summary + items + the
+// single nested leg) and the analytics aggregate — each pick is its own $100
+// single-leg paper bet. Run: tsx server/__tests__/parlaysApi.test.ts
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -100,33 +101,39 @@ async function test(name: string, fn: () => Promise<void>) {
 
 console.log("GET /api/parlays/board + /api/parlays/analytics");
 
-await test("board returns summary + one item for the seeded game", async () => {
+await test("board returns one single PER SNIPER pick (2 picks → 2 singles)", async () => {
   const res = await fetch(`${base}/api/parlays/board?date=${DAY}`);
   assert.equal(res.status, 200);
   const d = await res.json();
-  assert.equal(d.summary.count, 1);
-  assert.equal(d.summary.pending, 1);
-  assert.equal(d.items.length, 1);
+  assert.equal(d.summary.count, 2);
+  assert.equal(d.summary.pending, 2);
+  assert.equal(d.items.length, 2);
 });
 
-await test("the parlay item carries its nested legs (player/market/line/side/odds)", async () => {
+await test("each single carries its one nested leg (player/market/line/side/odds)", async () => {
   const d = await (await fetch(`${base}/api/parlays/board?date=${DAY}`)).json();
-  const p = d.items[0];
-  assert.equal(p.gameLabel, "Pittsburgh Pirates @ Miami Marlins");
-  assert.equal(p.legCount, 2);
-  assert.equal(p.legs.length, 2);
-  const reynolds = p.legs.find((l: { player: string }) => l.player === "Bryan Reynolds");
+  for (const p of d.items) {
+    assert.equal(p.gameLabel, "Pittsburgh Pirates @ Miami Marlins");
+    assert.equal(p.legCount, 1);
+    assert.equal(p.legs.length, 1);
+  }
+  const reynolds = d.items
+    .flatMap((p: { legs: { player: string }[] }) => p.legs)
+    .find((l: { player: string }) => l.player === "Bryan Reynolds");
   assert.ok(reynolds);
   assert.equal(reynolds.market, "Hits");
   assert.equal(reynolds.odds, -150);
   assert.equal(reynolds.disposition, "pending");
 });
 
-await test("combined american odds are surfaced and positive (two plus-ish legs)", async () => {
+await test("each single's american odds ARE the pick's odds", async () => {
   const d = await (await fetch(`${base}/api/parlays/board?date=${DAY}`)).json();
-  const p = d.items[0];
-  assert.ok(typeof p.combinedAmerican === "number");
-  assert.ok(p.potentialProfitDollars > 0);
+  const reynolds = d.items.find(
+    (p: { legs: { player: string }[] }) => p.legs[0]?.player === "Bryan Reynolds",
+  );
+  assert.ok(reynolds);
+  assert.equal(reynolds.combinedAmerican, -150);
+  assert.ok(reynolds.potentialProfitDollars > 0);
 });
 
 await test("analytics aggregate exposes the expected keys", async () => {
@@ -137,8 +144,8 @@ await test("analytics aggregate exposes the expected keys", async () => {
   ]) {
     assert.ok(k in d, `missing key: ${k}`);
   }
-  assert.equal(d.total_parlays, 1);
-  assert.equal(d.pending, 1);
+  assert.equal(d.total_parlays, 2);
+  assert.equal(d.pending, 2);
 });
 
 server.close();

@@ -1,9 +1,10 @@
-// Virtual parlay builder + DB persistence (v6.7.9). Seeds SNIPER prop picks +
-// their offers over a temp graded book, runs the builder, and asserts each game
-// group auto-forms a $100 parlay with correct combined odds, that non-SNIPER
-// legs are excluded, that the build is idempotent (parlay_id = day:game_id), and
-// that the live tracker advances the parlay as legs settle WITHOUT moving the
-// bankroll. Run: tsx server/__tests__/virtualParlayBuilder.test.ts
+// Virtual parlay builder + DB persistence (v6.8.0). Seeds SNIPER prop picks +
+// their offers over a temp graded book, runs the builder, and asserts each
+// SNIPER pick auto-forms its OWN $100 single-leg paper bet (no game grouping),
+// with the pick's own odds, that non-SNIPER legs are excluded, that the build is
+// idempotent (parlay_id = day:pick_id), and that the live tracker settles each
+// single as its pick grades WITHOUT moving the bankroll. Run: tsx
+// server/__tests__/virtualParlayBuilder.test.ts
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -22,7 +23,7 @@ const {
   getVirtualParlayStats,
   getBankrollState,
 } = await import("../gradedBook");
-const { americanToDecimal, decimalToAmerican } = await import("../core/odds");
+const { americanToDecimal } = await import("../core/odds");
 const { buildVirtualParlaysForDates } = await import("../jobs/virtualParlayBuilder");
 const { runVirtualParlayTrackForDates } = await import("../jobs/virtualParlayTracker");
 
@@ -70,106 +71,99 @@ function test(name: string, fn: () => void) {
   }
 }
 
-console.log("virtual parlay builder — v6.7.9");
+console.log("virtual parlay builder — v6.8.0 (per-pick singles)");
 
 const startingBankroll = getBankrollState().current;
 
 buildVirtualParlaysForDates([DAY]);
 const parlays = getVirtualParlaysForDate(DAY);
 
-test("one parlay per game group with >=1 SNIPER pick", () => {
-  assert.equal(parlays.length, 2);
+test("one single per SNIPER pick (EDGE excluded) — 3 SNIPER, 0 from EDGE", () => {
+  assert.equal(parlays.length, 3);
 });
 
-test("the Pirates@Marlins parlay uses ONLY its two SNIPER legs (EDGE excluded)", () => {
-  const pit = parlays.find((p) => p.game_id === "PITvsMIA")!;
-  assert.ok(pit, "PIT parlay missing");
-  assert.equal(pit.leg_count, 2);
-  const ids = JSON.parse(pit.leg_pick_ids) as string[];
-  assert.deepEqual(ids.sort(), ["pit1", "pit2"]);
-  assert.ok(!ids.includes("pitEdge"));
+test("each single carries exactly one leg = its own pick", () => {
+  for (const p of parlays) {
+    assert.equal(p.leg_count, 1);
+    const ids = JSON.parse(p.leg_pick_ids) as string[];
+    assert.equal(ids.length, 1);
+  }
+  const allIds = parlays.flatMap((p) => JSON.parse(p.leg_pick_ids) as string[]).sort();
+  assert.deepEqual(allIds, ["nyy1", "pit1", "pit2"]);
+  assert.ok(!allIds.includes("pitEdge"));
 });
 
-test("parlay_id is <day>:<game_id> and stake is $100", () => {
-  const pit = parlays.find((p) => p.game_id === "PITvsMIA")!;
-  assert.equal(pit.parlay_id, `${DAY}:PITvsMIA`);
-  assert.equal(pit.stake_dollars, 100);
+test("parlay_id is <day>:<pick_id> and stake is $100", () => {
+  const pit1 = parlays.find((p) => p.parlay_id === `${DAY}:pit1`)!;
+  assert.ok(pit1, "pit1 single missing");
+  assert.equal(pit1.stake_dollars, 100);
+  assert.equal(pit1.game_id, "PITvsMIA");
 });
 
-test("combined odds = product of leg decimals; payout/profit follow", () => {
-  const pit = parlays.find((p) => p.game_id === "PITvsMIA")!;
-  const expectedDec = americanToDecimal(-150)! * americanToDecimal(120)!;
-  assert.ok(Math.abs(pit.combined_decimal! - expectedDec) < 1e-4);
-  assert.equal(pit.combined_american, decimalToAmerican(expectedDec));
-  assert.ok(Math.abs(pit.potential_payout_dollars! - 100 * expectedDec) < 0.01);
-  assert.ok(Math.abs(pit.potential_profit_dollars! - (100 * expectedDec - 100)) < 0.01);
+test("a single's odds ARE the pick's odds; payout/profit follow", () => {
+  const pit1 = parlays.find((p) => p.parlay_id === `${DAY}:pit1`)!;
+  const expectedDec = americanToDecimal(-150)!;
+  assert.ok(Math.abs(pit1.combined_decimal! - expectedDec) < 1e-4);
+  assert.equal(pit1.combined_american, -150);
+  assert.ok(Math.abs(pit1.potential_payout_dollars! - 100 * expectedDec) < 0.01);
+  assert.ok(Math.abs(pit1.potential_profit_dollars! - (100 * expectedDec - 100)) < 0.01);
 });
 
 test("game label is away @ home from the offer event teams", () => {
-  const pit = parlays.find((p) => p.game_id === "PITvsMIA")!;
-  assert.equal(pit.game_label, "Pittsburgh Pirates @ Miami Marlins");
+  const pit1 = parlays.find((p) => p.parlay_id === `${DAY}:pit1`)!;
+  assert.equal(pit1.game_label, "Pittsburgh Pirates @ Miami Marlins");
 });
 
-test("fresh parlays start pending with all legs pending", () => {
-  const pit = parlays.find((p) => p.game_id === "PITvsMIA")!;
-  assert.equal(pit.status, "pending");
-  assert.equal(pit.legs_pending, 2);
-  assert.equal(pit.pl_dollars, null);
+test("fresh singles start pending with their one leg pending", () => {
+  const pit1 = parlays.find((p) => p.parlay_id === `${DAY}:pit1`)!;
+  assert.equal(pit1.status, "pending");
+  assert.equal(pit1.legs_pending, 1);
+  assert.equal(pit1.pl_dollars, null);
 });
 
 test("re-running the builder is idempotent (no duplicate rows)", () => {
   buildVirtualParlaysForDates([DAY]);
-  assert.equal(getVirtualParlaysForDate(DAY).length, 2);
+  assert.equal(getVirtualParlaysForDate(DAY).length, 3);
 });
 
 // --- live tracking transitions ---
 
-test("one SNIPER leg clearing live → parlay goes LIVE (pl still null)", () => {
+test("a pick clearing live (ungraded) keeps its single pending — only a graded W moves it", () => {
   updatePropPickLiveState("pit1", "live_clear", 1, "live");
   runVirtualParlayTrackForDates([DAY]);
-  const pit = getVirtualParlaysForDate(DAY).find((p) => p.game_id === "PITvsMIA")!;
-  // live_clear is not yet a win, so still pending until a leg grades W.
-  assert.equal(pit.status, "pending");
+  const pit1 = getVirtualParlaysForDate(DAY).find((p) => p.parlay_id === `${DAY}:pit1`)!;
+  // live_clear is not yet a win; a single only settles when its one leg grades.
+  assert.equal(pit1.status, "pending");
 });
 
-test("a graded WIN on one leg moves the parlay to LIVE", () => {
+test("a graded WIN settles the single as WON with profit, bankroll UNCHANGED", () => {
   settlePropPick("pit1", { result: "W", actualValue: 2, plUnits: 0, plDollars: 0 });
   runVirtualParlayTrackForDates([DAY]);
-  const pit = getVirtualParlaysForDate(DAY).find((p) => p.game_id === "PITvsMIA")!;
-  assert.equal(pit.status, "live");
-  assert.equal(pit.legs_won, 1);
-  assert.equal(pit.pl_dollars, null);
-});
-
-test("all legs won → parlay WON with profit, bankroll UNCHANGED", () => {
-  settlePropPick("pit2", { result: "W", actualValue: 1, plUnits: 0, plDollars: 0 });
-  runVirtualParlayTrackForDates([DAY]);
-  const pit = getVirtualParlaysForDate(DAY).find((p) => p.game_id === "PITvsMIA")!;
-  assert.equal(pit.status, "won");
-  assert.ok((pit.pl_dollars ?? 0) > 0);
-  assert.ok(pit.graded_at != null);
-  // The whole point: a paper parlay NEVER moves the real bankroll.
+  const pit1 = getVirtualParlaysForDate(DAY).find((p) => p.parlay_id === `${DAY}:pit1`)!;
+  assert.equal(pit1.status, "won");
+  assert.equal(pit1.legs_won, 1);
+  assert.ok((pit1.pl_dollars ?? 0) > 0);
+  assert.ok(pit1.graded_at != null);
+  // The whole point: a paper bet NEVER moves the real bankroll.
   assert.equal(getBankrollState().current, startingBankroll);
 });
 
-test("a busted leg busts the NYY parlay for −$100, bankroll still unchanged", () => {
+test("a busted pick busts its single for −$100, bankroll still unchanged", () => {
   settlePropPick("nyy1", { result: "L", actualValue: 0, plUnits: 0, plDollars: 0 });
   runVirtualParlayTrackForDates([DAY]);
-  const nyy = getVirtualParlaysForDate(DAY).find((p) => p.game_id === "NYYvsBOS")!;
+  const nyy = getVirtualParlaysForDate(DAY).find((p) => p.parlay_id === `${DAY}:nyy1`)!;
   assert.equal(nyy.status, "busted");
   assert.equal(nyy.pl_dollars, -100);
   assert.equal(getBankrollState().current, startingBankroll);
 });
 
-test("aggregate stats: 1 won + 1 busted settled, paper P/L = profit − 100", () => {
+test("aggregate stats: 1 won + 1 busted settled across singles", () => {
   const stats = getVirtualParlayStats();
   assert.equal(stats.won, 1);
   assert.equal(stats.busted, 1);
+  // pit1 won + nyy1 busted = $200 staked across settled singles.
   assert.equal(stats.total_staked, 200);
   assert.equal(stats.win_rate_pct, 50);
-  const pit = getVirtualParlaysForDate(DAY).find((p) => p.game_id === "PITvsMIA")!;
-  const expectedPl = Math.round(((pit.pl_dollars ?? 0) - 100) * 100) / 100;
-  assert.ok(Math.abs(stats.total_pl_dollars - expectedPl) < 0.01);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

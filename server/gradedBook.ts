@@ -1753,6 +1753,23 @@ export function getVirtualParlaysForDate(date: string, sport?: string | null): V
     .all(params) as VirtualParlayRow[];
 }
 
+// Delete every virtual parlay whose operating_day is in the given set. Used by
+// the v6.8.0 backfill to wipe the prior per-game groupings before rebuilding the
+// window as per-pick singles. NEVER touches the bankroll (paper rows only).
+export function deleteVirtualParlaysForDates(dates: string[]): number {
+  const uniq = [...new Set(dates)].filter(Boolean);
+  if (uniq.length === 0) return 0;
+  const placeholders = uniq.map((_, i) => `@d${i}`).join(", ");
+  const params: Record<string, unknown> = {};
+  uniq.forEach((d, i) => {
+    params[`d${i}`] = d;
+  });
+  const info = gradedDb()
+    .prepare(`DELETE FROM virtual_parlays WHERE operating_day IN (${placeholders})`)
+    .run(params);
+  return info.changes;
+}
+
 // Persist a freshly computed live state for one parlay. The live-state worker
 // owns this; the builder never calls it. NEVER touches the bankroll.
 export function updateVirtualParlayState(

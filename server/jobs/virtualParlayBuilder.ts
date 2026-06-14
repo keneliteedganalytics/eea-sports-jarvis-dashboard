@@ -1,33 +1,33 @@
-// Virtual parlay builder (v6.7.9). Runs on every prop-ingest cycle and once on
-// boot. Groups SNIPER prop picks by game_id for today AND tomorrow, and for each
-// game with >=1 SNIPER pick auto-forms (or refreshes) a $100 virtual parlay using
-// every SNIPER leg in that game. The parlay is a PAPER portfolio — it never moves
-// the bankroll. Formation is idempotent: parlay_id = "<operating_day>:<game_id>",
-// and upsertVirtualParlay only rewrites the leg composition while status='pending'
-// so a re-ingest can't disturb a parlay that's already being graded.
+// Virtual parlay builder (v6.8.0). Runs on every prop-ingest cycle and once on
+// boot. Emits ONE $100 single-leg paper bet per SNIPER prop pick for today AND
+// tomorrow — NO per-game grouping, never combined. (v6.7.9 grouped a game's
+// SNIPER picks into one multi-leg ticket; the user rejected that — each pick is
+// staked $100 independently.) The portfolio is PAPER: it never moves the
+// bankroll. Formation is idempotent: parlay_id = "<operating_day>:<pick_id>", and
+// upsertVirtualParlay only rewrites composition while status='pending', so a
+// re-ingest can't disturb a single that's already being graded.
 //
-// Combined odds = product of each leg's American→decimal price; potential payout =
-// $100 × combined decimal; potential profit = payout − $100. Best-effort: every
-// step is void+catch guarded so a builder throw can't crash the ingest worker.
+// Each single's odds ARE the pick's odds: combined_decimal = americanToDecimal,
+// payout = $100 × decimal, profit = payout − $100. Best-effort: every step is
+// void+catch guarded so a builder throw can't crash the ingest worker.
 
 import {
   sniperPropPicksForDates,
   upsertVirtualParlay,
+  deleteVirtualParlaysForDates,
   getSystemState,
   setSystemState,
   type SniperParlayLeg,
 } from "../gradedBook";
-import { americanToDecimal, decimalToAmerican } from "../core/odds";
+import { americanToDecimal } from "../core/odds";
 import { getOperatingDay, tomorrowOperatingDay, yesterdayOperatingDay } from "../sports/mlb/operatingDay";
 import { runVirtualParlayTrackForDates } from "./virtualParlayTracker";
 
-// One-shot idempotency flag. Once the v6.7.9 backfill has walked history, it sets
-// this so a redeploy doesn't re-walk (the build is idempotent anyway, but this
-// keeps boot cheap).
-// Bumped to _b after the v6.7.9 builder was fixed to date SNIPER picks by
-// posted_at (the prior offer-join query found nothing on prod, so the first
-// backfill ran empty and set the old flag). The new flag forces a clean re-walk.
-const BACKFILL_FLAG = "virtual_parlays_v679_initialized_b";
+// One-shot idempotency flag. Once the backfill has walked history, it sets this
+// so a redeploy doesn't re-walk. Bumped to v6_8_0 for the per-pick-singles
+// rewrite: the boot backfill now WIPES the 7-day window (clearing the old
+// per-game groupings) and rebuilds it as singles.
+const BACKFILL_FLAG = "parlay_backfill_v6_8_0";
 
 function log(message: string, source = "parlays"): void {
   const t = new Date().toLocaleTimeString("en-US", {
@@ -55,82 +55,63 @@ function legPrice(leg: SniperParlayLeg): number | null {
 
 export interface ParlayBuildSummary {
   dates: string[];
-  groups: number; // distinct game groups seen
-  built: number; // parlays upserted (>=1 priced leg)
+  groups: number; // distinct SNIPER picks seen
+  built: number; // singles upserted (one per priced pick)
 }
 
-// Build/refresh parlays for an explicit set of operating days. Shared by the
-// ingest hook (today+tomorrow) and the boot backfill (last 7 days).
+// Build/refresh per-pick singles for an explicit set of operating days. One $100
+// single-leg paper bet per SNIPER pick — no game grouping. Shared by the ingest
+// hook (today+tomorrow) and the boot backfill (last 7 days).
 export function buildVirtualParlaysForDates(dates: string[]): ParlayBuildSummary {
   const uniqueDates = [...new Set(dates)].filter(Boolean);
   if (uniqueDates.length === 0) return { dates: [], groups: 0, built: 0 };
 
   const legs = sniperPropPicksForDates(uniqueDates);
 
-  // Group by the parlay key (operating_day + game_id). A game can technically host
-  // legs on two operating days only across the date boundary; keying on both keeps
-  // each civil day's parlay distinct.
-  const groups = new Map<string, SniperParlayLeg[]>();
-  for (const leg of legs) {
-    const key = `${leg.operating_day}:${leg.game_id}`;
-    const arr = groups.get(key) ?? [];
-    arr.push(leg);
-    groups.set(key, arr);
-  }
-
   let built = 0;
-  for (const [parlayId, groupLegs] of groups.entries()) {
+  for (const pick of legs) {
     try {
-      // Only legs with a usable price contribute to combined odds.
-      const priced = groupLegs.filter((l) => legPrice(l) != null);
-      if (priced.length === 0) continue;
+      const price = legPrice(pick);
+      if (price == null) continue;
 
-      let combinedDecimal = 1;
-      for (const l of priced) {
-        const dec = americanToDecimal(legPrice(l));
-        if (dec == null) continue;
-        combinedDecimal *= dec;
-      }
-      if (combinedDecimal <= 1) continue;
-
-      const combinedAmerican = decimalToAmerican(combinedDecimal);
-      if (combinedAmerican == null) continue;
+      const decimal = americanToDecimal(price);
+      if (decimal == null || decimal <= 1) continue;
 
       const stake = 100;
-      const payout = Math.round(stake * combinedDecimal * 100) / 100;
+      const payout = Math.round(stake * decimal * 100) / 100;
       const profit = Math.round((payout - stake) * 100) / 100;
-      const first = priced[0];
 
+      // One single per pick: keyed on the pick id so each is independent.
       upsertVirtualParlay({
-        parlay_id: parlayId,
-        operating_day: first.operating_day,
-        game_id: first.game_id,
-        game_label: gameLabel(first),
-        sport: (first.sport ?? "mlb").toLowerCase(),
-        leg_count: priced.length,
-        leg_pick_ids: priced.map((l) => l.pick_id),
-        combined_decimal: Math.round(combinedDecimal * 1e6) / 1e6,
-        combined_american: combinedAmerican,
+        parlay_id: `${pick.operating_day}:${pick.pick_id}`,
+        operating_day: pick.operating_day,
+        game_id: pick.game_id,
+        game_label: gameLabel(pick),
+        sport: (pick.sport ?? "mlb").toLowerCase(),
+        leg_count: 1,
+        leg_pick_ids: [pick.pick_id],
+        combined_decimal: Math.round(decimal * 1e6) / 1e6,
+        combined_american: price,
         potential_payout_dollars: payout,
         potential_profit_dollars: profit,
       });
       built++;
     } catch {
-      // best-effort per group; a failure on one game never blocks the others
+      // best-effort per pick; a failure on one never blocks the others
     }
   }
 
-  return { dates: uniqueDates, groups: groups.size, built };
+  return { dates: uniqueDates, groups: legs.length, built };
 }
 
-// The cycle hook: build parlays for today AND tomorrow. Called right after each
+// The cycle hook: build singles for today AND tomorrow. Called right after each
 // prop ingest+build cycle and on boot.
 export function runVirtualParlayBuild(now: Date = new Date()): ParlayBuildSummary {
   const today = getOperatingDay(now);
   const tomorrow = tomorrowOperatingDay(now);
   const summary = buildVirtualParlaysForDates([today, tomorrow]);
   if (summary.built > 0) {
-    log(`built/refreshed ${summary.built} virtual parlay(s) across ${summary.groups} game group(s)`);
+    log(`built/refreshed ${summary.built} virtual single(s)`);
   }
   return summary;
 }
@@ -148,22 +129,26 @@ function lastSevenDays(now: Date = new Date()): string[] {
   return [...new Set(days)].sort();
 }
 
-// One-shot boot backfill: walk SNIPER prop picks over the last 7 operating days,
-// build their parlays, then run the tracker once so any parlay whose legs are
-// already graded lands on its final won/busted status immediately. Idempotent via
-// the BACKFILL_FLAG system_state key. Best-effort: never throws to the caller.
-export function backfillVirtualParlaysV679(now: Date = new Date()): {
+// One-shot boot backfill (v6.8.0): wipe the prior virtual parlays over the last 7
+// operating days (clearing v6.7.9's per-game groupings), then walk SNIPER prop
+// picks for that window and rebuild each as a $100 single, and run the tracker
+// once so any single whose pick is already graded lands on its final won/busted
+// status immediately. Idempotent via the BACKFILL_FLAG system_state key.
+// Best-effort: never throws to the caller.
+export function backfillVirtualParlaysV680(now: Date = new Date()): {
   ran: boolean;
   build?: ParlayBuildSummary;
+  wiped?: number;
 } {
   try {
     if (getSystemState(BACKFILL_FLAG)) return { ran: false };
     const days = lastSevenDays(now);
+    const wiped = deleteVirtualParlaysForDates(days);
     const build = buildVirtualParlaysForDates(days);
     runVirtualParlayTrackForDates(days);
     setSystemState(BACKFILL_FLAG, new Date().toISOString());
-    log(`v6.7.9 backfill: built ${build.built} parlay(s) over ${days.length} day(s)`);
-    return { ran: true, build };
+    log(`v6.8.0 backfill: wiped ${wiped}, built ${build.built} single(s) over ${days.length} day(s)`);
+    return { ran: true, build, wiped };
   } catch {
     // best-effort; a backfill failure must never block boot
     return { ran: false };
