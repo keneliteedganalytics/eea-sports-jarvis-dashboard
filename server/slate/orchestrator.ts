@@ -12,6 +12,7 @@ import { applyExposureCap } from "../core/sizing";
 import { persistPicks } from "../jobs/persistPicks";
 import { picksForDate, pickId, getBankrollState, archivedPickIds, type GradedPick } from "../gradedBook";
 import type { ClvBadge } from "../sports/mlb/picksEngine";
+import { assembleSignals } from "../sports/signals/assembleSignals";
 
 // Build the client-facing CLV badge from a graded row. Returns null until the
 // pick has a posted price (every actionable pick gets one at posting time). The
@@ -164,6 +165,20 @@ export function decorateSlatePicks(picks: BuiltPick[], day: string): void {
   const byId = new Map<string, GradedPick>();
   for (const r of rows) byId.set(r.id, r);
   for (const p of picks) {
+    // v6.9.0: attach the five-source PickSignals (read-only, for the SignalsBar).
+    // Pulls fields already oriented to the pick side; absent inputs degrade to
+    // null sources, so this never changes tier/stake/grade.
+    p.signals = assembleSignals({
+      pickSide: p.pickSide,
+      pickWinProb: p.pickWinProb ?? null,
+      edgePp: p.edgePp ?? null,
+      pickImpliedProb: p.pickImpliedProb ?? null,
+      sharpPct: p.sharpPct ?? null,
+      predictPct: p.polymarket?.found ? (p.polymarket.pct ?? null) : null,
+      openingLine: p.openingLine ?? null,
+      currentLine: p.currentLine ?? null,
+    });
+
     const row = byId.get(pickId(p.gameId, p.pickType, p.pickSide));
     if (!row) {
       p.clv = openClvFromPick(p);

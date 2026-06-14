@@ -8,6 +8,7 @@ import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
 import { buildTwoWayMarket } from "../../core/markets";
 import type { Verdict, Side, Market, MarketSet } from "../../core/types";
 import { emptyMarket } from "../../core/types";
+import type { PickSignals } from "../../../shared/types/signals";
 import type { ModelResult } from "./model";
 import { SOLID_IP_MIN, type PitcherStats } from "./pitchers";
 import type { TeamOffense } from "./ratings";
@@ -219,6 +220,9 @@ export interface BuiltPick {
   lockedTier?: string | null;
   lockedStake?: number | null;
   lockedOdds?: number | null;
+  // v6.9.0: five-source PickSignals, assembled at the serialization layer for the
+  // SignalsBar UI. Additive + read-only — does NOT feed the tier engine.
+  signals?: PickSignals;
 }
 
 // 7-component confidence with elite-fade & sparse penalties (MLB variant).

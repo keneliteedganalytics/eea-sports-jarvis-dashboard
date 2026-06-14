@@ -47,10 +47,13 @@ import {
   getVirtualParlaysForDate,
   getVirtualParlayStats,
   setSystemState,
+  resetEngineBankroll,
   type VirtualParlayRow,
 } from "./gradedBook";
 import { BANKROLL_USD } from "./sports/mlb/picksEngine";
 import { registerPillarDebugRoutes } from "./sources/pillarsDebug";
+import { fetchPredictionMarketForGame } from "./adapters/predictionMarkets";
+import type { PolySport } from "./adapters/polymarket";
 import { z } from "zod";
 
 const STUB_SPORTS = ["ncaaf", "ncaab", "nfl"];
@@ -434,6 +437,45 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // /api/picks/debug?gameId= consolidates the contributions for one game.
   registerPillarDebugRoutes(app);
 
+  // v6.9.0: prediction-market read for a single matchup. Polymarket primary,
+  // Kalshi fallback. Read-only, best-effort — a miss returns found:false with a
+  // reason, never an error, so the SignalsBar can render an honest label.
+  //   GET /api/markets/predict?home=&away=&date=YYYY-MM-DD&side=home|away&sport=mlb
+  app.get("/api/markets/predict", async (req: Request, res: Response) => {
+    const home = typeof req.query.home === "string" ? req.query.home : "";
+    const away = typeof req.query.away === "string" ? req.query.away : "";
+    const date = parseDateParam(req.query.date) ?? getOperatingDay();
+    const side = req.query.side === "away" ? "away" : "home";
+    const sport = (typeof req.query.sport === "string" ? req.query.sport : "mlb") as PolySport;
+    if (!home || !away) {
+      return res.status(400).json({ message: "home and away team names are required" });
+    }
+    const result = await fetchPredictionMarketForGame(home, away, date, side, sport);
+    res.json({ home, away, date, side, sport, ...result });
+  });
+
+  // v6.9.0: DELIBERATE engine bankroll/stats reset. Admin-PIN (403) gated and
+  // idempotent per resetKey — this is the ONLY way the running bankroll changes
+  // outside a graded pick, and it NEVER fires on boot. Re-buckets prior history to
+  // a legacy version tag, resets the bankroll to the target (default starting),
+  // and records the event in engine_resets.
+  app.post("/api/admin/engine-reset", (req: Request, res: Response) => {
+    if (!requireAdminPinForbidden(req, res)) return;
+    const body = z
+      .object({
+        resetKey: z.string().min(1).default("engine_reset_v6_9_0"),
+        toEngineVersion: z.string().min(1).default("v6.9.0"),
+        legacyBucket: z.string().min(1).optional(),
+        newBankroll: z.number().positive().optional(),
+      })
+      .safeParse(req.body ?? {});
+    if (!body.success) {
+      return res.status(400).json({ message: "invalid body", issues: body.error.issues });
+    }
+    const result = resetEngineBankroll(body.data);
+    res.json(result);
+  });
+
   // Admin: run one live-scoring pass for a date (?date=YYYY-MM-DD, default
   // today's operating day). Fetches the public ESPN scoreboard, updates live
   // scores, and grades any games that have gone final.
@@ -471,7 +513,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const sport = typeof req.query.sport === "string" ? req.query.sport : null;
     const tier = typeof req.query.tier === "string" ? req.query.tier : null;
     const since = parseDateParam(req.query.since) ?? null;
-    res.json(buildAnalytics({ sport, tier, since }));
+    const engineVersion =
+      typeof req.query.engineVersion === "string" ? req.query.engineVersion : null;
+    res.json(buildAnalytics({ sport, tier, since, engineVersion }));
   });
 
   // Player props for a sport+date. Headline markets only; MLB carries a Poisson

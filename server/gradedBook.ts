@@ -310,6 +310,22 @@ export function gradedDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_virtual_parlays_day ON virtual_parlays(operating_day);
     CREATE INDEX IF NOT EXISTS idx_virtual_parlays_status ON virtual_parlays(status);
+    -- v6.9.0: audit ledger of engine bankroll/stats resets. One row per reset
+    -- event records the previous + new bankroll and how many history rows were
+    -- re-bucketed to a prior engine version. Append-only; never deleted. A reset
+    -- is a deliberate, admin-triggered action (see resetEngineBankroll) — nothing
+    -- here fires automatically on boot.
+    CREATE TABLE IF NOT EXISTS engine_resets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reset_key TEXT,
+      to_engine_version TEXT,
+      legacy_bucket TEXT,
+      prev_bankroll REAL,
+      new_bankroll REAL,
+      rows_rebucketed INTEGER,
+      prop_rows_rebucketed INTEGER,
+      created_at TEXT
+    );
   `);
   // Migrate pre-lock databases in place (CREATE TABLE IF NOT EXISTS skips the new
   // columns on an existing table). Mirror of migrations/0001_pick_lock.sql.
@@ -341,6 +357,10 @@ export function gradedDb(): Database.Database {
     final_home_score: "INTEGER",
     home_team: "TEXT",
     away_team: "TEXT",
+    // v6.9.0: which engine version graded this row. Unset (NULL) rows read as the
+    // current engine; a reset re-buckets pre-reset rows to a 'legacy' tag so the
+    // analytics engine-version filter can isolate post-reset performance.
+    engine_version: "TEXT",
   });
   // archived_at now exists (fresh CREATE TABLE or just-added by ensureColumns), so
   // the archive index is safe to build. Kept out of the upfront exec() block on
@@ -378,6 +398,8 @@ export function gradedDb(): Database.Database {
     // passed (outlier | model_outlier_v676 | below_threshold | low_data_quality |
     // daily_cap | other). NULL on actionable rows.
     pass_reason: "TEXT DEFAULT NULL",
+    // v6.9.0: engine version that produced this prop row (see pick_history note).
+    engine_version: "TEXT",
   });
   // v6.7.3: store the Odds API event's home/away team names on each offer so the
   // event→MLB-gamePk mapper can locate the game by team (the Odds event id is a
@@ -572,6 +594,122 @@ export function applyGradeToBankroll(
        last_updated = @now
      WHERE id = 1`,
   ).run({ deltaDollars, winInc, lossInc, pushInc, plUnits: fields.plUnits, now });
+}
+
+export interface EngineResetResult {
+  alreadyApplied: boolean;
+  resetKey: string;
+  toEngineVersion: string;
+  legacyBucket: string;
+  prevBankroll: number;
+  newBankroll: number;
+  rowsRebucketed: number;
+  propRowsRebucketed: number;
+}
+
+// v6.9.0 — DELIBERATE engine reset. Re-buckets all currently-untagged graded
+// history to a legacy version tag, resets the running bankroll + lifetime ledger
+// to a clean slate (default: the configured starting bankroll), and records the
+// event in engine_resets. This is DESTRUCTIVE to the running stats and is NOT
+// wired into any boot path — it fires only when an operator calls it explicitly
+// (the admin endpoint). Idempotent per resetKey: once a key's reset is recorded
+// in system_state, a second call is a no-op that reports alreadyApplied.
+//
+// Bankroll invariant note: this is the ONE sanctioned way the running bankroll
+// changes outside a graded pick — a manual stats reset, audit-logged, never
+// automatic. Graded picks still move the bankroll exactly as before.
+export function resetEngineBankroll(opts: {
+  resetKey: string;
+  toEngineVersion: string;
+  legacyBucket?: string;
+  newBankroll?: number;
+}): EngineResetResult {
+  const db = gradedDb();
+  const legacyBucket = opts.legacyBucket ?? "legacy";
+  const flagKey = `engine_reset_applied:${opts.resetKey}`;
+
+  const prevRow = db
+    .prepare("SELECT current_bankroll FROM bankroll_state WHERE id = 1")
+    .get() as { current_bankroll: number } | undefined;
+  const prevBankroll = prevRow?.current_bankroll ?? startingBankrollFromEnv();
+  const target = Number.isFinite(opts.newBankroll) && (opts.newBankroll as number) > 0
+    ? (opts.newBankroll as number)
+    : startingBankrollFromEnv();
+
+  // Idempotency guard: a recorded reset_key short-circuits.
+  if (getSystemState(flagKey) === "true") {
+    return {
+      alreadyApplied: true,
+      resetKey: opts.resetKey,
+      toEngineVersion: opts.toEngineVersion,
+      legacyBucket,
+      prevBankroll,
+      newBankroll: prevBankroll,
+      rowsRebucketed: 0,
+      propRowsRebucketed: 0,
+    };
+  }
+
+  const now = new Date().toISOString();
+  const apply = db.transaction(() => {
+    // Tag every still-untagged history row to the legacy bucket so post-reset
+    // analytics can isolate the new engine's record. Already-tagged rows (from a
+    // prior reset) are left as-is.
+    const gameRes = db
+      .prepare("UPDATE pick_history SET engine_version = @legacyBucket WHERE engine_version IS NULL")
+      .run({ legacyBucket });
+    const propRes = db
+      .prepare("UPDATE prop_picks SET engine_version = @legacyBucket WHERE engine_version IS NULL")
+      .run({ legacyBucket });
+
+    // Reset the running bankroll + lifetime ledger to a clean slate.
+    db.prepare(
+      `UPDATE bankroll_state SET
+         starting_bankroll = @target,
+         current_bankroll = @target,
+         lifetime_wins = 0,
+         lifetime_losses = 0,
+         lifetime_pushes = 0,
+         lifetime_net_units = 0,
+         lifetime_net_dollars = 0,
+         last_updated = @now
+       WHERE id = 1`,
+    ).run({ target, now });
+
+    db.prepare(
+      `INSERT INTO engine_resets
+         (reset_key, to_engine_version, legacy_bucket, prev_bankroll, new_bankroll,
+          rows_rebucketed, prop_rows_rebucketed, created_at)
+       VALUES
+         (@resetKey, @toEngineVersion, @legacyBucket, @prevBankroll, @newBankroll,
+          @rows, @propRows, @now)`,
+    ).run({
+      resetKey: opts.resetKey,
+      toEngineVersion: opts.toEngineVersion,
+      legacyBucket,
+      prevBankroll,
+      newBankroll: target,
+      rows: gameRes.changes,
+      propRows: propRes.changes,
+      now,
+    });
+
+    return { rows: gameRes.changes, propRows: propRes.changes };
+  });
+
+  const { rows, propRows } = apply();
+  setSystemState(flagKey, "true");
+
+  return {
+    alreadyApplied: false,
+    resetKey: opts.resetKey,
+    toEngineVersion: opts.toEngineVersion,
+    legacyBucket,
+    prevBankroll,
+    newBankroll: target,
+    rowsRebucketed: rows,
+    propRowsRebucketed: propRows,
+  };
 }
 
 // American → decimal price. Local copy (gradedBook stays free of a core/odds
@@ -1318,7 +1456,9 @@ export function setPropPickTier(pickId: string, tier: string): void {
 }
 
 // All graded prop picks for analytics, optional sport + since filters.
-export function gradedPropPicks(opts: { sport?: string | null; since?: string | null } = {}): PropPickRow[] {
+export function gradedPropPicks(
+  opts: { sport?: string | null; since?: string | null; engineVersion?: string | null } = {},
+): PropPickRow[] {
   const db = gradedDb();
   const clauses = ["result IS NOT NULL"];
   const params: Record<string, unknown> = {};
@@ -1330,9 +1470,38 @@ export function gradedPropPicks(opts: { sport?: string | null; since?: string | 
     clauses.push("graded_at >= @since");
     params.since = opts.since;
   }
+  // v6.9.0 engine-version filter. "current" = untagged rows (the live engine);
+  // "legacy" (or any explicit tag) = rows re-bucketed by a reset. "ALL"/null = no
+  // filter. Lets Analytics isolate the post-reset record.
+  if (opts.engineVersion && opts.engineVersion.toUpperCase() !== "ALL") {
+    if (opts.engineVersion.toLowerCase() === "current") {
+      clauses.push("engine_version IS NULL");
+    } else {
+      clauses.push("engine_version = @engineVersion");
+      params.engineVersion = opts.engineVersion;
+    }
+  }
   return db
     .prepare(`SELECT * FROM prop_picks WHERE ${clauses.join(" AND ")} ORDER BY graded_at DESC`)
     .all(params) as PropPickRow[];
+}
+
+// v6.9.0: distinct engine-version buckets present in the graded ledgers, for the
+// Analytics version toggle. Untagged rows surface as the "current" sentinel.
+export function availableEngineVersions(): string[] {
+  const db = gradedDb();
+  const out = new Set<string>(["ALL", "current"]);
+  for (const table of ["pick_history", "prop_picks"]) {
+    try {
+      const rows = db
+        .prepare(`SELECT DISTINCT engine_version AS v FROM ${table} WHERE engine_version IS NOT NULL`)
+        .all() as Array<{ v: string | null }>;
+      for (const r of rows) if (r.v) out.add(r.v);
+    } catch {
+      // table may predate the column on a very old DB; ignore.
+    }
+  }
+  return [...out];
 }
 
 // Persist a prop grade (result + actual stat + P/L). Idempotent at the call site.

@@ -7,7 +7,7 @@
 // Filters (sport / tier / since-date) are applied to the bet log.
 
 import { hitRatesByTier, trackRecord, type BetLogEntry } from "./sports/mlb/trackRecord";
-import { clvAggregate, gradedPropPicks, passSummary, type ClvAggregate, type PassSummary } from "./gradedBook";
+import { clvAggregate, gradedPropPicks, passSummary, availableEngineVersions, type ClvAggregate, type PassSummary } from "./gradedBook";
 
 const TIER_ORDER = ["SNIPER", "EDGE", "RECON"];
 const SPORTS = ["MLB", "NHL", "NBA", "SOCCER"];
@@ -16,6 +16,7 @@ export interface AnalyticsFilters {
   sport?: string | null; // "ALL" | one of SPORTS
   tier?: string | null; // "ALL" | one of TIER_ORDER
   since?: string | null; // YYYY-MM-DD inclusive lower bound
+  engineVersion?: string | null; // "ALL" | "current" | a legacy bucket tag (v6.9.0)
 }
 
 export interface KpiCards {
@@ -76,8 +77,8 @@ export interface PlayedTier {
 }
 
 export interface AnalyticsPayload {
-  filters: { sport: string; tier: string; since: string | null };
-  available: { sports: string[]; tiers: string[] };
+  filters: { sport: string; tier: string; since: string | null; engineVersion: string };
+  available: { sports: string[]; tiers: string[]; engineVersions: string[] };
   kpis: KpiCards;
   winRateByTier: TierWinRate[];
   roiBySport: SportRoi[];
@@ -274,15 +275,24 @@ export function buildAnalytics(filters: AnalyticsFilters = {}): AnalyticsPayload
   const sport = (filters.sport ?? "ALL").toUpperCase();
   const tier = (filters.tier ?? "ALL").toUpperCase();
   const since = filters.since ?? null;
+  const engineVersion = (filters.engineVersion ?? "ALL");
+  const ev = engineVersion.toUpperCase();
 
   const tr = trackRecord("MLB");
-  const log = filterLog(tr.betLog, { sport, tier, since });
+  // v6.9.0 engine-version filter on the game-line betLog: history rows are not yet
+  // version-tagged per-row, so untagged game-line history == the "current" engine.
+  // When the filter narrows to a legacy bucket, the game-line log is empty (those
+  // rows predate per-row tagging); "current"/"ALL" keep the full log.
+  const evIsLegacy = ev !== "ALL" && ev !== "CURRENT";
+  const log = evIsLegacy ? [] : filterLog(tr.betLog, { sport, tier, since });
 
   // Player-prop graded rows (back-compat /api/props/analytics is unchanged; this
   // is the unified roll-up). Tier filter narrows to actionable tier when set.
-  const propRows = gradedPropPicks({ sport: sport === "ALL" ? null : sport, since }).filter(
-    (r) => tier === "ALL" || (r.tier ?? "").toUpperCase() === tier,
-  );
+  const propRows = gradedPropPicks({
+    sport: sport === "ALL" ? null : sport,
+    since,
+    engineVersion,
+  }).filter((r) => tier === "ALL" || (r.tier ?? "").toUpperCase() === tier);
 
   const game = gameKindBreakdown(log);
   const prop = propKindBreakdown(propRows);
@@ -314,8 +324,12 @@ export function buildAnalytics(filters: AnalyticsFilters = {}): AnalyticsPayload
   const byTier: PlayedTier[] = TIER_ORDER.map((t) => ({ tier: t, bets: tierCounts.get(t) ?? 0 }));
 
   return {
-    filters: { sport, tier, since },
-    available: { sports: ["ALL", ...SPORTS], tiers: ["ALL", ...TIER_ORDER] },
+    filters: { sport, tier, since, engineVersion },
+    available: {
+      sports: ["ALL", ...SPORTS],
+      tiers: ["ALL", ...TIER_ORDER],
+      engineVersions: availableEngineVersions(),
+    },
     kpis,
     winRateByTier: winRateByTier(log),
     roiBySport: roiBySport(log),
