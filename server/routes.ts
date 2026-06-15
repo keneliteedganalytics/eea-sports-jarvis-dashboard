@@ -213,7 +213,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       } else {
         // Today: rebuild and persist
         const result = await buildF5Slate();
-        res.json({ date: result.operatingDay, picks: result.picks, count: result.picks.length, built: result.built });
+        res.json({
+          date: result.operatingDay,
+          picks: result.picks,
+          count: result.picks.length,
+          built: result.built,
+          ...(result.emptyReason ? { emptyReason: result.emptyReason } : {}),
+        });
       }
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : String(e) });

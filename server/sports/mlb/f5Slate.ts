@@ -18,6 +18,7 @@ export interface F5SlateResult {
   operatingDay: string;
   picks: F5PickRow[];
   built: number;
+  emptyReason?: string;
 }
 
 // Build today's F5 picks and persist them.
@@ -26,6 +27,19 @@ export async function buildF5Slate(now: Date = new Date()): Promise<F5SlateResul
   const [oddsEvents, schedule] = await Promise.all([fetchOdds(), fetchSchedule(opDay)]);
 
   const inWindow = oddsEvents.filter((ev) => inOperatingWindow(ev.startIso, opDay));
+
+  // If no events carry F5 data (markets not enabled or plan doesn't support them),
+  // return a clean empty result instead of silently returning zero picks.
+  const hasAnyF5 = inWindow.some((ev) => ev.f5 != null);
+  if (!hasAnyF5) {
+    return {
+      operatingDay: opDay,
+      picks: [],
+      built: 0,
+      emptyReason: "F5 markets not enabled on current odds plan",
+    };
+  }
+
   let built = 0;
 
   for (const ev of inWindow) {

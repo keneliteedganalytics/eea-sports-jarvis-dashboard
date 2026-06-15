@@ -288,12 +288,34 @@ export async function fetchOddsForSport(
 ): Promise<OddsEvent[]> {
   if (!hasOddsKey()) return [];
 
-  const res = await getJson<RawEvent[]>(`${BASE}/${sportKey}/odds/`, {
+  const baseMarkets = "h2h,spreads,totals";
+  const f5Markets =
+    process.env.ODDS_API_F5_ENABLED === "true"
+      ? ",h2h_1st_5_innings,totals_1st_5_innings,spreads_1st_5_innings"
+      : "";
+
+  let res = await getJson<RawEvent[]>(`${BASE}/${sportKey}/odds/`, {
     apiKey: process.env.ODDS_API_KEY,
     regions: "us",
-    markets: "h2h,spreads,totals,h2h_1st_5_innings,totals_1st_5_innings,spreads_1st_5_innings",
+    markets: baseMarkets + f5Markets,
     oddsFormat: "american",
   });
+
+  // Defensive fallback: if the plan doesn't support F5 markets the API returns
+  // 422 INVALID_MARKET for the *entire* request. Retry with base markets only
+  // so the main slate self-heals without manual intervention.
+  if (res.status === 422 && f5Markets) {
+    console.warn(
+      "[oddsApi] F5 markets unsupported on current plan (HTTP 422), falling back to base markets",
+    );
+    res = await getJson<RawEvent[]>(`${BASE}/${sportKey}/odds/`, {
+      apiKey: process.env.ODDS_API_KEY,
+      regions: "us",
+      markets: baseMarkets,
+      oddsFormat: "american",
+    });
+  }
+
   if (!res.ok || !Array.isArray(res.data)) return [];
 
   const trusted = new Set(TRUSTED_BOOKS);
