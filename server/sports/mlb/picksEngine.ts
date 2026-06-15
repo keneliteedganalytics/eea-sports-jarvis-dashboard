@@ -239,7 +239,7 @@ export interface BuiltPick {
   signals?: PickSignals;
   // v6.9.2: DraftKings one-tap deep-link. Present only on SNIPER picks; null otherwise.
   dk?: { selectionId: string | null; eventId: string; deepLink: string } | null;
-  // v6.10.3: signal-stack depth — how many non-MODEL signals corroborate the pick.
+  // v6.10.4: signal-stack depth — proximity-qualified signals closer to MODEL than MARKET.
   signalStack?: {
     count: number;
     supporting: string[];
@@ -349,9 +349,10 @@ export function computeEv(modelProb: number | null, americanOdds: number | null,
   return round2(p * profitIfWin - q * stake);
 }
 
-// v6.10.3 — count how many of {SHARP, PRISM, PREDICT, SABER} corroborate MODEL's
-// direction. "Supporting" = signal is meaningfully on the same side as MODEL.
-// "Contradicting" = signal points away from MODEL by >3pp.
+// v6.10.4 — proximity-based signal-stack: a signal "supports MODEL" only if it
+// sits meaningfully closer to MODEL than to MARKET (positionRatio >= 0.4).
+// Replaces the v6.10.3 same-side test which counted SHARP/PRISM/PREDICT as
+// supporting whenever they merely picked the same side as MODEL.
 export function computeSignalStack(
   signals: PickSignals,
   pickSide: 'home' | 'away',
@@ -360,13 +361,19 @@ export function computeSignalStack(
   supporting: string[];
   contradicting: string[];
 } {
-  const modelProb = signals.model?.prob ?? 0.5;
-  const modelSide = signals.model?.side ?? pickSide;
+  const modelProb = signals.model?.prob;
+  const marketProb = signals.market?.prob;
+  if (modelProb == null || marketProb == null) {
+    return { count: 0, supporting: [], contradicting: [] };
+  }
 
-  // For a home pick, "model says home wins" means modelProb > 0.5.
-  // A corroborating signal must also be on that same side (prob > 0.5 for home,
-  // prob < 0.5 for away) AND within 10pp of MODEL or higher in MODEL's direction.
-  // Contradicting = signal disagrees with MODEL by >3pp on the opposite side.
+  // The MODEL-vs-MARKET gap. We measure how close each signal sits to MODEL vs MARKET.
+  const modelMarketGap = Math.abs(modelProb - marketProb);
+  if (modelMarketGap < 0.02) {
+    // MODEL essentially matches MARKET → no edge, stack count is moot
+    return { count: 0, supporting: [], contradicting: [] };
+  }
+
   const candidates: Array<[string, import('../../../shared/types/signals').Signal | null | undefined]> = [
     ['sharp',   signals.sharp],
     ['prism',   signals.prism],
@@ -379,33 +386,26 @@ export function computeSignalStack(
 
   for (const [name, sig] of candidates) {
     if (!sig || sig.prob == null) continue;
-    const sigProb = sig.prob;
 
-    // Is the signal on the same side as MODEL?
-    // For home pick: modelProb > 0.5, so sigProb >= 0.5 counts as "same side".
-    // For away pick: modelProb < 0.5, so sigProb <= 0.5 counts as "same side".
-    const sigOnModelSide =
-      modelSide === 'home'
-        ? sigProb >= 0.5 || Math.abs(sigProb - modelProb) <= 0.08
-        : sigProb <= 0.5 || Math.abs(sigProb - modelProb) <= 0.08;
+    // positionRatio = 0 → signal == MARKET; 1 → signal == MODEL.
+    // We require >= 0.4 to count as supporting (genuinely closer to MODEL).
+    const positionRatio = (sig.prob - marketProb) / (modelProb - marketProb);
 
-    // How far does this signal contradict MODEL? Positive = contra-MODEL direction.
-    const contradictsBy =
-      modelSide === 'home'
-        ? (0.5 - sigProb)   // model says home wins (>0.5); contra = signal says away (<0.5)
-        : (sigProb - 0.5);  // model says away wins (<0.5); contra = signal says home (>0.5)
-
-    if (sigOnModelSide && Math.abs(sigProb - modelProb) <= 0.10) {
+    if (positionRatio >= 0.4) {
       supporting.push(name);
-    } else if (contradictsBy > 0.03) {
+    } else if (positionRatio < -0.2) {
+      // Signal is on the OPPOSITE side of MARKET from MODEL → contradicting
       contradicting.push(name);
     }
+    // Signals between -0.2 and 0.4 are "neutral" (close to market, neither help nor hurt)
   }
 
   return { count: supporting.length, supporting, contradicting };
 }
 
-// v6.10.3 — adjust baseline units based on signal-stack depth.
+// v6.10.4 — adjust baseline units based on signal-stack depth.
+// With the proximity-based stack test, stack >= 2 is genuinely rare and
+// significant; stack=1 is the normal single-signal corroboration (not a demote).
 // Called AFTER the baseline units from conviction/juice/taper pipeline.
 export function signalStackUnitsAdjustment(
   baselineUnits: number,
@@ -418,11 +418,11 @@ export function signalStackUnitsAdjustment(
   if (contradictingCount >= 2) return Math.max(0, baselineUnits - 2); // 2+ signals against = severe demote
   if (contradictingCount === 1) return Math.max(0, baselineUnits - 1);
 
-  // Stack bonus
+  // Stack ladder (v6.10.4): strict proximity test makes stack>=2 genuinely rare
   if (stackCount >= 3) return baselineUnits + 1; // 3+ corroborating signals: +1u
-  if (stackCount === 2) return baselineUnits;     // standard
-  if (stackCount === 1) return Math.max(1, baselineUnits - 1); // thin stack: -1u floor 1
-  if (stackCount === 0) return 0;                 // no corroboration → PASS
+  if (stackCount === 2) return baselineUnits + 1; // 2 supporting (was: baseline) — now a +1 bonus
+  if (stackCount === 1) return baselineUnits;     // single corroboration: baseline (was: -1u floor 1)
+  if (stackCount === 0) return Math.max(0, baselineUnits - 1); // no corroboration: -1u floor 0
 
   return baselineUnits;
 }
@@ -844,25 +844,28 @@ export function buildPick(
   });
   const signalStack = computeSignalStack(tempSignals, pickSide);
 
-  // v6.10.3 projection-contradicts trap: projected score implies the OTHER team
-  // wins and only 0-1 non-MODEL signals back us. Catches the COL @ CHC pattern.
+  // v6.10.4 projection-contradicts trap: projected score implies the OTHER team
+  // wins and fewer than 2 proximity-qualified signals back us.
+  // With the strict proximity test, stack < 2 is the new threshold — stack=1
+  // means only one signal genuinely supports MODEL (e.g. SABER only), which is
+  // not enough to override a score projection that points the other way.
   const projDeltaForPickSide = pickSide === 'home'
     ? (model.projHomeScore - model.projAwayScore)
     : (model.projAwayScore - model.projHomeScore);
   const projContradictsPick = projDeltaForPickSide < -0.4;
 
-  if (!hardPass && !phantomEdge && projContradictsPick && signalStack.count <= 1) {
-    // MODEL says we win on ML but projected score says opponent wins. Only 0-1
-    // corroborating signals. This is a Monte-Carlo variance artifact — force PASS.
+  if (!hardPass && !phantomEdge && projContradictsPick && signalStack.count < 2) {
+    // MODEL says we win on ML but projected score says opponent wins. Fewer than
+    // 2 proximity-qualified signals corroborate. Monte-Carlo variance artifact — force PASS.
     verdictTier = 'PASS';
     tier = 'PASS';
     if (!passReason) passReason = 'projection_contradicts_model';
     model.modelNotes.push(
-      `v6.10.3 TRAP: projected score has opponent winning by ${(-projDeltaForPickSide).toFixed(2)}r with only ${signalStack.count} corroborating signal(s)`,
+      `v6.10.4 TRAP: projected score has opponent winning by ${(-projDeltaForPickSide).toFixed(2)}r with only ${signalStack.count} proximity-qualified signal(s)`,
     );
   }
 
-  // v6.10.3: apply signal-stack unit adjustment now that signalStack is computed.
+  // v6.10.4: apply signal-stack unit adjustment now that signalStack is computed.
   // hardPass / phantomEdge bypass stack adjustment (already PASS / 0 units).
   let units = hardPass || phantomEdge
     ? taperedUnits
@@ -873,7 +876,7 @@ export function buildPick(
     verdictTier = 'PASS';
     tier = 'PASS';
     if (!passReason) passReason = 'stack_no_corroboration';
-    model.modelNotes.push(`v6.10.3: signal stack count=${signalStack.count} — no corroboration, PASS`);
+    model.modelNotes.push(`v6.10.4: signal stack count=${signalStack.count} — no proximity-qualified corroboration, PASS`);
   }
 
   // Phantom forces units and stake to 0 (always, regardless of stack).
