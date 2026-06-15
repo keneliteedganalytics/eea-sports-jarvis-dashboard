@@ -216,7 +216,17 @@ export function PickCard({
             className="rounded border border-[#6B7A99]/30 bg-[#6B7A99]/10 px-2 py-1 text-[11px] font-medium text-[#9FB0C9]"
             data-testid={`pass-reason-${pick.gameId}`}
           >
-            PASS: {pick.passReason}
+            PASS: {pick.passReason === "tbd_pitcher" ? "Awaiting probable starters" : pick.passReason}
+          </div>
+        )}
+
+        {/* v6.10.1: TBD probable-starters badge */}
+        {pick.pitchersAnnounced === false && (
+          <div
+            className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-400"
+            data-testid={`tbd-pitchers-${pick.gameId}`}
+          >
+            Awaiting probable starters — card will re-tier when MLB announces lineups
           </div>
         )}
 

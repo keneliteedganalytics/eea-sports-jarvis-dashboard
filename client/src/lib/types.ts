@@ -95,6 +95,7 @@ export interface BuiltPick {
   hardPassReason: string | null;
   passReason?: string | null;
   isSparseModel: boolean;
+  pitchersAnnounced?: boolean;
   projHomeScore: number;
   projAwayScore: number;
   expectedTotal: number;

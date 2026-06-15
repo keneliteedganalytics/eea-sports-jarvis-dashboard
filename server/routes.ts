@@ -500,6 +500,59 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(summary);
   });
 
+  // v6.10.1 MLB slate diagnostics — hit this when the slate returns empty picks
+  // to identify exactly which stage of the pipeline is dropping all games.
+  app.get("/api/debug/slate-mlb", async (_req: Request, res: Response) => {
+    try {
+      const { fetchOdds } = await import("./adapters/oddsApi");
+      const { fetchSchedule } = await import("./adapters/mlbStats");
+      const { getOperatingDay, inOperatingWindow } = await import("./sports/mlb/operatingDay");
+
+      const now = new Date();
+      const opDay = getOperatingDay(now);
+      const [oddsEvents, schedule] = await Promise.all([fetchOdds(), fetchSchedule(opDay)]);
+
+      const inWindow = oddsEvents.filter((ev: any) => inOperatingWindow(ev.startIso, opDay));
+      const outOfWindow = oddsEvents.filter((ev: any) => !inOperatingWindow(ev.startIso, opDay));
+
+      const matchedSchedule = inWindow.map((ev: any) => {
+        const sched = schedule.find(
+          (s: any) =>
+            (s.homeTeam === ev.homeTeam && s.awayTeam === ev.awayTeam) ||
+            (s.homeTeamFull === ev.homeTeamFull && s.awayTeamFull === ev.awayTeamFull),
+        );
+        return {
+          eventId: ev.eventId,
+          teams: `${ev.awayTeam} @ ${ev.homeTeam}`,
+          startIso: ev.startIso,
+          hasSched: !!sched,
+          homePitcherId: sched?.homePitcherId ?? null,
+          awayPitcherId: sched?.awayPitcherId ?? null,
+          droppedReason: !sched
+            ? "no_schedule_match"
+            : sched.homePitcherId === null || sched.awayPitcherId === null
+              ? "tbd_pitcher"
+              : null,
+        };
+      });
+
+      res.json({
+        now: now.toISOString(),
+        opDay,
+        oddsApiTotalEvents: oddsEvents.length,
+        scheduleTotalGames: schedule.length,
+        inWindow: inWindow.length,
+        outOfWindow: outOfWindow.length,
+        outOfWindowSample: outOfWindow
+          .slice(0, 3)
+          .map((e: any) => ({ teams: `${e.awayTeam} @ ${e.homeTeam}`, startIso: e.startIso })),
+        matchedSchedule,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e.message || e), stack: e.stack });
+    }
+  });
+
   // v6.9.0 Foxtail pillars — read-only debug surface. Each pillar can be probed
   // live (recent form, injuries, run distribution, pitch mix, bullpen load) and a
   // /api/picks/debug?gameId= consolidates the contributions for one game.

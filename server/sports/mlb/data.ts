@@ -73,11 +73,14 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
 
     const sched = matchSchedule(ev, schedule);
 
-    // SPEC §3: drop games with an unannounced (TBD) probable starter — without
-    // both starters the model has no real pitcher inputs, so the card is noise.
-    if (!sched || sched.homePitcherId === null || sched.awayPitcherId === null) {
-      continue;
-    }
+    // v6.10.1: no longer drop TBD-pitcher games — instead build the card with
+    // pitchersAnnounced=false so the engine auto-tiers it PASS with an
+    // "Awaiting starters" badge. Silently dropping 10 games is worse than a
+    // PASS card the user can see. The slate rebuilds every request, so once
+    // MLB publishes probables the card re-tiers automatically.
+    if (!sched) continue; // no schedule entry at all — genuinely unknown game
+
+    const pitchersAnnounced = sched.homePitcherId !== null && sched.awayPitcherId !== null;
 
     const year = new Date().getUTCFullYear();
     const [h, a, homeOff, awayOff, polyResult, homeForm, awayForm,
@@ -163,6 +166,7 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       _awayOffenseSaber: awayOffSaber,
       _homeHandedness: homeHandedness,
       _awayHandedness: awayHandedness,
+      pitchersAnnounced,
     });
   }
 

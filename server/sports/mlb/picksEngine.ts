@@ -97,6 +97,9 @@ export interface GameInput {
   _awayOffenseSaber?: import('./teamOffenseSaber').TeamOffenseSaber | null;
   _homeHandedness?: import('./handednessSplits').HandednessSplit | null;
   _awayHandedness?: import('./handednessSplits').HandednessSplit | null;
+  // v6.10.1: false when MLB Stats API hasn't published probable starters yet.
+  // Game is still built and surfaced, but auto-tiered PASS with a "Awaiting starters" badge.
+  pitchersAnnounced?: boolean;
 }
 
 // CLV payload sent to the client. null on the BuiltPick until the lock worker
@@ -177,6 +180,8 @@ export interface BuiltPick {
   // the card + API for audit. null when no gate fired.
   passReason: string | null;
   isSparseModel: boolean;
+  // v6.10.1: false when probable starters were not published yet — game surfaces as PASS with badge
+  pitchersAnnounced: boolean;
   projHomeScore: number;
   projAwayScore: number;
   expectedTotal: number;
@@ -450,6 +455,15 @@ export function buildPick(
   if (!model.canModel) {
     hardPass = true;
     hardPassReason = hardPassReason ?? model.reason ?? "model_skipped";
+  }
+
+  // v6.10.1: TBD probable starters — surface the game as PASS with a badge instead
+  // of silently dropping it. The slate rebuilds every request, so once MLB publishes
+  // probables the card will re-tier automatically.
+  const pitchersAnnounced = game.pitchersAnnounced !== false; // defaults true for back-compat
+  if (!pitchersAnnounced) {
+    hardPass = true;
+    hardPassReason = hardPassReason ?? "tbd_pitcher";
   }
 
   // Safety guard (live-test 6/7): when BOTH starters lack stats, the model is
@@ -799,6 +813,7 @@ export function buildPick(
     hardPassReason,
     passReason,
     isSparseModel: model.isSparseModel,
+    pitchersAnnounced,
     projHomeScore: model.projHomeScore,
     projAwayScore: model.projAwayScore,
     expectedTotal: model.expectedTotalRuns,
