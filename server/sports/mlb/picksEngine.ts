@@ -9,6 +9,7 @@ import { buildTwoWayMarket } from "../../core/markets";
 import type { Verdict, Side, Market, MarketSet } from "../../core/types";
 import { emptyMarket } from "../../core/types";
 import type { PickSignals } from "../../../shared/types/signals";
+import { assembleSignals } from "../signals/assembleSignals";
 import type { ModelResult } from "./model";
 import { SOLID_IP_MIN, type PitcherStats } from "./pitchers";
 import type { TeamOffense } from "./ratings";
@@ -238,6 +239,12 @@ export interface BuiltPick {
   signals?: PickSignals;
   // v6.9.2: DraftKings one-tap deep-link. Present only on SNIPER picks; null otherwise.
   dk?: { selectionId: string | null; eventId: string; deepLink: string } | null;
+  // v6.10.3: signal-stack depth — how many non-MODEL signals corroborate the pick.
+  signalStack?: {
+    count: number;
+    supporting: string[];
+    contradicting: string[];
+  } | null;
   // v6.10: sabermetric composite win prob (internal — used by assembleSignals for saber signal)
   _saberWinProb?: number | null;
   // v6.10: pitcher and offense sabermetric edge fields (additive, null when unavailable)
@@ -340,6 +347,84 @@ export function computeEv(modelProb: number | null, americanOdds: number | null,
   const q = 1.0 - p;
   const profitIfWin = americanOdds > 0 ? stake * (americanOdds / 100.0) : stake * (100.0 / Math.abs(americanOdds));
   return round2(p * profitIfWin - q * stake);
+}
+
+// v6.10.3 — count how many of {SHARP, PRISM, PREDICT, SABER} corroborate MODEL's
+// direction. "Supporting" = signal is meaningfully on the same side as MODEL.
+// "Contradicting" = signal points away from MODEL by >3pp.
+export function computeSignalStack(
+  signals: PickSignals,
+  pickSide: 'home' | 'away',
+): {
+  count: number;
+  supporting: string[];
+  contradicting: string[];
+} {
+  const modelProb = signals.model?.prob ?? 0.5;
+  const modelSide = signals.model?.side ?? pickSide;
+
+  // For a home pick, "model says home wins" means modelProb > 0.5.
+  // A corroborating signal must also be on that same side (prob > 0.5 for home,
+  // prob < 0.5 for away) AND within 10pp of MODEL or higher in MODEL's direction.
+  // Contradicting = signal disagrees with MODEL by >3pp on the opposite side.
+  const candidates: Array<[string, import('../../../shared/types/signals').Signal | null | undefined]> = [
+    ['sharp',   signals.sharp],
+    ['prism',   signals.prism],
+    ['predict', signals.predict],
+    ['saber',   signals.saber],
+  ];
+
+  const supporting: string[] = [];
+  const contradicting: string[] = [];
+
+  for (const [name, sig] of candidates) {
+    if (!sig || sig.prob == null) continue;
+    const sigProb = sig.prob;
+
+    // Is the signal on the same side as MODEL?
+    // For home pick: modelProb > 0.5, so sigProb >= 0.5 counts as "same side".
+    // For away pick: modelProb < 0.5, so sigProb <= 0.5 counts as "same side".
+    const sigOnModelSide =
+      modelSide === 'home'
+        ? sigProb >= 0.5 || Math.abs(sigProb - modelProb) <= 0.08
+        : sigProb <= 0.5 || Math.abs(sigProb - modelProb) <= 0.08;
+
+    // How far does this signal contradict MODEL? Positive = contra-MODEL direction.
+    const contradictsBy =
+      modelSide === 'home'
+        ? (0.5 - sigProb)   // model says home wins (>0.5); contra = signal says away (<0.5)
+        : (sigProb - 0.5);  // model says away wins (<0.5); contra = signal says home (>0.5)
+
+    if (sigOnModelSide && Math.abs(sigProb - modelProb) <= 0.10) {
+      supporting.push(name);
+    } else if (contradictsBy > 0.03) {
+      contradicting.push(name);
+    }
+  }
+
+  return { count: supporting.length, supporting, contradicting };
+}
+
+// v6.10.3 — adjust baseline units based on signal-stack depth.
+// Called AFTER the baseline units from conviction/juice/taper pipeline.
+export function signalStackUnitsAdjustment(
+  baselineUnits: number,
+  stackCount: number,
+  contradictingCount: number,
+): number {
+  if (baselineUnits === 0) return 0; // PASS stays PASS
+
+  // Contradicting signals are a HARD penalty
+  if (contradictingCount >= 2) return Math.max(0, baselineUnits - 2); // 2+ signals against = severe demote
+  if (contradictingCount === 1) return Math.max(0, baselineUnits - 1);
+
+  // Stack bonus
+  if (stackCount >= 3) return baselineUnits + 1; // 3+ corroborating signals: +1u
+  if (stackCount === 2) return baselineUnits;     // standard
+  if (stackCount === 1) return Math.max(1, baselineUnits - 1); // thin stack: -1u floor 1
+  if (stackCount === 0) return 0;                 // no corroboration → PASS
+
+  return baselineUnits;
 }
 
 // Build the ML / spread / total market trio for a card. ML reuses the engine's
@@ -638,14 +723,13 @@ export function buildPick(
   // v6.6 big-dog taper: shrink Kelly/conviction units as the price climbs; a
   // +1001-or-longer dog is tapered to 0 (and gated to PASS below). Applied
   // AFTER sizing, BEFORE the verdict is finalized.
-  let units = pickMl !== null ? taperBigDogStake(juicedUnits, pickMl) : juicedUnits;
-  if (units === 0 && juicedUnits > 0 && verdictTier !== "PASS") {
+  let taperedUnits = pickMl !== null ? taperBigDogStake(juicedUnits, pickMl) : juicedUnits;
+  if (taperedUnits === 0 && juicedUnits > 0 && verdictTier !== "PASS") {
     // Taper zeroed the stake (price too long to play) — force PASS to match.
     verdictTier = "PASS";
     tier = "PASS";
     if (!passReason) passReason = `+${pickMl} exceeds max odds policy`;
   }
-  let stakeDollars = unitsToStake(units, bankroll);
 
   // Sub-25 IP warning (SPEC §7): judgment-only flag, no auto tier/size change.
   const homeIp = numOrNull(homeSp.ip) ?? 0;
@@ -667,13 +751,8 @@ export function buildPick(
   if (detectPhantomEdge(model.modelNotes)) {
     phantomEdge = true;
     verdictTier = "PASS";
-    units = 0;
-    stakeDollars = 0;
     if (!model.modelNotes.includes(PHANTOM_NOTE)) model.modelNotes.unshift(PHANTOM_NOTE);
   }
-
-  const qualifies = verdictTier !== "PASS" && !hardPass;
-  const verdict: "PLAY" | "PASS" = qualifies ? "PLAY" : "PASS";
 
   // 6-signal TOP PLAY badge (SPEC §8) — computed separately from tier.
   const ourSp = pickSide === "home" ? homeSp : awaySp;
@@ -749,6 +828,62 @@ export function buildPick(
   if (pickHandAdj !== null) saberRunDiff += pickHandAdj * 0.5;
   // Convert run differential to win probability via sigmoid (scale: 1 run ≈ 10% swing)
   const saberWinProb = Math.round(sigmoid(saberRunDiff * 1.2) * 10000) / 10000;
+
+  // v6.10.3: signal-stack aware unit sizing. Build signals with full context
+  // (including saberWinProb, now available) to compute the stack depth.
+  const tempSignals = assembleSignals({
+    pickSide,
+    pickWinProb: pickWp,
+    edgePp: pickEdge,
+    pickImpliedProb: pickFairMkt,
+    sharpPct: resolvedSharpPct,
+    predictPct: orientedPoly?.found ? (orientedPoly.pct ?? null) : null,
+    openingLine: movement.openingLine ?? null,
+    currentLine: movement.currentLine ?? null,
+    saberWinProb: saberWinProb,
+  });
+  const signalStack = computeSignalStack(tempSignals, pickSide);
+
+  // v6.10.3 projection-contradicts trap: projected score implies the OTHER team
+  // wins and only 0-1 non-MODEL signals back us. Catches the COL @ CHC pattern.
+  const projDeltaForPickSide = pickSide === 'home'
+    ? (model.projHomeScore - model.projAwayScore)
+    : (model.projAwayScore - model.projHomeScore);
+  const projContradictsPick = projDeltaForPickSide < -0.4;
+
+  if (!hardPass && !phantomEdge && projContradictsPick && signalStack.count <= 1) {
+    // MODEL says we win on ML but projected score says opponent wins. Only 0-1
+    // corroborating signals. This is a Monte-Carlo variance artifact — force PASS.
+    verdictTier = 'PASS';
+    tier = 'PASS';
+    if (!passReason) passReason = 'projection_contradicts_model';
+    model.modelNotes.push(
+      `v6.10.3 TRAP: projected score has opponent winning by ${(-projDeltaForPickSide).toFixed(2)}r with only ${signalStack.count} corroborating signal(s)`,
+    );
+  }
+
+  // v6.10.3: apply signal-stack unit adjustment now that signalStack is computed.
+  // hardPass / phantomEdge bypass stack adjustment (already PASS / 0 units).
+  let units = hardPass || phantomEdge
+    ? taperedUnits
+    : Math.min(3, Math.max(0, signalStackUnitsAdjustment(taperedUnits, signalStack.count, signalStack.contradicting.length)));
+
+  // If stack adjustment dropped units to 0, force PASS.
+  if (units === 0 && taperedUnits > 0 && verdictTier !== 'PASS' && !hardPass && !phantomEdge) {
+    verdictTier = 'PASS';
+    tier = 'PASS';
+    if (!passReason) passReason = 'stack_no_corroboration';
+    model.modelNotes.push(`v6.10.3: signal stack count=${signalStack.count} — no corroboration, PASS`);
+  }
+
+  // Phantom forces units and stake to 0 (always, regardless of stack).
+  if (phantomEdge) units = 0;
+  let stakeDollars = unitsToStake(units, bankroll);
+  if (phantomEdge) stakeDollars = 0;
+
+  // qualifies / verdict — computed AFTER all tier mutations (trap, stack, phantom).
+  const qualifies = verdictTier !== "PASS" && !hardPass;
+  const verdict: "PLAY" | "PASS" = qualifies ? "PLAY" : "PASS";
 
   const hardPassOrPhantom = hardPass || phantomEdge;
   const markets = buildMlbMarkets(
@@ -844,6 +979,7 @@ export function buildPick(
     dk: buildDkPayload(game._oddsEvent ?? null, verdictTier, pickSide),
     // v6.10: sabermetric edge fields
     _saberWinProb: saberWinProb,
+    signalStack,
     pitcherEdge: pitcherEdgePayload,
     offenseEdge: offenseEdgePayload,
   };

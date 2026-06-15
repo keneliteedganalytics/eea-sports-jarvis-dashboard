@@ -112,6 +112,12 @@ export interface BuiltPick {
   sharpPct: number | null;
   // v6.9.1 — five-source signal block assembled at serialization.
   signals?: PickSignals | null;
+  // v6.10.3: signal-stack depth — how many non-MODEL signals corroborate the pick.
+  signalStack?: {
+    count: number;
+    supporting: string[];
+    contradicting: string[];
+  } | null;
   // v6.9.2: DraftKings one-tap deep-link. Present only on SNIPER picks; null otherwise.
   dk?: { selectionId: string | null; eventId: string; deepLink: string } | null;
   awaySp?: { available?: boolean; pitcher?: string; era?: number | null; fip?: number | null; ip?: number | null; whip?: number | null; svPct?: number | null };

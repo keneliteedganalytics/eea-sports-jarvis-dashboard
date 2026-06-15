@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { ArrowDown, ArrowUp, ExternalLink } from "lucide-react";
+import { ArrowDown, ArrowUp, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
 import { TierPill } from "./TierPill";
 import { ScopeFull } from "./ScopeFull";
 import { SignalsBar } from "./cards/SignalsBar";
@@ -23,6 +23,57 @@ import type { BuiltPick, DkSlipPayload } from "@/lib/types";
 const STEAM_CENTS = 10;
 
 const SPREAD_LABEL: Record<string, string> = { mlb: "RL", nhl: "PL", nba: "SPR", soccer: "AH" };
+
+// v6.10.3: Signal-stack summary (collapsible). Shows supporting/contradicting counts below SignalsBar.
+function SignalStackRow({
+  signalStack,
+}: {
+  signalStack: { count: number; supporting: string[]; contradicting: string[] };
+}) {
+  const [open, setOpen] = useState(false);
+  const stackColor =
+    signalStack.count >= 2 ? "#3FB950" : signalStack.count === 1 ? "#C9A227" : "#E5534B";
+  const hasContradictions = signalStack.contradicting.length > 0;
+
+  return (
+    <div className="flex flex-col gap-1" data-testid="signal-stack-row">
+      <button
+        type="button"
+        className="flex items-center justify-between text-[11px] font-medium"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span style={{ color: stackColor }} className="tabular-nums">
+          STACK: {signalStack.count} supporting · {signalStack.contradicting.length} contradicting
+        </span>
+        <span style={{ color: "#8892A0" }}>
+          {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        </span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-0.5 pl-1 text-[11px]" data-testid="signal-stack-detail">
+          {signalStack.supporting.length > 0 && (
+            <span style={{ color: "#3FB950" }}>
+              ✓ {signalStack.supporting.join(", ")}
+            </span>
+          )}
+          {hasContradictions && (
+            <span
+              className="flex items-center gap-1"
+              style={{ color: "#E5534B" }}
+              data-testid="signal-stack-contradicting"
+            >
+              ⚠ {signalStack.contradicting.join(", ")} contradict
+            </span>
+          )}
+          {signalStack.supporting.length === 0 && !hasContradictions && (
+            <span style={{ color: "#8892A0" }}>No corroborating signals</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function PickCard({
   pick,
@@ -344,6 +395,9 @@ export function PickCard({
 
         {/* v6.9.1 five-source SignalsBar (Brand Board v3) — now 6 bars including SABER */}
         <SignalsBar signals={pick.signals} />
+
+        {/* v6.10.3: Signal-stack summary row */}
+        {pick.signalStack != null && <SignalStackRow signalStack={pick.signalStack} />}
 
         {/* v6.10: Sabermetric Edge panel (collapsible, MLB only) */}
         <SaberEdgePanel pick={pick} />
