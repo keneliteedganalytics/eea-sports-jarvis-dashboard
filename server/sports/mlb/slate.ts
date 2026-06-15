@@ -70,6 +70,13 @@ async function runEngine(games: GameInput[], bankroll = BANKROLL_USD, dateStr?: 
       umpireAdjustment: e.umpire,
       homeAbs: e.homeAbs,
       awayAbs: e.awayAbs,
+      // v6.10: sabermetric context
+      homePitcherSaber: g._homePitcherSaber ?? null,
+      awayPitcherSaber: g._awayPitcherSaber ?? null,
+      homeOffenseSaber: g._homeOffenseSaber ?? null,
+      awayOffenseSaber: g._awayOffenseSaber ?? null,
+      homeHandedness: g._homeHandedness ?? null,
+      awayHandedness: g._awayHandedness ?? null,
     });
     return buildPick({ ...g, _lineupHome: e.homeLineup, _lineupAway: e.awayLineup }, model, bankroll);
   });

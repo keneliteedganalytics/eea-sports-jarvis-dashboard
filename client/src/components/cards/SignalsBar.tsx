@@ -14,6 +14,8 @@ const GOLD = "#C9A227";
 const BLUE = "#5BC0EB";
 const GREEN = "#3FB950";
 const RED = "#E5534B";
+// v6.10: deeper gold for the SABER pillar (distinguishes it from the standard MODEL gold)
+const SABER_GOLD = "#9A7B1E";
 
 function clampPct(prob: number | null): number {
   if (prob === null || !Number.isFinite(prob)) return 0;
@@ -98,6 +100,8 @@ export function SignalsBar({ signals }: { signals: PickSignals | null | undefine
       <ProbRow label="MODEL" sig={s?.model ?? null} color={GOLD} />
       <PrismRow sig={s?.prism ?? null} />
       <ProbRow label="PREDICT" sig={s?.predict ?? null} color={SILVER} />
+      {/* v6.10: SABER — sabermetric composite signal. Muted/em-dash when null. */}
+      <ProbRow label="SABER" sig={s?.saber ?? null} color={SABER_GOLD} />
     </div>
   );
 }

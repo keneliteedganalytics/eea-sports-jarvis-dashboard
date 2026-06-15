@@ -14,6 +14,7 @@ import { BetPlacedButton } from "./BetPlacedButton";
 import { DraftKingsButton } from "./DraftKingsButton";
 import { DkTapThroughSheet } from "./DkTapThroughSheet";
 import { ClvBadge } from "./ClvBadge";
+import { SaberEdgePanel } from "./SaberEdgePanel";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { fmtGameDate, fmtGameTime, fmtLine, fmtMoney, fmtPct, fmtUnits, lineMovement, TIER_LABEL } from "@/lib/format";
 import { gradeVisual } from "@/lib/grade";
@@ -331,8 +332,11 @@ export function PickCard({
           <TotalRow market={pick.markets.total} />
         </div>
 
-        {/* v6.9.1 five-source SignalsBar (Brand Board v3) */}
+        {/* v6.9.1 five-source SignalsBar (Brand Board v3) — now 6 bars including SABER */}
         <SignalsBar signals={pick.signals} />
+
+        {/* v6.10: Sabermetric Edge panel (collapsible, MLB only) */}
+        <SaberEdgePanel pick={pick} />
 
         {/* Edge / EV subtitle */}
         <div className="text-[11px] tabular-nums text-muted-foreground">

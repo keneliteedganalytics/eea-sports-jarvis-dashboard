@@ -18,6 +18,7 @@ import { getAlerts } from "./pollers/alerts";
 import { startOddsPoller } from "./pollers/oddsPoller";
 import { startScratchPoller } from "./pollers/scratchPoller";
 import { startLiveScoring, pollEspnAndUpdate } from "./jobs/liveScoring";
+import { buildF5Slate, getF5PicksForDay } from "./sports/mlb/f5Slate";
 import { startLockWorker } from "./jobs/lockWorker";
 import { startPropIngestWorker, getLastIngestSummary } from "./jobs/propIngest";
 import { startLivePropTracker } from "./jobs/livePropTracker";
@@ -192,6 +193,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     decorateSlatePicks(slate.picks, slate.operatingDay);
     if (!dateIso) slate.picks = excludeArchivedPicks(slate.picks);
     res.json({ ...slate, bankroll: getBankrollState().current });
+  });
+
+  // v6.10: F5 slate — build (or fetch cached) F5 picks for today / a given date.
+  // GET /api/slate/f5?sport=mlb
+  // GET /api/slate/f5?sport=mlb&date=YYYY-MM-DD
+  app.get("/api/slate/f5", async (req: Request, res: Response) => {
+    const sport = String(req.query.sport ?? "mlb").toLowerCase();
+    if (sport !== "mlb") {
+      res.status(400).json({ error: "Only MLB F5 picks are supported" });
+      return;
+    }
+    const dateIso = parseDateParam(req.query.date);
+    try {
+      if (dateIso) {
+        // Historical date: return persisted picks (no rebuild)
+        const picks = getF5PicksForDay(dateIso);
+        res.json({ date: dateIso, picks, count: picks.length });
+      } else {
+        // Today: rebuild and persist
+        const result = await buildF5Slate();
+        res.json({ date: result.operatingDay, picks: result.picks, count: result.picks.length, built: result.built });
+      }
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  // v6.10: Graded F5 picks for a date.
+  // GET /api/picks/f5?date=YYYY-MM-DD
+  app.get("/api/picks/f5", (req: Request, res: Response) => {
+    const dateIso = parseDateParam(req.query.date);
+    const { getOperatingDay } = require("./sports/mlb/operatingDay");
+    const date = dateIso ?? getOperatingDay(new Date());
+    const picks = getF5PicksForDay(date);
+    res.json({ date, picks, count: picks.length });
   });
 
   // Single pick detail (any sport).

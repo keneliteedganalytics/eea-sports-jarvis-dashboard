@@ -14,6 +14,9 @@ import { classifyPitcher } from "./pitchers";
 import type { GameInput, PolymarketData } from "./picksEngine";
 import type { PitcherStats } from "./pitchers";
 import type { TeamOffense } from "./ratings";
+import { getPitcherSabermetrics } from "./pitcherSabermetrics";
+import { getTeamOffenseSaber } from "./teamOffenseSaber";
+import { getHandednessSplit } from "./handednessSplits";
 
 // Translate an OddsEvent's BookPrice[] into the Bookmaker[] shape that the
 // consensus/best-price helpers expect (h2h market keyed by full team name).
@@ -76,7 +79,11 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       continue;
     }
 
-    const [h, a, homeOff, awayOff, polyResult, homeForm, awayForm] = await Promise.all([
+    const year = new Date().getUTCFullYear();
+    const [h, a, homeOff, awayOff, polyResult, homeForm, awayForm,
+           homePitcherSaber, awayPitcherSaber,
+           homeOffSaber, awayOffSaber,
+           homeHandedness, awayHandedness] = await Promise.all([
       fetchPitcherStats(sched.homePitcherId, sched.homePitcher),
       fetchPitcherStats(sched.awayPitcherId, sched.awayPitcher),
       fetchTeamOffense(sched.homeTeamId, sched.homeTeamFull).catch(() => ({ available: false }) as TeamOffense),
@@ -87,6 +94,13 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       // Recent-form splits (last-7 / last-14) — best-effort, NEUTRAL on failure
       recentFormForTeam(sched.homeTeamId).catch(() => NEUTRAL_FORM),
       recentFormForTeam(sched.awayTeamId).catch(() => NEUTRAL_FORM),
+      // v6.10: sabermetric metrics — best-effort, never block the slate
+      sched.homePitcherId ? getPitcherSabermetrics(sched.homePitcherId, year).catch(() => null) : Promise.resolve(null),
+      sched.awayPitcherId ? getPitcherSabermetrics(sched.awayPitcherId, year).catch(() => null) : Promise.resolve(null),
+      sched.homeTeamId ? getTeamOffenseSaber(sched.homeTeamId, ev.homeTeam, year).catch(() => null) : Promise.resolve(null),
+      sched.awayTeamId ? getTeamOffenseSaber(sched.awayTeamId, ev.awayTeam, year).catch(() => null) : Promise.resolve(null),
+      sched.homeTeamId ? getHandednessSplit(sched.homeTeamId, ev.homeTeam, year).catch(() => null) : Promise.resolve(null),
+      sched.awayTeamId ? getHandednessSplit(sched.awayTeamId, ev.awayTeam, year).catch(() => null) : Promise.resolve(null),
     ]);
     const homeSp: PitcherStats = withClassification(h);
     const awaySp: PitcherStats = withClassification(a);
@@ -142,6 +156,13 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       _oddsEvent: ev,
       _recentFormHome: homeForm,
       _recentFormAway: awayForm,
+      // v6.10: sabermetric context
+      _homePitcherSaber: homePitcherSaber,
+      _awayPitcherSaber: awayPitcherSaber,
+      _homeOffenseSaber: homeOffSaber,
+      _awayOffenseSaber: awayOffSaber,
+      _homeHandedness: homeHandedness,
+      _awayHandedness: awayHandedness,
     });
   }
 

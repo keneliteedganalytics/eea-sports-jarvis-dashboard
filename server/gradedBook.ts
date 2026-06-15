@@ -315,6 +315,35 @@ export function gradedDb(): Database.Database {
     -- re-bucketed to a prior engine version. Append-only; never deleted. A reset
     -- is a deliberate, admin-triggered action (see resetEngineBankroll) — nothing
     -- here fires automatically on boot.
+    -- v6.10: F5 (first-5-innings) pick storage
+    CREATE TABLE IF NOT EXISTS picks_f5 (
+      id TEXT PRIMARY KEY,
+      gameId TEXT NOT NULL,
+      sport TEXT NOT NULL DEFAULT 'mlb',
+      gameDate TEXT NOT NULL,
+      market TEXT NOT NULL,
+      pickSide TEXT NOT NULL,
+      pickTeam TEXT,
+      price INTEGER,
+      line REAL,
+      modelProb REAL,
+      marketProb REAL,
+      edgePp REAL,
+      tier TEXT NOT NULL,
+      projected_home_runs_f5 REAL,
+      projected_away_runs_f5 REAL,
+      actual_home_runs_f5 INTEGER,
+      actual_away_runs_f5 INTEGER,
+      status TEXT NOT NULL DEFAULT 'pending',
+      result TEXT,
+      pl REAL,
+      graded_at TEXT,
+      reasoning_json TEXT,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_picks_f5_gameDate ON picks_f5(gameDate);
+    CREATE INDEX IF NOT EXISTS idx_picks_f5_status ON picks_f5(status);
     CREATE TABLE IF NOT EXISTS engine_resets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       reset_key TEXT,
@@ -2890,4 +2919,133 @@ export function gradedPicks(sport?: string): GradedPick[] {
     .prepare("SELECT * FROM picks WHERE status='final' ORDER BY gameDate DESC, gameTimeEt DESC")
     .all() as GradedPick[];
   return rows.map((r) => applyLock(r)!);
+}
+
+// ── v6.10: F5 pick storage + retrieval ───────────────────────────────
+
+export interface F5PickRow {
+  id: string;
+  gameId: string;
+  sport: string;
+  gameDate: string;
+  market: string;
+  pickSide: string;
+  pickTeam: string | null;
+  price: number | null;
+  line: number | null;
+  modelProb: number | null;
+  marketProb: number | null;
+  edgePp: number | null;
+  tier: string;
+  projected_home_runs_f5: number | null;
+  projected_away_runs_f5: number | null;
+  actual_home_runs_f5: number | null;
+  actual_away_runs_f5: number | null;
+  status: string;
+  result: string | null;
+  pl: number | null;
+  graded_at: string | null;
+  reasoning_json: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Build a deterministic row ID for an F5 pick: gameId + market + pickSide.
+export function f5PickId(gameId: string, market: string, pickSide: string): string {
+  return `f5:${gameId}:${market}:${pickSide}`;
+}
+
+export function upsertF5Pick(pick: {
+  gameId: string;
+  gameDate: string;
+  market: string;
+  pickSide: string;
+  pickTeam?: string | null;
+  price?: number | null;
+  line?: number | null;
+  modelProb?: number | null;
+  marketProb?: number | null;
+  edgePp?: number | null;
+  tier: string;
+  projected_home_runs_f5?: number | null;
+  projected_away_runs_f5?: number | null;
+  reasoning?: string[];
+}): void {
+  const db = gradedDb();
+  const id = f5PickId(pick.gameId, pick.market, pick.pickSide);
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO picks_f5
+      (id, gameId, sport, gameDate, market, pickSide, pickTeam, price, line,
+       modelProb, marketProb, edgePp, tier,
+       projected_home_runs_f5, projected_away_runs_f5,
+       status, reasoning_json, createdAt, updatedAt)
+    VALUES
+      (@id, @gameId, 'mlb', @gameDate, @market, @pickSide, @pickTeam, @price, @line,
+       @modelProb, @marketProb, @edgePp, @tier,
+       @projected_home_runs_f5, @projected_away_runs_f5,
+       'pending', @reasoning_json, @createdAt, @updatedAt)
+    ON CONFLICT(id) DO UPDATE SET
+      tier = excluded.tier,
+      price = excluded.price,
+      line = excluded.line,
+      modelProb = excluded.modelProb,
+      marketProb = excluded.marketProb,
+      edgePp = excluded.edgePp,
+      projected_home_runs_f5 = excluded.projected_home_runs_f5,
+      projected_away_runs_f5 = excluded.projected_away_runs_f5,
+      reasoning_json = excluded.reasoning_json,
+      updatedAt = excluded.updatedAt
+  `).run({
+    id,
+    gameId: pick.gameId,
+    gameDate: pick.gameDate,
+    market: pick.market,
+    pickSide: pick.pickSide,
+    pickTeam: pick.pickTeam ?? null,
+    price: pick.price ?? null,
+    line: pick.line ?? null,
+    modelProb: pick.modelProb ?? null,
+    marketProb: pick.marketProb ?? null,
+    edgePp: pick.edgePp ?? null,
+    tier: pick.tier,
+    projected_home_runs_f5: pick.projected_home_runs_f5 ?? null,
+    projected_away_runs_f5: pick.projected_away_runs_f5 ?? null,
+    reasoning_json: pick.reasoning ? JSON.stringify(pick.reasoning) : null,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+export function getF5PicksForDate(date: string): F5PickRow[] {
+  return gradedDb()
+    .prepare("SELECT * FROM picks_f5 WHERE gameDate = ? ORDER BY gameId, market")
+    .all(date) as F5PickRow[];
+}
+
+export function getOpenF5PicksForDate(date: string): F5PickRow[] {
+  return gradedDb()
+    .prepare("SELECT * FROM picks_f5 WHERE gameDate = ? AND status != 'final' ORDER BY gameId, market")
+    .all(date) as F5PickRow[];
+}
+
+export function settleF5Pick(
+  id: string,
+  actualHomeRuns: number,
+  actualAwayRuns: number,
+  result: string,
+  pl: number,
+): void {
+  const now = new Date().toISOString();
+  gradedDb().prepare(`
+    UPDATE picks_f5 SET
+      actual_home_runs_f5 = @h,
+      actual_away_runs_f5 = @a,
+      result = @result,
+      pl = @pl,
+      status = 'final',
+      graded_at = @now,
+      updatedAt = @now
+    WHERE id = @id
+  `).run({ id, h: actualHomeRuns, a: actualAwayRuns, result, pl, now });
 }

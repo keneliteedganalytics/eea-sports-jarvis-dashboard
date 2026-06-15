@@ -10,6 +10,20 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { DkTapThroughSheet } from "@/components/DkTapThroughSheet";
 import type { DailySlate, BuiltPick, Verdict, PropBoardPayload, PropLivePayload, DkSlipPayload } from "@/lib/types";
 
+// v6.10: F5 pick shape from the /api/slate/f5 endpoint
+interface F5PickDisplay {
+  gameId: string;
+  market: string;
+  pickSide: string;
+  line: number | null;
+  price: number | null;
+  edgePp: number | null;
+  tier: string;
+  projected_home_runs_f5: number | null;
+  projected_away_runs_f5: number | null;
+  reasoning_json: string | null;
+}
+
 type SportFilter = "ALL" | "MLB" | "NHL" | "NBA" | "SOCCER" | "PROPS";
 const SPORT_CHIPS: { key: SportFilter; label: string; disabled?: boolean }[] = [
   { key: "ALL", label: "ALL" },
@@ -51,6 +65,8 @@ export default function Home() {
   const [sport, setSport] = useState<SportFilter>("ALL");
   const [showAll, setShowAll] = useState(false); // default: plays only
   const [tapThroughOpen, setTapThroughOpen] = useState(false);
+  // v6.10: F5 (first-5-innings) toggle
+  const [showF5, setShowF5] = useState(false);
 
   // Keep date in sync if the URL changes (e.g. browser back/forward).
   useEffect(() => {
@@ -65,6 +81,14 @@ export default function Home() {
     gcTime: 10 * 60 * 1000,       // 10 min cache retention
     retry: 1,                      // one retry on network/upstream error
     refetchOnWindowFocus: false,
+  });
+
+  // v6.10: F5 picks query — loaded lazily when the F5 toggle is active.
+  const { data: f5Data, isLoading: f5Loading } = useQuery<{ date: string; picks: F5PickDisplay[]; count: number }>({
+    queryKey: [`/api/slate/f5?sport=mlb&date=${date}`],
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    enabled: showF5,
   });
 
   const allPicks = useMemo<BuiltPick[]>(() => {
@@ -179,7 +203,7 @@ export default function Home() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Today's Board</h1>
           <p className="text-[11px] uppercase tracking-wider text-gold-dark" data-testid="engine-subtitle">
-            Engine v6.9.4 · Bankroll {data ? fmtMoney(data.bankroll) : "$25,000"}
+            Engine v6.10.0 · Bankroll {data ? fmtMoney(data.bankroll) : "$25,000"}
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {data
@@ -218,6 +242,19 @@ export default function Home() {
 
       {/* Sport chips + Show toggle */}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-card-border bg-navy-card p-3" data-testid="slate-filters">
+        {/* v6.10: F5 toggle chip */}
+        <button
+          type="button"
+          onClick={() => { setShowF5((v) => !v); if (!showF5) setSport("MLB"); }}
+          className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wider transition-colors ${
+            showF5 ? "bg-amber-700/80 text-white" : "bg-background/40 text-muted-foreground hover:text-gold"
+          }`}
+          data-testid="chip-F5"
+          title="First 5 innings picks"
+        >
+          F5
+        </button>
+        <span className="h-4 w-px bg-card-border" />
         {SPORT_CHIPS.map((c) => (
           <button
             key={c.key}
@@ -262,6 +299,73 @@ export default function Home() {
 
       {/* PROPS board view — a separate board listing player-prop picks. */}
       {sport === "PROPS" && <PropsBoard date={date} />}
+
+      {/* v6.10: F5 board view — first-5-innings picks */}
+      {showF5 && sport !== "PROPS" && (
+        <div className="space-y-3" data-testid="f5-board">
+          <div className="flex items-center gap-2">
+            <span
+              className="font-display text-[11px] font-bold uppercase tracking-[0.18em]"
+              style={{ color: "#9A7B1E" }}
+            >
+              First 5 Innings
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {f5Data ? `${f5Data.count} pick${f5Data.count !== 1 ? "s" : ""}` : f5Loading ? "loading…" : ""}
+            </span>
+          </div>
+          {f5Loading && (
+            <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground">
+              Loading F5 picks…
+            </div>
+          )}
+          {!f5Loading && f5Data && f5Data.count === 0 && (
+            <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="f5-empty">
+              No F5 picks available — F5 markets may not be offered yet today.
+            </div>
+          )}
+          {!f5Loading && f5Data && f5Data.count > 0 && (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {f5Data.picks.map((p) => (
+                <div
+                  key={`${p.gameId}:${p.market}:${p.pickSide}`}
+                  className="rounded-xl border border-amber-800/30 bg-navy-card p-4"
+                  data-testid="f5-card"
+                >
+                  {/* FIRST 5 badge */}
+                  <div className="mb-2 flex items-center gap-2">
+                    <span
+                      className="rounded px-1.5 py-0.5 font-display text-[9px] font-bold uppercase tracking-[0.18em] text-white"
+                      style={{ backgroundColor: "#9A7B1E" }}
+                    >
+                      FIRST 5
+                    </span>
+                    <span className="font-display text-[11px] font-bold uppercase tracking-wider" style={{ color: String(p.tier) === "SNIPER" ? "#C9A227" : String(p.tier) === "EDGE" ? "#3FB950" : "#8892A0" }}>
+                      {String(p.tier ?? "")}
+                    </span>
+                  </div>
+                  <div className="text-sm font-semibold">
+                    {String(p.pickSide).toUpperCase()} {String(p.market).replace("h2h_f5", "ML").replace("totals_f5", "Total")}
+                    {p.line != null && ` ${String(p.line)}`}
+                    {" "}
+                    <span className="tabular-nums">{p.price != null ? (Number(p.price) > 0 ? `+${String(p.price)}` : String(p.price)) : ""}</span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    {`Edge ${p.edgePp != null ? `${Number(p.edgePp) >= 0 ? "+" : ""}${Number(p.edgePp).toFixed(1)}pp` : "—"} · F5 proj: ${Number(p.projected_home_runs_f5 ?? 0).toFixed(1)} · ${Number(p.projected_away_runs_f5 ?? 0).toFixed(1)}`}
+                  </div>
+                  {p.reasoning_json && (
+                    <ul className="mt-1.5 space-y-0.5 text-[10px] text-muted-foreground/70">
+                      {(JSON.parse(String(p.reasoning_json)) as string[]).slice(0, 3).map((r: string, i: number) => (
+                        <li key={i}>→ {r}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {sport !== "PROPS" && isLoading && <SkeletonGrid />}
       {sport !== "PROPS" && isError && (

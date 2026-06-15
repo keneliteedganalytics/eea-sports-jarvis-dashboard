@@ -31,6 +31,13 @@ export interface TotalConsensus {
   book: string | null;
 }
 
+// v6.10: F5 (first-5-innings) consensus prices — same averaging as main market.
+export interface F5Prices {
+  h2h: { home: number; away: number } | null;
+  totals: { line: number; over: number; under: number } | null;
+  spreads: { home: { line: number; price: number }; away: { line: number; price: number } } | null;
+}
+
 export interface OddsEvent {
   eventId: string;
   startIso: string;
@@ -49,6 +56,8 @@ export interface OddsEvent {
   dkAwaySelectionId: string | null;
   dkHomeDeepLink: string | null;
   dkAwayDeepLink: string | null;
+  // v6.10: first-5-innings market prices (null when no book offers F5 lines)
+  f5?: F5Prices | null;
 }
 
 interface RawOutcome {
@@ -119,6 +128,88 @@ function consensusSpread(events: RawBookmaker[], homeTeam: string, awayTeam: str
     awayPrice: Math.round(median(aModal[1])),
     book: hModal[1].book,
   };
+}
+
+// v6.10: Build F5 consensus from the three F5 market keys.
+function consensusF5(bookmakers: RawBookmaker[], homeTeam: string, awayTeam: string): F5Prices {
+  // F5 H2H
+  const homeH2hPrices: number[] = [];
+  const awayH2hPrices: number[] = [];
+  for (const bm of bookmakers) {
+    if (!TRUSTED_BOOKS.includes(bm.key)) continue;
+    const mk = bm.markets?.find((m) => m.key === "h2h_1st_5_innings");
+    if (!mk) continue;
+    const h = mk.outcomes.find((o) => o.name === homeTeam);
+    const a = mk.outcomes.find((o) => o.name === awayTeam);
+    if (h?.price !== undefined) homeH2hPrices.push(h.price);
+    if (a?.price !== undefined) awayH2hPrices.push(a.price);
+  }
+  const h2h =
+    homeH2hPrices.length > 0 && awayH2hPrices.length > 0
+      ? { home: Math.round(median(homeH2hPrices)), away: Math.round(median(awayH2hPrices)) }
+      : null;
+
+  // F5 Totals
+  const overByLine: Record<string, { prices: number[] }> = {};
+  const underByLine: Record<string, number[]> = {};
+  for (const bm of bookmakers) {
+    if (!TRUSTED_BOOKS.includes(bm.key)) continue;
+    const mk = bm.markets?.find((m) => m.key === "totals_1st_5_innings");
+    if (!mk) continue;
+    const over = mk.outcomes.find((o) => o.name === "Over");
+    const under = mk.outcomes.find((o) => o.name === "Under");
+    if (over?.point !== undefined && over.price !== undefined) {
+      (overByLine[String(over.point)] ??= { prices: [] }).prices.push(over.price);
+    }
+    if (under?.point !== undefined && under.price !== undefined) {
+      (underByLine[String(under.point)] ??= []).push(under.price);
+    }
+  }
+  const tEntries = Object.entries(overByLine).sort((a, b) => b[1].prices.length - a[1].prices.length);
+  let totals: F5Prices["totals"] = null;
+  if (tEntries.length > 0) {
+    const [line, oData] = tEntries[0];
+    const uData = underByLine[line];
+    if (uData) {
+      totals = {
+        line: Number(line),
+        over: Math.round(median(oData.prices)),
+        under: Math.round(median(uData)),
+      };
+    }
+  }
+
+  // F5 Spreads
+  const homeSpreadByLine: Record<string, { prices: number[] }> = {};
+  const awaySpreadByLine: Record<string, number[]> = {};
+  for (const bm of bookmakers) {
+    if (!TRUSTED_BOOKS.includes(bm.key)) continue;
+    const mk = bm.markets?.find((m) => m.key === "spreads_1st_5_innings");
+    if (!mk) continue;
+    const h = mk.outcomes.find((o) => o.name === homeTeam);
+    const a = mk.outcomes.find((o) => o.name === awayTeam);
+    if (h?.point !== undefined && h.price !== undefined) {
+      (homeSpreadByLine[String(h.point)] ??= { prices: [] }).prices.push(h.price);
+    }
+    if (a?.point !== undefined && a.price !== undefined) {
+      (awaySpreadByLine[String(a.point)] ??= []).push(a.price);
+    }
+  }
+  const hsEntries = Object.entries(homeSpreadByLine).sort((a, b) => b[1].prices.length - a[1].prices.length);
+  let spreads: F5Prices["spreads"] = null;
+  if (hsEntries.length > 0) {
+    const [hLine, hData] = hsEntries[0];
+    const aEntries = Object.entries(awaySpreadByLine).sort((a, b) => b[1].length - a[1].length);
+    if (aEntries.length > 0) {
+      const [aLine, aData] = aEntries[0];
+      spreads = {
+        home: { line: Number(hLine), price: Math.round(median(hData.prices)) },
+        away: { line: Number(aLine), price: Math.round(median(aData)) },
+      };
+    }
+  }
+
+  return { h2h, totals, spreads };
 }
 
 function consensusTotal(events: RawBookmaker[]): TotalConsensus {
@@ -200,7 +291,7 @@ export async function fetchOddsForSport(
   const res = await getJson<RawEvent[]>(`${BASE}/${sportKey}/odds/`, {
     apiKey: process.env.ODDS_API_KEY,
     regions: "us",
-    markets: "h2h,spreads,totals",
+    markets: "h2h,spreads,totals,h2h_1st_5_innings,totals_1st_5_innings,spreads_1st_5_innings",
     oddsFormat: "american",
   });
   if (!res.ok || !Array.isArray(res.data)) return [];
@@ -217,6 +308,10 @@ export async function fetchOddsForSport(
       books.push({ book: bm.key, homePrice: home, awayPrice: away });
     }
     const dk = extractDkData(ev);
+    const bms = ev.bookmakers ?? [];
+    const f5Raw = consensusF5(bms, ev.home_team, ev.away_team);
+    // Only attach f5 when at least h2h prices exist (avoids noisy null objects)
+    const f5 = f5Raw.h2h ? f5Raw : null;
     return {
       eventId: ev.id,
       startIso: ev.commence_time,
@@ -225,14 +320,15 @@ export async function fetchOddsForSport(
       homeTeamFull: ev.home_team,
       awayTeamFull: ev.away_team,
       books,
-      spread: consensusSpread(ev.bookmakers ?? [], ev.home_team, ev.away_team),
-      total: consensusTotal(ev.bookmakers ?? []),
-      rawBookmakers: ev.bookmakers ?? [],
+      spread: consensusSpread(bms, ev.home_team, ev.away_team),
+      total: consensusTotal(bms),
+      rawBookmakers: bms,
       dkEventId: dk.dkEventId,
       dkHomeSelectionId: dk.dkHomeSelectionId,
       dkAwaySelectionId: dk.dkAwaySelectionId,
       dkHomeDeepLink: dk.dkHomeDeepLink,
       dkAwayDeepLink: dk.dkAwayDeepLink,
+      f5,
     };
   });
 }

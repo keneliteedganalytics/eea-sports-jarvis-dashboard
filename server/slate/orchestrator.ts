@@ -177,6 +177,8 @@ export function decorateSlatePicks(picks: BuiltPick[], day: string): void {
       predictPct: p.polymarket?.found ? (p.polymarket.pct ?? null) : null,
       openingLine: p.openingLine ?? null,
       currentLine: p.currentLine ?? null,
+      // v6.10: saberWinProb from pitcherEdge/offenseEdge composite
+      saberWinProb: (p as import('../sports/mlb/picksEngine').BuiltPick)._saberWinProb ?? null,
     });
 
     const row = byId.get(pickId(p.gameId, p.pickType, p.pickSide));

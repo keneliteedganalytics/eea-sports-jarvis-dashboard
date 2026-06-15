@@ -26,6 +26,8 @@ export interface PickSignals {
   model: Signal | null; // our own projection model (always present)
   prism: Signal | null; // ensemble / calibration overlay
   predict: Signal | null; // prediction-market read e.g. Polymarket (parallel agent)
+  // v6.10: sabermetric composite signal (xFIP/wRC+ edge read from sibling subagent)
+  saber?: Signal | null;
 }
 
 export const EMPTY_SIGNALS: PickSignals = {
@@ -34,6 +36,7 @@ export const EMPTY_SIGNALS: PickSignals = {
   model: null,
   prism: null,
   predict: null,
+  saber: null,
 };
 
 // Strict-gate thresholds (v6.9.0). SNIPER requires the MODEL to lead by ≥5pp AND

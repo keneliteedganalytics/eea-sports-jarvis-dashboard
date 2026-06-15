@@ -15,6 +15,8 @@ export interface PickSignals {
   model: Signal | null;
   prism: Signal | null;
   predict: Signal | null;
+  // v6.10: sabermetric composite signal
+  saber?: Signal | null;
 }
 
 export interface Market {
@@ -136,6 +138,32 @@ export interface BuiltPick {
   lockedTier?: string | null;
   lockedStake?: number | null;
   lockedOdds?: number | null;
+  // Umpire fields (MLB only, from engine model)
+  umpireName?: string | null;
+  umpireRunAdj?: number | null;
+  // v6.10: sabermetric edge data from sibling subagent (optional until engine ships)
+  pitcherEdge?: {
+    homePitcherName?: string | null;
+    awayPitcherName?: string | null;
+    homeXfip?: number | null;
+    awayXfip?: number | null;
+    homeKMinusBBPct?: number | null;
+    awayKMinusBBPct?: number | null;
+    homeWhip?: number | null;
+    awayWhip?: number | null;
+    edgeSide?: "home" | "away" | "neutral" | null;
+    edgeSummary?: string | null;
+  } | null;
+  offenseEdge?: {
+    homeWrcPlus?: number | null;
+    awayWrcPlus?: number | null;
+    homeWobaVsRhp?: number | null;
+    awayWobaVsRhp?: number | null;
+    homeWobaVsLhp?: number | null;
+    awayWobaVsLhp?: number | null;
+    edgeSide?: "home" | "away" | "neutral" | null;
+    edgeSummary?: string | null;
+  } | null;
   // Soccer-only fields (undefined on other sports)
   leagueName?: string | null;
   leagueId?: number | null;

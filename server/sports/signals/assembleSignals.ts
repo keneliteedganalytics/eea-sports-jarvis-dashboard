@@ -34,6 +34,8 @@ export interface SignalSourceFields {
   // Prism inputs: pick-side American line at open and now (for velocity).
   openingLine: number | null;
   currentLine: number | null;
+  // v6.10: SABER composite win prob (FRACTION 0..1) from xFIP/wRC+/handedness.
+  saberWinProb?: number | null;
 }
 
 // Normalize a 0-100 PERCENT field to a 0..1 probability.
@@ -103,7 +105,14 @@ function prismSignal(f: SignalSourceFields): Signal | null {
   return { prob: nowP, edgePp: movePp, side: f.pickSide };
 }
 
-// Assemble all five sources. Pure; any absent input yields a null source.
+// v6.10: SABER signal from saberWinProb (already a 0..1 fraction).
+function saberSignal(f: SignalSourceFields): import('../../../shared/types/signals').Signal | null {
+  const prob = fracToProb(f.saberWinProb ?? null);
+  if (prob === null) return null;
+  return { prob, edgePp: edgeVsMarket(prob, fracToProb(f.pickImpliedProb)), side: f.pickSide };
+}
+
+// Assemble all six sources. Pure; any absent input yields a null source.
 export function assembleSignals(f: SignalSourceFields): PickSignals {
   return {
     market: marketSignal(f),
@@ -111,6 +120,7 @@ export function assembleSignals(f: SignalSourceFields): PickSignals {
     model: modelSignal(f),
     prism: prismSignal(f),
     predict: predictSignal(f),
+    saber: saberSignal(f),
   };
 }
 

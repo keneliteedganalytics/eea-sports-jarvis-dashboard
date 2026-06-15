@@ -13,6 +13,9 @@ import { isElitePitcher, dataQualityTier, type PitcherStats } from "./pitchers";
 import { pythagenpatWinPct, LG_AVG_RPG, type TeamOffense } from "./ratings";
 import { umpireShortName, type UmpireAdjustment } from "./umpires";
 import { type AbsAdjustment } from "./abs";
+import type { PitcherSabermetrics } from "./pitcherSabermetrics";
+import type { TeamOffenseSaber } from "./teamOffenseSaber";
+import { deltaVsOpposingHand, type HandednessSplit } from "./handednessSplits";
 
 // ── Tunable constants (SPEC §4) ───────────────────────────────────
 export const MLB_LG_ERA = 4.2;
@@ -58,6 +61,13 @@ export interface ModelContext {
   umpireAdjustment?: UmpireAdjustment | null; // HP umpire run/zone profile
   homeAbs?: AbsAdjustment | null; // home SP ABS framing exposure
   awayAbs?: AbsAdjustment | null; // away SP ABS framing exposure
+  // v6.10: sabermetric context (additive — all optional, null = no adjustment)
+  homeOffenseSaber?: TeamOffenseSaber | null;
+  awayOffenseSaber?: TeamOffenseSaber | null;
+  homeHandedness?: HandednessSplit | null;    // home batting team splits
+  awayHandedness?: HandednessSplit | null;    // away batting team splits
+  homePitcherSaber?: PitcherSabermetrics | null; // home SP xFIP/WHIP/K-BB%
+  awayPitcherSaber?: PitcherSabermetrics | null; // away SP xFIP/WHIP/K-BB%
 }
 
 export interface ModelResult {
@@ -92,6 +102,17 @@ export interface ModelResult {
   absPenaltyAway: number;
   method: string;
   modelNotes: string[];
+  // v6.10 sabermetric outputs (null when data unavailable)
+  homeXFIP: number | null;
+  awayXFIP: number | null;
+  homeWHIP: number | null;
+  awayWHIP: number | null;
+  homeKBBPct: number | null;
+  awayKBBPct: number | null;
+  homeWRCplus: number | null;
+  awayWRCplus: number | null;
+  homeHandednessAdj: number | null;
+  awayHandednessAdj: number | null;
 }
 
 function safeFloat(v: unknown, dflt: number | null = null): number | null {
@@ -226,6 +247,98 @@ export function predictGame(ctx: ModelContext): ModelResult {
 
   homeExp = Math.max(2.0, homeExp);
   awayExp = Math.max(2.0, awayExp);
+
+  // ── Step F3 (v6.10): sabermetric adjustments ─────────────────────────────
+  // Purely additive on top of all existing adjustments.
+  const saberNotes: string[] = [];
+
+  // ① Pitcher quality adjustments.
+  const homePitcherSaber = ctx.homePitcherSaber ?? null;
+  const awayPitcherSaber = ctx.awayPitcherSaber ?? null;
+
+  // xFIP: if xFIP diverges from existing FIP/ERA proxy by >0.30, nudge run projection.
+  // 30% weight on xFIP delta, max ±0.25 runs on opponent's expected score.
+  function xFIPAdjFn(saber: PitcherSabermetrics | null | undefined, eraProxy: number): number {
+    if (!saber || saber.xFIP === null) return 0;
+    const delta = saber.xFIP - eraProxy;
+    if (Math.abs(delta) < 0.30) return 0;
+    const raw = 0.30 * (delta / MLB_LG_ERA) * spShare;
+    return Math.max(-0.25, Math.min(0.25, raw));
+  }
+  const awayXFIPRunAdj = xFIPAdjFn(awayPitcherSaber, awaySpProxy);
+  if (awayXFIPRunAdj !== 0) { homeExp += awayXFIPRunAdj; saberNotes.push(`awayXFIP(${round2(awayXFIPRunAdj)})`); }
+  const homeXFIPRunAdj = xFIPAdjFn(homePitcherSaber, homeSpProxy);
+  if (homeXFIPRunAdj !== 0) { awayExp += homeXFIPRunAdj; saberNotes.push(`homeXFIP(${round2(homeXFIPRunAdj)})`); }
+
+  // K-BB%: controls run output of the opponent.
+  function kBBAdjFn(saber: PitcherSabermetrics | null | undefined): number {
+    if (!saber || saber.kBBPct === null) return 0;
+    if (saber.kBBPct > 0.18) return -0.10; // dominant pitcher
+    if (saber.kBBPct < 0.08) return  0.15; // weak pitcher
+    return 0;
+  }
+  const homeKBBRunAdj = kBBAdjFn(homePitcherSaber);
+  const awayKBBRunAdj = kBBAdjFn(awayPitcherSaber);
+  if (homeKBBRunAdj !== 0) { awayExp += homeKBBRunAdj; saberNotes.push(`homeKBB(${round2(homeKBBRunAdj)})`); }
+  if (awayKBBRunAdj !== 0) { homeExp += awayKBBRunAdj; saberNotes.push(`awayKBB(${round2(awayKBBRunAdj)})`); }
+
+  // WHIP >1.40 → +0.10 runs for opponent.
+  function whipAdjFn(saber: PitcherSabermetrics | null | undefined): number {
+    return (!saber || saber.whip === null) ? 0 : (saber.whip > 1.40 ? 0.10 : 0);
+  }
+  const homeWHIPRunAdj = whipAdjFn(homePitcherSaber);
+  const awayWHIPRunAdj = whipAdjFn(awayPitcherSaber);
+  if (homeWHIPRunAdj !== 0) { awayExp += homeWHIPRunAdj; saberNotes.push(`homeWHIP(+${round2(homeWHIPRunAdj)})`); }
+  if (awayWHIPRunAdj !== 0) { homeExp += awayWHIPRunAdj; saberNotes.push(`awayWHIP(+${round2(awayWHIPRunAdj)})`); }
+
+  // ② Team offense: wRC+-based adjustment to batting team's expected runs.
+  // 100 = league avg. Each 10 wRC+ pts ≈ ±0.20 runs. Clamped ±0.50.
+  const homeOffSaber = ctx.homeOffenseSaber ?? null;
+  const awayOffSaber = ctx.awayOffenseSaber ?? null;
+  function wRCplusAdjFn(saber: TeamOffenseSaber | null | undefined): number {
+    if (!saber || saber.wRCplus === null) return 0;
+    return Math.max(-0.50, Math.min(0.50, ((saber.wRCplus - 100) / 10) * 0.20));
+  }
+  const homeOffAdj = wRCplusAdjFn(homeOffSaber);
+  const awayOffAdj = wRCplusAdjFn(awayOffSaber);
+  if (homeOffAdj !== 0) { homeExp += homeOffAdj; saberNotes.push(`homeWRC+(${round2(homeOffAdj)})`); }
+  if (awayOffAdj !== 0) { awayExp += awayOffAdj; saberNotes.push(`awayWRC+(${round2(awayOffAdj)})`); }
+
+  // ③ Handedness: wOBA delta vs. opposing SP's handedness → run adj. Clamped ±0.30.
+  const homeHand = ctx.homeHandedness ?? null;
+  const awayHand = ctx.awayHandedness ?? null;
+  const awaySpHand = (awaySp as PitcherStats).hand ?? null;
+  const homeSpHand = (homeSp as PitcherStats).hand ?? null;
+  const homeBaseWOBA = homeOffSaber?.wOBA ?? null;
+  const awayBaseWOBA = awayOffSaber?.wOBA ?? null;
+
+  let homeHandednessAdj: number | null = null;
+  let awayHandednessAdj: number | null = null;
+
+  if (homeHand && awaySpHand && (awaySpHand === 'L' || awaySpHand === 'R') && homeBaseWOBA !== null) {
+    const wOBADelta = deltaVsOpposingHand(homeHand, awaySpHand as 'L' | 'R', homeBaseWOBA);
+    const rawAdj = (wOBADelta / 0.030) * 0.15;
+    homeHandednessAdj = Math.max(-0.30, Math.min(0.30, rawAdj));
+    if (Math.abs(homeHandednessAdj) > 0.001) {
+      homeExp += homeHandednessAdj;
+      saberNotes.push(`homeHand(${round2(homeHandednessAdj)})`);
+    }
+  }
+
+  if (awayHand && homeSpHand && (homeSpHand === 'L' || homeSpHand === 'R') && awayBaseWOBA !== null) {
+    const wOBADelta = deltaVsOpposingHand(awayHand, homeSpHand as 'L' | 'R', awayBaseWOBA);
+    const rawAdj = (wOBADelta / 0.030) * 0.15;
+    awayHandednessAdj = Math.max(-0.30, Math.min(0.30, rawAdj));
+    if (Math.abs(awayHandednessAdj) > 0.001) {
+      awayExp += awayHandednessAdj;
+      saberNotes.push(`awayHand(${round2(awayHandednessAdj)})`);
+    }
+  }
+
+  if (saberNotes.length > 0) methodLog.push(`saber(${saberNotes.join(',')})`);
+
+  homeExp = Math.max(2.0, homeExp);
+  awayExp = Math.max(2.0, awayExp);
   const predictedTotal = round2(homeExp + awayExp);
 
   // Step G: Pythagenpat + OPS blend
@@ -322,6 +435,17 @@ export function predictGame(ctx: ModelContext): ModelResult {
     absPenaltyAway: round2(awayAbsPenalty),
     method: methodLog.join(" | "),
     modelNotes: warnings,
+    // v6.10 sabermetric outputs
+    homeXFIP: homePitcherSaber?.xFIP ?? null,
+    awayXFIP: awayPitcherSaber?.xFIP ?? null,
+    homeWHIP: homePitcherSaber?.whip ?? null,
+    awayWHIP: awayPitcherSaber?.whip ?? null,
+    homeKBBPct: homePitcherSaber?.kBBPct ?? null,
+    awayKBBPct: awayPitcherSaber?.kBBPct ?? null,
+    homeWRCplus: homeOffSaber?.wRCplus ?? null,
+    awayWRCplus: awayOffSaber?.wRCplus ?? null,
+    homeHandednessAdj: homeHandednessAdj,
+    awayHandednessAdj: awayHandednessAdj,
   };
 }
 

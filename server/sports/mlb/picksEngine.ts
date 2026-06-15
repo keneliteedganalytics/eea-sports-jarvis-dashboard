@@ -90,6 +90,13 @@ export interface GameInput {
   // Per-side recent-form splits (last-7 / last-14), resolved in the slate.
   _recentFormHome?: RecentForm | null;
   _recentFormAway?: RecentForm | null;
+  // v6.10: sabermetric context pre-fetched by data.ts
+  _homePitcherSaber?: import('./pitcherSabermetrics').PitcherSabermetrics | null;
+  _awayPitcherSaber?: import('./pitcherSabermetrics').PitcherSabermetrics | null;
+  _homeOffenseSaber?: import('./teamOffenseSaber').TeamOffenseSaber | null;
+  _awayOffenseSaber?: import('./teamOffenseSaber').TeamOffenseSaber | null;
+  _homeHandedness?: import('./handednessSplits').HandednessSplit | null;
+  _awayHandedness?: import('./handednessSplits').HandednessSplit | null;
 }
 
 // CLV payload sent to the client. null on the BuiltPick until the lock worker
@@ -226,6 +233,22 @@ export interface BuiltPick {
   signals?: PickSignals;
   // v6.9.2: DraftKings one-tap deep-link. Present only on SNIPER picks; null otherwise.
   dk?: { selectionId: string | null; eventId: string; deepLink: string } | null;
+  // v6.10: sabermetric composite win prob (internal — used by assembleSignals for saber signal)
+  _saberWinProb?: number | null;
+  // v6.10: pitcher and offense sabermetric edge fields (additive, null when unavailable)
+  pitcherEdge?: {
+    pickSideXFIP: number | null;
+    oppSideXFIP: number | null;
+    pickSideKBBPct: number | null;
+    oppSideKBBPct: number | null;
+    pickSideWHIP: number | null;
+    oppSideWHIP: number | null;
+  } | null;
+  offenseEdge?: {
+    pickSideWRCplus: number | null;
+    oppSideWRCplus: number | null;
+    handednessAdvantage: 'pick' | 'opp' | 'neutral';
+  } | null;
 }
 
 // 7-component confidence with elite-fade & sparse penalties (MLB variant).
@@ -660,6 +683,59 @@ export function buildPick(
     pickMl !== null &&
     pickMl >= -110;
 
+  // v6.10: Build pitcherEdge and offenseEdge sub-objects for the pick payload.
+  // Orient by pick side: pickSide=home means we're backing the home team.
+  const isHome = pickSide === "home";
+  const pitcherEdgePayload = {
+    pickSideXFIP:    isHome ? model.homeXFIP    : model.awayXFIP,
+    oppSideXFIP:     isHome ? model.awayXFIP    : model.homeXFIP,
+    pickSideKBBPct:  isHome ? model.homeKBBPct  : model.awayKBBPct,
+    oppSideKBBPct:   isHome ? model.awayKBBPct  : model.homeKBBPct,
+    pickSideWHIP:    isHome ? model.homeWHIP    : model.awayWHIP,
+    oppSideWHIP:     isHome ? model.awayWHIP    : model.homeWHIP,
+  };
+
+  // Handedness advantage direction for the pick side.
+  const pickHandAdj  = isHome ? model.homeHandednessAdj : model.awayHandednessAdj;
+  const oppHandAdj   = isHome ? model.awayHandednessAdj : model.homeHandednessAdj;
+  let handednessAdvantage: 'pick' | 'opp' | 'neutral' = 'neutral';
+  if (pickHandAdj !== null && oppHandAdj !== null) {
+    if (pickHandAdj > oppHandAdj + 0.02) handednessAdvantage = 'pick';
+    else if (oppHandAdj > pickHandAdj + 0.02) handednessAdvantage = 'opp';
+  } else if (pickHandAdj !== null && pickHandAdj > 0.02) {
+    handednessAdvantage = 'pick';
+  } else if (pickHandAdj !== null && pickHandAdj < -0.02) {
+    handednessAdvantage = 'opp';
+  }
+
+  const offenseEdgePayload = {
+    pickSideWRCplus:    isHome ? model.homeWRCplus : model.awayWRCplus,
+    oppSideWRCplus:     isHome ? model.awayWRCplus : model.homeWRCplus,
+    handednessAdvantage,
+  };
+
+  // v6.10 SABER signal: composite saberWinProb from xFIP delta + wRC+ delta + handedness.
+  // Compute a run-differential implied by sabermetrics and convert via sigmoid.
+  function sigmoid(x: number): number { return 1 / (1 + Math.exp(-x)); }
+  const pickXFIP = pitcherEdgePayload.pickSideXFIP;
+  const oppXFIP  = pitcherEdgePayload.oppSideXFIP;
+  const pickWRC  = offenseEdgePayload.pickSideWRCplus;
+  const oppWRC   = offenseEdgePayload.oppSideWRCplus;
+  // xFIP delta: lower xFIP for our pitcher = pick side advantage.
+  // positive runDiff = pick side more likely to win.
+  let saberRunDiff = 0;
+  if (pickXFIP !== null && oppXFIP !== null) {
+    // Lower opp xFIP = opp pitcher better = disadvantage for pick side
+    // Higher opp xFIP = opp pitcher worse = advantage for pick side
+    saberRunDiff += (oppXFIP - pickXFIP) * 0.15; // each 1.0 ERA pt ≈ 0.15 run delta
+  }
+  if (pickWRC !== null && oppWRC !== null) {
+    saberRunDiff += ((pickWRC - oppWRC) / 10) * 0.10;
+  }
+  if (pickHandAdj !== null) saberRunDiff += pickHandAdj * 0.5;
+  // Convert run differential to win probability via sigmoid (scale: 1 run ≈ 10% swing)
+  const saberWinProb = Math.round(sigmoid(saberRunDiff * 1.2) * 10000) / 10000;
+
   const hardPassOrPhantom = hardPass || phantomEdge;
   const markets = buildMlbMarkets(
     game,
@@ -751,6 +827,10 @@ export function buildPick(
     modelNotes: model.modelNotes,
     // v6.9.2: DraftKings one-tap deep-link — SNIPER only, null on every other tier.
     dk: buildDkPayload(game._oddsEvent ?? null, verdictTier, pickSide),
+    // v6.10: sabermetric edge fields
+    _saberWinProb: saberWinProb,
+    pitcherEdge: pitcherEdgePayload,
+    offenseEdge: offenseEdgePayload,
   };
 }
 
