@@ -52,6 +52,8 @@ function withClassification(p: PitcherStats): PitcherStats {
 export interface SlateBuildResult {
   operatingDay: string;
   games: GameInput[];
+  // Set when the slate is empty for a diagnosable reason (not just no games today)
+  emptyReason?: string;
 }
 
 // Build today's MLB slate. Joins consensus odds with probable pitchers.
@@ -62,6 +64,15 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
 
   // Filter to games inside the operating-day window.
   const inWindow = oddsEvents.filter((ev) => inOperatingWindow(ev.startIso, opDay));
+  if (oddsEvents.length === 0) {
+    // the-odds-api returned no events at all — books likely haven't posted lines yet.
+    return {
+      operatingDay: opDay,
+      games: [],
+      emptyReason:
+        "the-odds-api has not yet posted today's MLB events; lines typically post 4-8 hours before first pitch",
+    };
+  }
   if (inWindow.length === 0) return { operatingDay: opDay, games: [] };
 
   const games: GameInput[] = [];

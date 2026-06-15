@@ -88,18 +88,21 @@ export interface SlatePayload {
   isDemo: boolean;
   bankroll: number;
   picks: BuiltPick[];
+  // v6.10.1: set when the slate is empty for a diagnosable reason (not just off-day)
+  emptyReason?: string;
 }
 
 export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<SlatePayload> {
   const now = dateIso ? operatingDayAnchor(dateIso) : new Date();
   if (hasOddsKey()) {
-    const { operatingDay, games } = await buildSlate(now);
+    const { operatingDay, games, emptyReason } = await buildSlate(now);
     if (games.length > 0) {
       return { operatingDay, isDemo: false, bankroll, picks: await runEngine(games, bankroll, operatingDay) };
     }
-    // Odds key is present but no games found (e.g. future date / off-day).
-    // Return a live (non-demo) empty slate rather than falling through to demo.
-    return { operatingDay, isDemo: false, bankroll, picks: [] };
+    // Odds key is present but no games found (e.g. future date / off-day, or
+    // the-odds-api hasn't posted lines yet). Return the emptyReason so the client
+    // can render an informative empty-state instead of a blank slate.
+    return { operatingDay, isDemo: false, bankroll, picks: [], emptyReason };
   }
   // Fallback: deterministic demo slate (no Odds key configured).
   const opDay = getOperatingDay(now);

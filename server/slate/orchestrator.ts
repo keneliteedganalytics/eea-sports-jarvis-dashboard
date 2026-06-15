@@ -35,6 +35,8 @@ export interface SportSlate {
   ok: boolean;
   isDemo?: boolean;
   error?: string | null;
+  // v6.10.1: set when empty for a diagnosable reason (e.g. no-odds-api-events)
+  emptyReason?: string;
 }
 
 export interface DailySlate {
@@ -51,9 +53,9 @@ export interface DailySlate {
 }
 
 function settledToSport(
-  r: PromiseSettledResult<{ picks: BuiltPick[]; isDemo?: boolean }>,
+  r: PromiseSettledResult<{ picks: BuiltPick[]; isDemo?: boolean; emptyReason?: string }>,
 ): SportSlate {
-  if (r.status === "fulfilled") return { picks: r.value.picks, ok: true, isDemo: r.value.isDemo ?? false, error: null };
+  if (r.status === "fulfilled") return { picks: r.value.picks, ok: true, isDemo: r.value.isDemo ?? false, error: null, emptyReason: r.value.emptyReason };
   return { picks: [], ok: false, isDemo: false, error: r.reason instanceof Error ? r.reason.message : String(r.reason) };
 }
 

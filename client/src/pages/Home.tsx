@@ -376,7 +376,9 @@ export default function Home() {
 
       {sport !== "PROPS" && data && sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba" | "soccer"] === 0 && (
         <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="empty-sport">
-          No {sport} games on the board today.
+          {data.sports[sport.toLowerCase() as "mlb" | "nhl" | "nba" | "soccer"]?.emptyReason
+            ? data.sports[sport.toLowerCase() as "mlb" | "nhl" | "nba" | "soccer"]?.emptyReason
+            : `No ${sport} games on the board today.`}
         </div>
       )}
 

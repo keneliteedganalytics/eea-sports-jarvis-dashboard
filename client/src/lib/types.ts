@@ -193,6 +193,7 @@ export interface SlatePayload {
   isDemo: boolean;
   bankroll: number;
   picks: BuiltPick[];
+  emptyReason?: string;
 }
 
 export interface SportSlate {
@@ -200,6 +201,7 @@ export interface SportSlate {
   ok: boolean;
   isDemo?: boolean;
   error?: string | null;
+  emptyReason?: string;
 }
 
 export interface DailySlate {
