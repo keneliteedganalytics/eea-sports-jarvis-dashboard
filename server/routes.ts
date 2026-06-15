@@ -1084,6 +1084,63 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
   });
 
+
+  app.get("/api/debug/odds-probe", async (_req: Request, res: Response) => {
+    const key = process.env.ODDS_API_KEY;
+    if (!key) return res.status(500).json({ error: "no ODDS_API_KEY env" });
+
+    const BASE = "https://api.the-odds-api.com/v4/sports";
+    const out: any = { keyFirst4: key.slice(0, 4), keyLength: key.length };
+
+    try {
+      // 1. Sports list
+      const sportsRes = await fetch(`${BASE}/?apiKey=${key}`);
+      out.sportsStatus = sportsRes.status;
+      out.quotaRemaining = sportsRes.headers.get("x-requests-remaining");
+      out.quotaUsed = sportsRes.headers.get("x-requests-used");
+      const sports = await sportsRes.json();
+      out.baseballSports = Array.isArray(sports)
+        ? sports.filter((s: any) => s.key?.includes("baseball")).map((s: any) => ({ key: s.key, active: s.active, hasOutrights: s.has_outrights }))
+        : { error: sports };
+
+      // 2. MLB events
+      const eventsRes = await fetch(`${BASE}/baseball_mlb/events?apiKey=${key}`);
+      out.eventsStatus = eventsRes.status;
+      out.eventsQuotaRemaining = eventsRes.headers.get("x-requests-remaining");
+      const events = await eventsRes.json();
+      out.eventsCount = Array.isArray(events) ? events.length : null;
+      out.eventsSample = Array.isArray(events)
+        ? events.slice(0, 5).map((e: any) => ({ commence: e.commence_time, away: e.away_team, home: e.home_team }))
+        : { error: events };
+
+      // 3. MLB odds with our exact markets (h2h + F5)
+      const fullUrl = `${BASE}/baseball_mlb/odds/?apiKey=${key}&regions=us&markets=h2h,spreads,totals,h2h_1st_5_innings,totals_1st_5_innings,spreads_1st_5_innings&oddsFormat=american`;
+      const oddsRes = await fetch(fullUrl);
+      out.fullOddsStatus = oddsRes.status;
+      out.fullOddsQuotaRemaining = oddsRes.headers.get("x-requests-remaining");
+      const odds = await oddsRes.json();
+      out.fullOddsCount = Array.isArray(odds) ? odds.length : null;
+      out.fullOddsSample = Array.isArray(odds)
+        ? odds.slice(0, 3).map((e: any) => ({ commence: e.commence_time, teams: `${e.away_team} @ ${e.home_team}`, books: e.bookmakers?.length || 0 }))
+        : { error: odds };
+
+      // 4. MLB odds WITHOUT F5 (in case F5 markets are unsupported on free plan)
+      const baseUrl = `${BASE}/baseball_mlb/odds/?apiKey=${key}&regions=us&markets=h2h,spreads,totals&oddsFormat=american`;
+      const baseOddsRes = await fetch(baseUrl);
+      out.baseOddsStatus = baseOddsRes.status;
+      out.baseOddsQuotaRemaining = baseOddsRes.headers.get("x-requests-remaining");
+      const baseOdds = await baseOddsRes.json();
+      out.baseOddsCount = Array.isArray(baseOdds) ? baseOdds.length : null;
+      out.baseOddsSample = Array.isArray(baseOdds)
+        ? baseOdds.slice(0, 3).map((e: any) => ({ commence: e.commence_time, teams: `${e.away_team} @ ${e.home_team}`, books: e.bookmakers?.length || 0 }))
+        : { error: baseOdds };
+    } catch (e: any) {
+      out.error = String(e.message || e);
+    }
+
+    res.json(out);
+  });
+
   // Stub sport tabs — same engine, model not yet wired.
   app.get("/api/:sport/slate", (req: Request, res: Response) => {
     const sport = String(req.params.sport);
