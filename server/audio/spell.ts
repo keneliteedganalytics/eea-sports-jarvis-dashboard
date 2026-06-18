@@ -145,7 +145,7 @@ export const ACRONYM_SPOKEN: Record<string, string> = {
   "TS%": "true shooting percentage",
   "USG%": "usage rate",
   NetRtg: "net rating",
-  // Soccer
+  // Advanced metrics
   xG: "expected goals",
   xGA: "expected goals against",
   PPDA: "passes per defensive action",

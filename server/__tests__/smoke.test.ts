@@ -56,11 +56,11 @@ function assertPick(p: BuiltPick, label: string) {
 async function run() {
   console.log("slate smoke (demo path, $25k bankroll)");
 
-  await test("daily slate builds for all four sports", async () => {
+  await test("daily slate builds for all three sports", async () => {
     const slate = await getDailySlate(undefined, DATE);
     assert.equal(slate.operatingDay, DATE);
     assert.equal(slate.bankroll, 25000, "bankroll defaults to $25k");
-    for (const sport of ["mlb", "nhl", "nba", "soccer"] as const) {
+    for (const sport of ["mlb", "nhl", "nba"] as const) {
       const s = slate.sports[sport];
       assert.ok(s.ok, `${sport} slate resolved ok`);
       assert.ok(Array.isArray(s.picks), `${sport} has picks array`);
@@ -70,7 +70,7 @@ async function run() {
   await test("every pick across the board is well-formed (markets always present)", async () => {
     const slate = await getDailySlate(undefined, DATE);
     let total = 0;
-    for (const sport of ["mlb", "nhl", "nba", "soccer"] as const) {
+    for (const sport of ["mlb", "nhl", "nba"] as const) {
       for (const p of slate.sports[sport].picks) {
         assertPick(p, `${sport}/${p.gameId}`);
         total++;
@@ -79,10 +79,10 @@ async function run() {
     assert.ok(total > 0, "board produced at least one pick");
   });
 
-  await test("daily cap holds — per-sport actionable cap (MLB 3, NHL/NBA 3, soccer 2)", async () => {
+  await test("daily cap holds — per-sport actionable cap (MLB 3, NHL/NBA 3)", async () => {
     const slate = await getDailySlate(undefined, DATE);
-    const caps: Record<string, number> = { mlb: 3, nhl: 3, nba: 3, soccer: 2 };
-    for (const sport of ["mlb", "nhl", "nba", "soccer"] as const) {
+    const caps: Record<string, number> = { mlb: 3, nhl: 3, nba: 3 };
+    for (const sport of ["mlb", "nhl", "nba"] as const) {
       const qualifying = slate.sports[sport].picks.filter((p) => p.qualifies).length;
       assert.ok(qualifying <= caps[sport], `${sport}: ${qualifying} qualifying ≤ ${caps[sport]}`);
     }
@@ -98,7 +98,7 @@ async function run() {
 
   await test("exposure cap keeps total actionable stake ≤ 18% of bankroll", async () => {
     const slate = await getDailySlate(undefined, DATE);
-    const staked = (["mlb", "nhl", "nba", "soccer"] as const)
+    const staked = (["mlb", "nhl", "nba"] as const)
       .flatMap((s) => slate.sports[s].picks)
       .filter((p) => p.qualifies)
       .reduce((sum, p) => sum + p.kellyStakeDollars, 0);

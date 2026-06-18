@@ -153,11 +153,6 @@ test("nba sport → basketball/nba path", () => {
   assert.equal(result, `${DK}/leagues/basketball/nba`);
 });
 
-test("soccer sport → soccer path", () => {
-  const result = pickToDkLink({ sport: "soccer" });
-  assert.equal(result, `${DK}/leagues/soccer`);
-});
-
 test("undefined sport → defaults to MLB path", () => {
   const result = pickToDkLink({});
   assert.equal(result, `${DK}/leagues/baseball/mlb`);

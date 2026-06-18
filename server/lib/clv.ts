@@ -48,8 +48,6 @@ export function lockLabelForSport(sport: string): string {
       return "Lock at tip";
     case "nhl":
       return "Lock at puck drop";
-    case "soccer":
-      return "Lock at kickoff";
     default:
       return "Lock at start";
   }

@@ -3,7 +3,7 @@
 // matches each pick to its event, writes the live score + status, and — on the
 // transition to a completed game — grades the pick exactly once.
 
-import { fetchSportScoreboard, fetchSoccerScoreboard, type EspnGame } from "../adapters/espnLive";
+import { fetchSportScoreboard, type EspnGame } from "../adapters/espnLive";
 import { matchEvent } from "./teamMatch";
 import {
   openPicksForDate,
@@ -85,7 +85,7 @@ export function applyEventsToPicks(picks: GradedPick[], games: EspnGame[], summa
 }
 
 // Group open picks by sport, fetch each sport's scoreboard once, then update
-// every matching pick. Soccer unions the major league scoreboards.
+// every matching pick.
 export async function pollEspnAndUpdate(date: string): Promise<PollSummary> {
   const open = openPicksForDate(date);
   const summary: PollSummary = { date, scanned: open.length, updated: 0, graded: 0 };
@@ -101,7 +101,7 @@ export async function pollEspnAndUpdate(date: string): Promise<PollSummary> {
   for (const [sport, picks] of bySport) {
     let games: EspnGame[] = [];
     try {
-      games = sport === "soccer" ? await fetchSoccerScoreboard(date) : await fetchSportScoreboard(sport, date);
+      games = await fetchSportScoreboard(sport, date);
     } catch (e) {
       console.error(`[liveScoring] ${sport} fetch threw for ${date}:`, e instanceof Error ? e.message : e);
       games = [];

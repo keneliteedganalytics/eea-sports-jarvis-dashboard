@@ -6,7 +6,6 @@
 import { fetchOddsForSport, type OddsEvent } from "../adapters/oddsApi";
 import { pinnacleMoneyline } from "../adapters/lineMovement";
 import { nameToAbbr } from "../sports/mlb/teams";
-import { SOCCER_ODDS_KEYS } from "../sports/soccer/leagues";
 import { computeClv } from "../lib/clv";
 import { openLockPicksForDate, lockClosingLine, type GradedPick } from "../gradedBook";
 import { DISPLAY_TIMEZONE } from "../utils/timezone";
@@ -21,7 +20,6 @@ const SPORT_ODDS_KEYS: Record<string, string[]> = {
   mlb: ["baseball_mlb"],
   nhl: ["icehockey_nhl"],
   nba: ["basketball_nba"],
-  soccer: SOCCER_ODDS_KEYS,
 };
 
 export interface LockSummary {

@@ -14,7 +14,7 @@ export interface DkLinkInput {
     eventId?: string | null;
     deepLink?: string | null;
   } | null;
-  sport?: "mlb" | "nhl" | "nba" | "soccer";
+  sport?: "mlb" | "nhl" | "nba";
   /** market_type field — used to detect prop vs game-line markets */
   marketType?: string | null;
 }
@@ -25,7 +25,6 @@ const SPORT_PATHS: Record<string, string> = {
   mlb: "baseball/mlb",
   nhl: "hockey/nhl",
   nba: "basketball/nba",
-  soccer: "soccer",
 };
 
 /** Returns true when a market type string represents a player-prop market. */

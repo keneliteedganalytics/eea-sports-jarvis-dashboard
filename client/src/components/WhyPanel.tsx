@@ -10,7 +10,6 @@ const CONFIDENCE_DRIVERS: Record<string, string> = {
   mlb: "Starter FIP/xFIP, lineup splits vs hand, bullpen rest & park factors",
   nhl: "Line combos, special teams (PP/PK), goalie SV% & rest, xGF%",
   nba: "ORtg/DRtg (L10), pace, rest & back-to-backs, injury point swings, home court",
-  soccer: "Starting XI, recent form, head-to-head, travel & rest, xG/xGA",
 };
 
 // "Why this pick?" — expandable five-line analysis (FiveLineAnalysis pattern).

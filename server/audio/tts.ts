@@ -20,23 +20,18 @@ export function hasElevenLabsKey(): boolean {
   return Boolean(process.env.ELEVENLABS_API_KEY);
 }
 
-// Default ElevenLabs voices. US (Daniel, American) covers the North-American
-// leagues; UK (Dorothy, British female) reads the soccer briefs. The legacy
-// ELEVENLABS_VOICE_ID is honored as a fallback for both when the new per-region
-// vars aren't set, so existing deployments keep their current voice.
+// Default ElevenLabs voice. US (Daniel, American) covers every league. The
+// legacy ELEVENLABS_VOICE_ID is honored as a fallback when the per-region var
+// isn't set, so existing deployments keep their current voice.
 const DEFAULT_VOICE_US = "onwK4e9ZLuTAKqWW03F9";
-const DEFAULT_VOICE_UK = "ThT5KcBeYPX3keUQqHPh";
 
 function usVoiceId(): string {
   return process.env.ELEVENLABS_VOICE_ID_US || process.env.ELEVENLABS_VOICE_ID || DEFAULT_VOICE_US;
 }
-function ukVoiceId(): string {
-  return process.env.ELEVENLABS_VOICE_ID_UK || process.env.ELEVENLABS_VOICE_ID || DEFAULT_VOICE_UK;
-}
 
-// Resolve the ElevenLabs voice for a sport: soccer → UK, everything else → US.
-export function getVoiceIdForSport(sport: string): string {
-  return sport === "soccer" ? ukVoiceId() : usVoiceId();
+// Resolve the ElevenLabs voice for a sport. All leagues read in the US voice.
+export function getVoiceIdForSport(_sport: string): string {
+  return usVoiceId();
 }
 
 export function hashScript(voiceId: string, model: string, text: string): string {
@@ -49,9 +44,8 @@ export interface SpeechResult {
   cached: boolean;
 }
 
-// Generate (or return cached) speech. The voice is chosen from the pick's sport
-// (soccer → UK, otherwise US). The voiceId is part of the cache hash, so the
-// same script spoken by two voices yields distinct cached files. audioUrl
+// Generate (or return cached) speech. The voiceId is part of the cache hash, so
+// the same script spoken by two voices yields distinct cached files. audioUrl
 // resolves to /api/audio/:hash.
 export async function generateSpeech(text: string, sport = "mlb"): Promise<SpeechResult> {
   const voiceId = getVoiceIdForSport(sport);

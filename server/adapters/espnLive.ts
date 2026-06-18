@@ -54,24 +54,12 @@ interface RawScoreboard {
   events?: RawEvent[];
 }
 
-// ESPN sport path per our sport key. Soccer needs a league code in the path.
+// ESPN sport path per our sport key.
 const SPORT_PATH: Record<string, string> = {
   mlb: "baseball/mlb",
   nhl: "hockey/nhl",
   nba: "basketball/nba",
 };
-
-// Soccer league codes we try, in order, when a pick doesn't carry a league.
-export const SOCCER_LEAGUES = [
-  "fifa.world",
-  "eng.1",
-  "esp.1",
-  "ita.1",
-  "ger.1",
-  "fra.1",
-  "usa.1",
-  "uefa.champions",
-];
 
 function scoreboardUrl(sportPath: string): string {
   return `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/scoreboard`;
@@ -152,26 +140,4 @@ export async function fetchSportScoreboard(sport: string, dateStr: string): Prom
     console.error(`[espn] ${sport} scoreboard returned ${res.data.events.length} events but 0 parsed (${ymd}) — shape change?`);
   }
   return games;
-}
-
-// Fetch soccer across the configured league codes (or a single given league),
-// merging events. Soccer has no single national scoreboard, so we union the
-// major leagues; duplicate eventIds are de-duped.
-export async function fetchSoccerScoreboard(dateStr: string, leagues: string[] = SOCCER_LEAGUES): Promise<EspnGame[]> {
-  const ymd = dateStr.replace(/-/g, "");
-  const seen = new Set<string>();
-  const out: EspnGame[] = [];
-  for (const code of leagues) {
-    const res = await getJson<RawScoreboard>(scoreboardUrl(`soccer/${code}`), { dates: ymd });
-    if (!res.ok) {
-      console.error(`[espn] soccer/${code} scoreboard fetch failed (${ymd}): status=${res.status} ${res.error ?? ""}`.trim());
-      continue;
-    }
-    for (const g of parseScoreboard(res.data)) {
-      if (seen.has(g.eventId)) continue;
-      seen.add(g.eventId);
-      out.push(g);
-    }
-  }
-  return out;
 }

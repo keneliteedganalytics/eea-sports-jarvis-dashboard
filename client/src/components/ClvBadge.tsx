@@ -11,7 +11,6 @@ const LOCK_LABEL: Record<string, string> = {
   mlb: "Lock at first pitch",
   nba: "Lock at tip",
   nhl: "Lock at puck drop",
-  soccer: "Lock at kickoff",
 };
 
 function lockLabel(sport: string): string {

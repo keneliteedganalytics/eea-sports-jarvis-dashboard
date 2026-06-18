@@ -10,7 +10,7 @@ import { hitRatesByTier, trackRecord, type BetLogEntry } from "./sports/mlb/trac
 import { clvAggregate, gradedPropPicks, passSummary, availableEngineVersions, type ClvAggregate, type PassSummary } from "./gradedBook";
 
 const TIER_ORDER = ["SNIPER", "EDGE", "RECON"];
-const SPORTS = ["MLB", "NHL", "NBA", "SOCCER"];
+const SPORTS = ["MLB", "NHL", "NBA"];
 
 export interface AnalyticsFilters {
   sport?: string | null; // "ALL" | one of SPORTS

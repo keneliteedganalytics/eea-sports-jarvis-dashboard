@@ -22,7 +22,7 @@ import type { BuiltPick, DkSlipPayload } from "@/lib/types";
 
 const STEAM_CENTS = 10;
 
-const SPREAD_LABEL: Record<string, string> = { mlb: "RL", nhl: "PL", nba: "SPR", soccer: "AH" };
+const SPREAD_LABEL: Record<string, string> = { mlb: "RL", nhl: "PL", nba: "SPR" };
 
 // v6.10.3: Signal-stack summary (collapsible). Shows supporting/contradicting counts below SignalsBar.
 function SignalStackRow({
@@ -124,18 +124,11 @@ export function PickCard({
 
   // MLB pitcher row data
   const isMLB = pick.sport === "mlb";
-  const isSoccer = pick.sport === "soccer";
   const awaySpName = pick.awaySp?.available === false ? "TBD" : (pick.awaySp?.pitcher ?? null);
   const homeSpName = pick.homeSp?.available === false ? "TBD" : (pick.homeSp?.pitcher ?? null);
   const awaySpEra = pick.awaySp?.era != null ? pick.awaySp.era.toFixed(2) : null;
   const homeSpEra = pick.homeSp?.era != null ? pick.homeSp.era.toFixed(2) : null;
   const showPitcherRow = isMLB && (awaySpName !== null || homeSpName !== null);
-
-  // Soccer subtitle row
-  const leaguePrefix = isSoccer ? (pick.leaguePrefix ?? (pick.leagueName ? `${pick.leagueName} ·` : "Soccer ·")) : null;
-  const homeFormStr = pick.homeForm ?? null;
-  const awayFormStr = pick.awayForm ?? null;
-  const showSoccerRow = isSoccer;
 
   // NHL goalie row data — shown when at least one goalie is available
   const isNHL = pick.sport === "nhl";
@@ -346,15 +339,6 @@ export function PickCard({
           {showPitcherRow && (
             <div className="mt-0.5 text-xs text-slate" data-testid="pitcher-row">
               SP: {awaySpName ?? "TBD"}{awaySpEra ? ` (${awaySpEra} ERA)` : ""} vs {homeSpName ?? "TBD"}{homeSpEra ? ` (${homeSpEra} ERA)` : ""}
-            </div>
-          )}
-          {/* Soccer: league prefix + form row */}
-          {showSoccerRow && (
-            <div className="mt-0.5 text-xs text-slate" data-testid="soccer-league-row">
-              {leaguePrefix}
-              {(homeFormStr || awayFormStr) && (
-                <span> Form: {awayFormStr ?? "—"} vs {homeFormStr ?? "—"}</span>
-              )}
             </div>
           )}
           {/* NHL-only: starting goalie row */}

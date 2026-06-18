@@ -171,17 +171,6 @@ export interface BuiltPick {
     edgeSide?: "home" | "away" | "neutral" | null;
     edgeSummary?: string | null;
   } | null;
-  // Soccer-only fields (undefined on other sports)
-  leagueName?: string | null;
-  leagueId?: number | null;
-  leaguePrefix?: string;
-  isFriendly?: boolean;
-  isDraw?: boolean;
-  homeForm?: string | null;
-  awayForm?: string | null;
-  drawProb?: number | null;
-  mlDraw?: number | null;
-  fairDrawMl?: number | null;
 }
 
 export interface BankrollState {
@@ -219,7 +208,6 @@ export interface DailySlate {
     mlb: SportSlate;
     nhl: SportSlate;
     nba: SportSlate;
-    soccer: SportSlate;
   };
 }
 

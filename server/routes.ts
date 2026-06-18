@@ -70,7 +70,7 @@ function buildPropDk(
   if (row.tier !== "SNIPER") return null;
   // game_id doubles as the odds-api event ID for props in the current schema.
   const eventId = row.game_id;
-  const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba" | "soccer";
+  const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba";
   const deepLink = pickToDkLink({ sport, marketType: row.market_type });
   return { selectionId: null, eventId, deepLink };
 }
@@ -269,9 +269,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
   app.get("/api/nba/track-record", (_req: Request, res: Response) => {
     res.json(trackRecord("NBA"));
-  });
-  app.get("/api/soccer/track-record", (_req: Request, res: Response) => {
-    res.json(trackRecord("SOCCER"));
   });
 
   // Running bankroll + lifetime W/L/P ledger. Reflects real settled P/L, not the
@@ -919,8 +916,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Generate (or fetch cached) audio brief for a pick. Returns { audioUrl,
   // text, available } — available=false means no ElevenLabs key (UI shows the
   // brief text without playback). The voice is chosen from the resolved pick's
-  // sport (soccer → UK, otherwise US), so the route path is purely cosmetic and
-  // every sport's pick is looked up cross-sport via getAnyPick.
+  // sport, so the route path is purely cosmetic and every sport's pick is
+  // looked up cross-sport via getAnyPick.
   const handleBrief = async (req: Request, res: Response) => {
     const pick = await getAnyPick(String(req.params.id), bankroll());
     if (!pick) return res.status(404).json({ message: "pick not found" });
@@ -938,7 +935,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/mlb/brief/:id", handleBrief);
   app.post("/api/nhl/brief/:id", handleBrief);
   app.post("/api/nba/brief/:id", handleBrief);
-  app.post("/api/soccer/brief/:id", handleBrief);
 
   // Serve cached MP3 by hash.
   app.get("/api/audio/:hash", (req: Request, res: Response) => {
@@ -992,7 +988,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           if (!row || row.tier !== "SNIPER") continue;
           const dk = buildPropDk(row);
           if (!dk) continue;
-          const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba" | "soccer";
+          const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba";
           candidates.push({
             selectionId: dk.selectionId,
             eventId: dk.eventId,
@@ -1007,7 +1003,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const row of rows) {
         const dk = buildPropDk(row);
         if (!dk) continue;
-        const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba" | "soccer";
+        const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba";
         candidates.push({
           selectionId: dk.selectionId,
           eventId: dk.eventId,
@@ -1023,7 +1019,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       for (const row of rows) {
         const dk = buildPropDk(row);
         if (!dk) continue;
-        const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba" | "soccer";
+        const sport = (row.sport ?? "mlb") as "mlb" | "nhl" | "nba";
         candidates.push({
           selectionId: dk.selectionId,
           eventId: dk.eventId,

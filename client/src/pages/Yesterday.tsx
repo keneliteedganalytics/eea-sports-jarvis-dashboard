@@ -30,7 +30,7 @@ export default function Yesterday() {
   const picks = useMemo<BuiltPick[]>(() => {
     if (!data) return [];
     const s = data.sports;
-    return [...s.mlb.picks, ...s.nhl.picks, ...s.nba.picks, ...(s.soccer?.picks ?? [])];
+    return [...s.mlb.picks, ...s.nhl.picks, ...s.nba.picks];
   }, [data]);
 
   // Graded picks only (the bets we actually placed and settled).

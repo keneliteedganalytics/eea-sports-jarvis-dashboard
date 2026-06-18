@@ -249,12 +249,6 @@ test("brief: afternoon game → 'This afternoon'", () => {
 test("teamLabel: MLB team gets 'the'", () => {
   assert.equal(teamLabel("New York Yankees", "mlb"), "the New York Yankees");
 });
-test("teamLabel: soccer national side gets no 'the'", () => {
-  assert.equal(teamLabel("Argentina", "soccer"), "Argentina");
-});
-test("teamLabel: soccer club gets no 'the'", () => {
-  assert.equal(teamLabel("Manchester United", "soccer"), "Manchester United");
-});
 test("teamLabel: name already starting with 'the' is not double-prefixed", () => {
   assert.equal(teamLabel("United States", "nba"), "the United States");
   assert.equal(teamLabel("the Athletics", "mlb"), "the Athletics");
@@ -265,39 +259,26 @@ test("teamLabel: NHL/NFL also get 'the'", () => {
 });
 
 // ── voice routing by sport ──────────────────────────────────────────
-test("getVoiceIdForSport: soccer → UK voice", () => {
-  const saved = { ...process.env };
-  delete process.env.ELEVENLABS_VOICE_ID;
-  delete process.env.ELEVENLABS_VOICE_ID_US;
-  delete process.env.ELEVENLABS_VOICE_ID_UK;
-  assert.equal(getVoiceIdForSport("soccer"), "ThT5KcBeYPX3keUQqHPh");
-  process.env = saved;
-});
 test("getVoiceIdForSport: mlb/nhl/nba/nfl → US voice (default)", () => {
   const saved = { ...process.env };
   delete process.env.ELEVENLABS_VOICE_ID;
   delete process.env.ELEVENLABS_VOICE_ID_US;
-  delete process.env.ELEVENLABS_VOICE_ID_UK;
   for (const s of ["mlb", "nhl", "nba", "nfl"]) {
     assert.equal(getVoiceIdForSport(s), "onwK4e9ZLuTAKqWW03F9", `sport ${s}`);
   }
   process.env = saved;
 });
-test("getVoiceIdForSport: env vars override defaults", () => {
+test("getVoiceIdForSport: env var overrides default", () => {
   const saved = { ...process.env };
   process.env.ELEVENLABS_VOICE_ID_US = "US_VOICE";
-  process.env.ELEVENLABS_VOICE_ID_UK = "UK_VOICE";
   assert.equal(getVoiceIdForSport("mlb"), "US_VOICE");
-  assert.equal(getVoiceIdForSport("soccer"), "UK_VOICE");
   process.env = saved;
 });
-test("getVoiceIdForSport: legacy ELEVENLABS_VOICE_ID is the fallback for both", () => {
+test("getVoiceIdForSport: legacy ELEVENLABS_VOICE_ID is the fallback", () => {
   const saved = { ...process.env };
   delete process.env.ELEVENLABS_VOICE_ID_US;
-  delete process.env.ELEVENLABS_VOICE_ID_UK;
   process.env.ELEVENLABS_VOICE_ID = "LEGACY";
   assert.equal(getVoiceIdForSport("mlb"), "LEGACY");
-  assert.equal(getVoiceIdForSport("soccer"), "LEGACY");
   process.env = saved;
 });
 
@@ -305,27 +286,11 @@ test("getVoiceIdForSport: legacy ELEVENLABS_VOICE_ID is the fallback for both", 
 test("hashScript: same text + model, different voice → different cache key", () => {
   const text = "the New York Yankees on the money line at plus one ten";
   const us = hashScript("onwK4e9ZLuTAKqWW03F9", "eleven_turbo_v2_5", text);
-  const uk = hashScript("ThT5KcBeYPX3keUQqHPh", "eleven_turbo_v2_5", text);
-  assert.notEqual(us, uk);
+  const alt = hashScript("ThT5KcBeYPX3keUQqHPh", "eleven_turbo_v2_5", text);
+  assert.notEqual(us, alt);
 });
 
 // ── integration: 'the' prefix in the spoken script ──────────────────
-function soccerPick(over: Partial<BuiltPick> = {}): BuiltPick {
-  return {
-    ...(mlbPick() as object),
-    sport: "soccer",
-    gameTimeEt: "3:00 PM ET",
-    homeTeam: "JOR",
-    awayTeam: "ARG",
-    homeTeamFull: "Jordan",
-    awayTeamFull: "Argentina",
-    pickSide: "away",
-    pickTeam: "ARG",
-    pickTeamFull: "Argentina",
-    ...(over as object),
-  } as unknown as BuiltPick;
-}
-
 test("brief: MLB pick prefixes 'the' on full and short names, no bare team name", () => {
   const now = new Date("2026-06-08T18:00:00Z");
   const b = buildBriefScript(mlbPick(), 25000, now);
@@ -334,15 +299,6 @@ test("brief: MLB pick prefixes 'the' on full and short names, no bare team name"
   assert.match(b, /the Cleveland Guardians/);
   // No bare "New York Yankees" that isn't preceded by "the ".
   assert.doesNotMatch(b, /(^|[^e]\s)New York Yankees/);
-});
-
-test("brief: soccer national sides take no 'the' (Argentina, Jordan)", () => {
-  const now = new Date("2026-06-08T18:00:00Z");
-  const b = buildBriefScript(soccerPick(), 25000, now);
-  assert.match(b, /Argentina/);
-  assert.match(b, /Jordan/);
-  assert.doesNotMatch(b, /the Argentina/);
-  assert.doesNotMatch(b, /the Jordan/);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

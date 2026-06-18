@@ -18,9 +18,7 @@ export function plUnits(result: Result, units: number, ml: number | null): numbe
   return round2(units * mult);
 }
 
-// Moneyline: the side with more runs/goals/points wins; equal final = push
-// (rare, but soccer regulation draws can settle a 3-way ML's home/away side as a
-// loss — handled by the caller passing isDraw, see gradeMoneyline).
+// Moneyline: the side with more runs/goals/points wins; equal final = push.
 export function gradeMoneyline(pickSide: Side, awayScore: number, homeScore: number): Result {
   if (awayScore === homeScore) return "P";
   const winner: Side = homeScore > awayScore ? "home" : "away";

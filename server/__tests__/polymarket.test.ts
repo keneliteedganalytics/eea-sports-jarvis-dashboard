@@ -38,7 +38,6 @@ console.log("polymarket adapter");
 const nhl = fx("poly-nhl-car-las.json");
 const nba = fx("poly-nba-sas-nyk.json");
 const mlb = fx("poly-mlb-nyy-cle.json");
-const wc = fx("poly-wc-usa-par.json");
 
 await test("NHL: Hurricanes @ Golden Knights — away pick price matched", () => {
   const r = matchEvent(nhl, "Vegas Golden Knights", "Carolina Hurricanes", "2026-06-09", "away");
@@ -64,12 +63,6 @@ await test("MLB: Yankees @ Guardians — full team name outcomes matched", () =>
   const r = matchEvent(mlb, "Cleveland Guardians", "New York Yankees", "2026-06-08", "home");
   assert.equal(r.found, true, r.reason);
   assert.ok(r.pct !== null && Math.abs(r.pct - 54.5) < 0.6, `got ${r.pct}`);
-});
-
-await test("Soccer WC: United States vs Paraguay — country-name fuzzy match", () => {
-  const r = matchEvent(wc, "United States", "Paraguay", "2026-06-12", "home");
-  assert.equal(r.found, true, r.reason);
-  assert.ok(r.pct !== null && r.pct > 0 && r.pct < 100, `got ${r.pct}`);
 });
 
 await test("no market: unknown matchup returns found=false with reason", () => {

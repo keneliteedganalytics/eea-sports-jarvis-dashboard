@@ -44,8 +44,6 @@ function sportVoice(sport: string): SportVoice {
       return { scoreUnit: "goals", startLabel: "puck drop", drivers: "expected goals for percentage and goalie save percentage" };
     case "nba":
       return { scoreUnit: "points", startLabel: "tip-off", drivers: "offensive rating, defensive rating, and pace" };
-    case "soccer":
-      return { scoreUnit: "goals", startLabel: "kickoff", drivers: "expected goals and expected goals against" };
     default:
       return { scoreUnit: "runs", startLabel: "first pitch", drivers: "fielding independent pitching, weighted on-base average, and park factors" };
   }
@@ -115,24 +113,19 @@ function spokenClock(h: number, min: number): string {
 
 // Spoken team label. American-league teams (MLB/NHL/NBA/NFL/NCAAF/NCAAB) read
 // naturally with a definite article — "the New York Yankees", "the Spurs".
-// Soccer teams never take "the": national sides ("Argentina", "Jordan") and
-// clubs ("Manchester United") both sound wrong with it, and a soccer pick can
-// also be "Draw". Names that already start with "the" are left as-is.
+// Names that already start with "the" are left as-is.
 export function teamLabel(name: string, sport: string): string {
   const trimmed = (name ?? "").trim();
   if (!trimmed) return trimmed;
-  if (sport === "soccer") return trimmed;
   if (/^the\s/i.test(trimmed)) return trimmed;
   return `the ${trimmed}`;
 }
 
 // Second-mention team name: drop the city, keep the nickname, then apply the
 // sport's article rule. "New York Yankees" → "the Yankees"; "Boston Red Sox" →
-// "the Red Sox" (keeps the two-word nickname); soccer names stay whole and
-// article-free ("Manchester United", "Argentina").
+// "the Red Sox" (keeps the two-word nickname).
 function shortTeam(full: string, sport: string): string {
   const trimmed = (full ?? "").trim();
-  if (sport === "soccer") return trimmed;
   const words = trimmed.split(/\s+/);
   if (words.length <= 1) return teamLabel(trimmed, sport);
   // Common two-word nicknames where the last two words belong together.
@@ -202,7 +195,7 @@ export function buildBriefScript(pick: BuiltPick, bankroll: number, now: Date = 
 
   // First mention uses the full team name with the sport's article; the repeat
   // reference drops the city and reads as "the Yankees" so the brief doesn't
-  // sound like a stat sheet. Soccer names stay article-free throughout.
+  // sound like a stat sheet.
   const awayLabel = teamLabel(pick.awayTeamFull, pick.sport);
   const homeLabel = teamLabel(pick.homeTeamFull, pick.sport);
   const pickFull = teamLabel(pick.pickTeamFull, pick.sport);

@@ -92,9 +92,6 @@ test("lock label: nba → tip", () => {
 test("lock label: nhl → puck drop", () => {
   assert.equal(lockLabelForSport("nhl"), "Lock at puck drop");
 });
-test("lock label: soccer → kickoff", () => {
-  assert.equal(lockLabelForSport("soccer"), "Lock at kickoff");
-});
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

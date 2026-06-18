@@ -849,7 +849,7 @@ export interface ArchiveItem {
 }
 
 export interface ArchiveQuery {
-  sport?: string | null; // "ALL" | mlb/nhl/nba/soccer
+  sport?: string | null; // "ALL" | mlb/nhl/nba
   since?: string | null; // YYYY-MM-DD inclusive lower bound on graded_at
   result?: string | null; // "ALL" | W | L | P
   tier?: string | null; // "ALL" | SNIPER | EDGE | RECON
@@ -956,7 +956,7 @@ export interface UnifiedItem {
 
 export interface UnifiedQuery {
   type?: string | null; // "ALL" | "game" | "prop"
-  sport?: string | null; // "ALL" | mlb/nhl/nba/soccer
+  sport?: string | null; // "ALL" | mlb/nhl/nba
   date?: string | null; // YYYY-MM-DD — the pick's day (graded_at/posted_at day)
   result?: string | null; // "ALL" | W | L | P
   tier?: string | null; // "ALL" | SNIPER | EDGE | RECON | PASS

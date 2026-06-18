@@ -40,7 +40,7 @@ export const getQueryFn: <T>(options: {
     return await res.json();
   };
 
-// Wrap fetch with an AbortSignal timeout so slow soccer + NHL parallel fetches
+// Wrap fetch with an AbortSignal timeout so slow parallel fetches
 // (which can take 15–25 s) don't strand the client indefinitely.
 async function fetchWithTimeout(url: string, timeoutMs = 50_000): Promise<Response> {
   const controller = new AbortController();

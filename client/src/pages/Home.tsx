@@ -24,13 +24,12 @@ interface F5PickDisplay {
   reasoning_json: string | null;
 }
 
-type SportFilter = "ALL" | "MLB" | "NHL" | "NBA" | "SOCCER" | "PROPS";
+type SportFilter = "ALL" | "MLB" | "NHL" | "NBA" | "PROPS";
 const SPORT_CHIPS: { key: SportFilter; label: string; disabled?: boolean }[] = [
   { key: "ALL", label: "ALL" },
   { key: "MLB", label: "MLB" },
   { key: "NHL", label: "NHL" },
   { key: "NBA", label: "NBA" },
-  { key: "SOCCER", label: "SOCCER" },
   { key: "PROPS", label: "PROPS" },
 ];
 const SOON_CHIPS = ["NFL soon", "NCAAF soon", "NCAAB soon"];
@@ -98,7 +97,6 @@ export default function Home() {
       ...s.mlb.picks,
       ...s.nhl.picks,
       ...s.nba.picks,
-      ...(s.soccer?.picks ?? []),
     ];
   }, [data]);
 
@@ -119,12 +117,11 @@ export default function Home() {
   }, [allPicks, sport, showAll]);
 
   const counts = useMemo(() => {
-    const c = { mlb: 0, nhl: 0, nba: 0, soccer: 0 };
+    const c = { mlb: 0, nhl: 0, nba: 0 };
     for (const p of allPicks) {
       if (p.sport === "mlb") c.mlb++;
       else if (p.sport === "nhl") c.nhl++;
       else if (p.sport === "nba") c.nba++;
-      else if (p.sport === "soccer") c.soccer++;
     }
     return c;
   }, [allPicks]);
@@ -228,7 +225,6 @@ export default function Home() {
         if (data.sports.mlb?.isDemo) demoBadges.push({ sport: "mlb", label: "MLB" });
         if (data.sports.nhl?.isDemo) demoBadges.push({ sport: "nhl", label: "NHL" });
         if (data.sports.nba?.isDemo) demoBadges.push({ sport: "nba", label: "NBA" });
-        if (data.sports.soccer?.isDemo) demoBadges.push({ sport: "soccer", label: "Soccer" });
         if (demoBadges.length === 0) return null;
         return (
           <div className="flex items-start gap-2 rounded-xl border border-gold/25 bg-gold/5 p-3 text-xs text-gold-light" data-testid="demo-banner-partial">
@@ -374,15 +370,15 @@ export default function Home() {
         </div>
       )}
 
-      {sport !== "PROPS" && data && sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba" | "soccer"] === 0 && (
+      {sport !== "PROPS" && data && sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba"] === 0 && (
         <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="empty-sport">
-          {data.sports[sport.toLowerCase() as "mlb" | "nhl" | "nba" | "soccer"]?.emptyReason
-            ? data.sports[sport.toLowerCase() as "mlb" | "nhl" | "nba" | "soccer"]?.emptyReason
+          {data.sports[sport.toLowerCase() as "mlb" | "nhl" | "nba"]?.emptyReason
+            ? data.sports[sport.toLowerCase() as "mlb" | "nhl" | "nba"]?.emptyReason
             : `No ${sport} games on the board today.`}
         </div>
       )}
 
-      {data && visible.length === 0 && !(sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba" | "soccer"] === 0) && (
+      {data && visible.length === 0 && !(sport !== "ALL" && counts[sport.toLowerCase() as "mlb" | "nhl" | "nba"] === 0) && (
         <div className="rounded-xl border border-card-border bg-navy-card p-8 text-center text-sm text-muted-foreground" data-testid="empty-slate">
           {showAll ? "No games on the board today." : "No qualifying plays. Switch to All games to see the full slate."}
         </div>

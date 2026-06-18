@@ -9,7 +9,7 @@ import { fmtGameDate, fmtGameTime, fmtLine, TIER_LABEL } from "@/lib/format";
 import { gradeVisual } from "@/lib/grade";
 import type { BuiltPick } from "@/lib/types";
 
-const SPREAD_LABEL: Record<string, string> = { mlb: "RL", nhl: "PL", nba: "SPR", soccer: "AH" };
+const SPREAD_LABEL: Record<string, string> = { mlb: "RL", nhl: "PL", nba: "SPR" };
 
 // Compact card for non-actionable (PASS / HARD_PASS) games.
 // Shows informational data the engine pulled — matchup, sport-specific detail
@@ -20,7 +20,6 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
 
   // MLB pitcher row
   const isMLB = pick.sport === "mlb";
-  const isSoccer = pick.sport === "soccer";
   const isNHL = pick.sport === "nhl";
   const awaySpName = pick.awaySp?.available === false ? "TBD" : (pick.awaySp?.pitcher ?? null);
   const homeSpName = pick.homeSp?.available === false ? "TBD" : (pick.homeSp?.pitcher ?? null);
@@ -44,11 +43,6 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
       ? `.${Math.round(pick.homeGoalie.svPct * 1000).toString().padStart(3, "0")} SV%`
       : null;
   const showGoalieRow = isNHL && (awayGoalieName !== null || homeGoalieName !== null);
-
-  // Soccer form row
-  const leaguePrefix = isSoccer ? (pick.leaguePrefix ?? (pick.leagueName ? `${pick.leagueName} ·` : "Soccer ·")) : null;
-  const homeFormStr = pick.homeForm ?? null;
-  const awayFormStr = pick.awayForm ?? null;
 
   // Projected score
   const showProjScore = pick.projAwayScore != null && pick.projHomeScore != null;
@@ -149,16 +143,6 @@ export function CompactCard({ pick }: { pick: BuiltPick }) {
         {showPitcherRow && (
           <div className="text-xs text-slate" data-testid="pitcher-row">
             SP: {awaySpName ?? "TBD"}{awaySpEra ? ` (${awaySpEra} ERA)` : ""} vs {homeSpName ?? "TBD"}{homeSpEra ? ` (${homeSpEra} ERA)` : ""}
-          </div>
-        )}
-
-        {/* Soccer league + form row */}
-        {isSoccer && (
-          <div className="text-xs text-slate" data-testid="soccer-league-row">
-            {leaguePrefix}
-            {(homeFormStr || awayFormStr) && (
-              <span> Form: {awayFormStr ?? "—"} vs {homeFormStr ?? "—"}</span>
-            )}
           </div>
         )}
 

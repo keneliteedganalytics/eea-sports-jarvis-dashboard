@@ -24,7 +24,7 @@ const GAMMA_BASE = "https://gamma-api.polymarket.com";
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15-min TTL per PRD
 const POLY_TIMEOUT_MS = 8000;        // 8s hard cap with graceful fallback
 
-export type PolySport = "mlb" | "nhl" | "nba" | "soccer";
+export type PolySport = "mlb" | "nhl" | "nba";
 
 export interface PolymarketResult {
   found: boolean;
@@ -59,7 +59,6 @@ const TAG_SLUG: Record<PolySport, string> = {
   mlb: "mlb",
   nhl: "nhl",
   nba: "nba",
-  soccer: "soccer",
 };
 
 // ── in-memory cache of sport event lists ────────────────────────────
@@ -195,7 +194,7 @@ function findMlMarket(ev: GammaEvent, homeTeam: string, awayTeam: string): Gamma
 
 // Resolve the pick-side win probability from an event, handling two shapes:
 //   A. Two-outcome ML market: outcomes ["TeamA","TeamB"], prices ["0.55","0.45"].
-//   B. Soccer per-team Yes/No markets: "Will <Team> win on <date>?" with
+//   B. Per-team Yes/No markets: "Will <Team> win on <date>?" with
 //      outcomes ["Yes","No"]. We read the Yes price for the pick team.
 function resolvePickProb(
   ev: GammaEvent,
@@ -220,7 +219,7 @@ function resolvePickProb(
     }
   }
 
-  // Shape B — soccer "Will <Team> win" Yes/No markets.
+  // Shape B — "Will <Team> win" Yes/No markets.
   for (const m of ev.markets ?? []) {
     if (m.closed) continue;
     const q = (m.question ?? "").toLowerCase();

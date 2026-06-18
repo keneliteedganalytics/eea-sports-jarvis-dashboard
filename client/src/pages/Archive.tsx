@@ -5,13 +5,13 @@ import { DISPLAY_TIMEZONE } from "@/lib/timezone";
 import type { UnifiedPage, UnifiedItem } from "@/lib/types";
 
 type TabKey = "PLAYS" | "PASSES";
-type SportChip = "ALL" | "MLB" | "NHL" | "NBA" | "SOCCER";
+type SportChip = "ALL" | "MLB" | "NHL" | "NBA";
 type TypeChip = "ALL" | "game" | "prop";
 type ResultChip = "ALL" | "W" | "L" | "P";
 type TierChip = "ALL" | "SNIPER" | "EDGE" | "RECON";
 type ReasonChip = "ALL" | "outlier" | "model_outlier_v676" | "below_threshold" | "low_data_quality" | "daily_cap" | "chalk_cap";
 
-const SPORTS: SportChip[] = ["ALL", "MLB", "NHL", "NBA", "SOCCER"];
+const SPORTS: SportChip[] = ["ALL", "MLB", "NHL", "NBA"];
 const TYPES: TypeChip[] = ["ALL", "game", "prop"];
 const RESULTS: ResultChip[] = ["ALL", "W", "L", "P"];
 const TIERS: TierChip[] = ["ALL", "SNIPER", "EDGE", "RECON"];

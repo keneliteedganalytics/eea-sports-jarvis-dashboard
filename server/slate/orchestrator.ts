@@ -1,4 +1,4 @@
-// Cross-sport slate orchestrator. Runs MLB / NHL / NBA / SOCCER slate services
+// Cross-sport slate orchestrator. Runs MLB / NHL / NBA slate services
 // in parallel via Promise.allSettled so one sport's upstream failure never
 // blanks the whole board — a failed sport returns { picks: [], ok: false, error }.
 
@@ -6,7 +6,6 @@ import { getSlate, getPick } from "../sports/mlb/slate";
 import { DISPLAY_TIMEZONE } from "../utils/timezone";
 import { getNhlSlate, getNhlPick } from "../sports/nhl/slate";
 import { getNbaSlate, getNbaPick } from "../sports/nba/slate";
-import { getSoccerSlate, getSoccerPick } from "../sports/soccer/slate";
 import { BANKROLL_USD, type BuiltPick } from "../sports/mlb/picksEngine";
 import { applyExposureCap } from "../core/sizing";
 import { persistPicks } from "../jobs/persistPicks";
@@ -48,7 +47,6 @@ export interface DailySlate {
     mlb: SportSlate;
     nhl: SportSlate;
     nba: SportSlate;
-    soccer: SportSlate;
   };
 }
 
@@ -82,37 +80,35 @@ export async function getDailySlate(
   dateIso?: string,
   opts: { excludeArchived?: boolean } = {},
 ): Promise<DailySlate> {
-  const [mlbR, nhlR, nbaR, soccerR] = await Promise.allSettled([
+  const [mlbR, nhlR, nbaR] = await Promise.allSettled([
     getSlate(bankroll, dateIso),
     getNhlSlate(bankroll, dateIso),
     getNbaSlate(bankroll, dateIso),
-    getSoccerSlate(bankroll, dateIso),
   ]);
 
   const mlb = settledToSport(mlbR);
   const nhl = settledToSport(nhlR);
   const nba = settledToSport(nbaR);
-  const soccer = settledToSport(soccerR);
 
   // 18% slate-wide exposure cap (SPEC §4): scale every actionable stake by one
   // common factor when the combined board exceeds 18% of bankroll.
-  applySlateExposureCap([mlb, nhl, nba, soccer], bankroll);
+  applySlateExposureCap([mlb, nhl, nba], bankroll);
 
   // Persist actionable picks into the graded book (post-cap sizing) so the
   // live-scoring job can settle them later. Pending rows are refreshed; graded
   // rows are never overwritten.
-  persistPicks([mlb, nhl, nba, soccer].flatMap((s) => s.picks));
+  persistPicks([mlb, nhl, nba].flatMap((s) => s.picks));
 
   // Operating day taken from whichever sport resolved (prefer MLB).
   // Top-level isDemo is true only if every sport is in demo mode (all keys absent).
-  const resolved = [mlbR, nhlR, nbaR, soccerR].find((r) => r.status === "fulfilled") as
+  const resolved = [mlbR, nhlR, nbaR].find((r) => r.status === "fulfilled") as
     | PromiseFulfilledResult<{ operatingDay: string; isDemo: boolean }>
     | undefined;
 
-  const allDemo = [mlb, nhl, nba, soccer].every((s) => s.isDemo ?? false);
+  const allDemo = [mlb, nhl, nba].every((s) => s.isDemo ?? false);
 
   const day = resolved?.value.operatingDay ?? operatingDay();
-  attachGradedStatus([mlb, nhl, nba, soccer], day);
+  attachGradedStatus([mlb, nhl, nba], day);
 
   // Today's Board is in-flight only: drop graded/archived picks so settled bets
   // move to the Archive / Yesterday / Track Record pages instead of cluttering it.
@@ -122,7 +118,6 @@ export async function getDailySlate(
     mlb.picks = excludeArchivedPicks(mlb.picks);
     nhl.picks = excludeArchivedPicks(nhl.picks);
     nba.picks = excludeArchivedPicks(nba.picks);
-    soccer.picks = excludeArchivedPicks(soccer.picks);
   }
 
   // Sizing above used the configured (starting) bankroll; the board surfaces the
@@ -132,7 +127,7 @@ export async function getDailySlate(
     isDemo: allDemo,
     bankroll: getBankrollState().current,
     generatedAt: Date.now(),
-    sports: { mlb, nhl, nba, soccer },
+    sports: { mlb, nhl, nba },
   };
 }
 
@@ -228,13 +223,12 @@ export function excludeArchivedPicks(picks: BuiltPick[]): BuiltPick[] {
 
 // Look up a single pick across all four sports (for /pick/:id detail + briefs).
 export async function getAnyPick(id: string, bankroll = BANKROLL_USD): Promise<BuiltPick | null> {
-  const [mlb, nhl, nba, soccer] = await Promise.allSettled([
+  const [mlb, nhl, nba] = await Promise.allSettled([
     getPick(id, bankroll),
     getNhlPick(id, bankroll),
     getNbaPick(id, bankroll),
-    getSoccerPick(id, bankroll),
   ]);
-  for (const r of [mlb, nhl, nba, soccer]) {
+  for (const r of [mlb, nhl, nba]) {
     if (r.status === "fulfilled" && r.value) return r.value;
   }
   return null;
