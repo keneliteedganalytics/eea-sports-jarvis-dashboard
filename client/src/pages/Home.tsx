@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Info, ExternalLink } from "lucide-react";
 import { PickCard } from "@/components/PickCard";
 import { CompactCard } from "@/components/CompactCard";
-import { fmtMoney } from "@/lib/format";
+import { fmtMoney, fmtLine, fmtUnits, TIER_META } from "@/lib/format";
 import { DISPLAY_TIMEZONE } from "@/lib/timezone";
 import { PropCard } from "@/components/PropCard";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -53,6 +53,97 @@ function cardState(p: BuiltPick): CardState {
   if (p.hardPassReason) return "hard_pass";
   if (QUALIFYING.includes(p.verdictTier)) return "qualifying";
   return "pass";
+}
+
+// v6.11.0: a locked, ungraded bet from /api/bets/live.
+interface LiveBet {
+  pickId: string;
+  gameId: string;
+  sport: string;
+  awayTeam: string;
+  homeTeam: string;
+  commenceTime: string | null;
+  side: string;
+  market: string;
+  lockedTier: Verdict | null;
+  lockedOdds: number | null;
+  lockedStake: number | null;
+  lockedAt: string | null;
+  liveAwayScore: number | null;
+  liveHomeScore: number | null;
+  liveStatusDetail: string | null;
+  edgePp: number | null;
+}
+
+// Short relative age for the LOCKED badge, e.g. "3h ago", "12m ago", "just now".
+function relativeAge(iso: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function LiveBetCard({ bet }: { bet: LiveBet }) {
+  const tierHex = bet.lockedTier ? TIER_META[bet.lockedTier]?.hex ?? "#C9A227" : "#C9A227";
+  const hasScore = bet.liveAwayScore !== null && bet.liveHomeScore !== null;
+  return (
+    <div
+      className="relative flex w-[220px] shrink-0 flex-col gap-2 rounded-xl border border-card-border bg-navy-card p-3"
+      data-testid={`live-bet-${bet.pickId}`}
+    >
+      <span className="absolute right-2 top-2 rounded-full bg-gold/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-gold-light">
+        Locked {relativeAge(bet.lockedAt)}
+      </span>
+      <div className="pr-16 text-[11px] uppercase tracking-wider text-muted-foreground">
+        {bet.awayTeam} @ {bet.homeTeam}
+      </div>
+      <div className="text-center font-mono text-[34px] font-bold leading-none tabular-nums text-silver">
+        {hasScore ? `${bet.liveAwayScore} - ${bet.liveHomeScore}` : "PREGAME"}
+      </div>
+      <div className="text-center text-xs text-muted-foreground">
+        {bet.liveStatusDetail ?? "—"}
+      </div>
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <span
+          className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+          style={{ backgroundColor: `${tierHex}22`, color: tierHex }}
+        >
+          {bet.lockedTier ?? "—"}
+        </span>
+        <span className="font-mono text-xs tabular-nums text-silver">
+          {fmtLine(bet.lockedOdds)} · {fmtUnits(bet.lockedStake ?? 0)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function LiveBetsSection() {
+  const { data } = useQuery<{ bets: LiveBet[] }>({
+    queryKey: ["/api/bets/live"],
+    queryFn: () => fetch("/api/bets/live").then((r) => r.json()),
+    refetchInterval: 30000,
+    refetchOnWindowFocus: false,
+  });
+  const bets = data?.bets ?? [];
+  if (bets.length === 0) return null;
+  return (
+    <div className="space-y-2" data-testid="live-bets-section">
+      <h2 className="text-sm font-bold uppercase tracking-wider text-gold-light">
+        Live Bets
+      </h2>
+      <div className="flex gap-3 overflow-x-auto pb-1 md:grid md:grid-flow-row md:auto-cols-auto md:[grid-template-columns:repeat(auto-fill,minmax(220px,1fr))] md:overflow-visible">
+        {bets.map((bet) => (
+          <LiveBetCard key={bet.pickId} bet={bet} />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function Home() {
@@ -196,6 +287,7 @@ export default function Home() {
 
   return (
     <div className="space-y-5">
+      <LiveBetsSection />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Today's Board</h1>

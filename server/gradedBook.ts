@@ -2570,6 +2570,35 @@ export function confirmBet(id: string): GradedPick | undefined {
   return getPick(id);
 }
 
+// v6.11.0: auto-lock a qualifying pick (SNIPER/EDGE/RECON) the moment it's
+// persisted, snapshotting tier/stake/odds into the immutable locked* columns and
+// flipping lockStatus to 'locked'. PASS picks are never locked. Idempotent: once
+// a row is locked the values are the ledger and we never overwrite them, so a
+// later slate recompute or re-persist leaves the locked snapshot untouched.
+const AUTO_LOCK_TIERS = new Set(["SNIPER", "EDGE", "RECON"]);
+
+export function autoLockPick(id: string): GradedPick | undefined {
+  const db = gradedDb();
+  const row = getRawPick(id);
+  if (!row) return undefined;
+  if (row.locked) return applyLock(row);
+  if (!AUTO_LOCK_TIERS.has(row.tier)) return applyLock(row);
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE picks SET locked=1, lockedAt=@lockedAt,
+       lockedTier=@lockedTier, lockedStake=@lockedStake, lockedOdds=@lockedOdds,
+       lockStatus='locked', updatedAt=@updatedAt WHERE id=@id`,
+  ).run({
+    id,
+    lockedAt: now,
+    lockedTier: row.tier,
+    lockedStake: row.units,
+    lockedOdds: row.postedOddsAmerican ?? row.pickMl,
+    updatedAt: now,
+  });
+  return getPick(id);
+}
+
 export interface PickAuditRow {
   id: number;
   pickId: string;

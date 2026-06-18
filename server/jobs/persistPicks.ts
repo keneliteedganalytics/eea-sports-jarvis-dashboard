@@ -5,7 +5,7 @@
 // pass_reason). PASS rows never settle and never touch bankroll: openPicksForDate
 // filters `units > 0`, so a units-0 PASS row is invisible to live scoring.
 
-import { upsertPick } from "../gradedBook";
+import { upsertPick, autoLockPick, pickId } from "../gradedBook";
 import type { BuiltPick } from "../sports/mlb/picksEngine";
 
 function commonFields(pick: BuiltPick) {
@@ -38,12 +38,17 @@ function commonFields(pick: BuiltPick) {
 
 export function persistPick(pick: BuiltPick): boolean {
   if (!(pick.units > 0) || pick.verdictTier === "PASS") return false;
-  return upsertPick({
+  const wrote = upsertPick({
     ...commonFields(pick),
     tier: pick.verdictTier,
     units: pick.units,
     stakeDollars: pick.kellyStakeDollars,
   });
+  // v6.11.0: freeze qualifying picks into the immutable lock ledger on first
+  // persist. autoLockPick is a no-op once the row is locked, so it never
+  // clobbers a prior snapshot.
+  if (wrote) autoLockPick(pickId(pick.gameId, pick.pickType, pick.pickSide));
+  return wrote;
 }
 
 // Why a game-line pick was passed. A gate-driven PASS carries a hardPassReason /

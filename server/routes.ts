@@ -671,6 +671,52 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(archivedPicks({ sport, result, tier, since, limit, offset }));
   });
 
+  // v6.11.0: live bet ledger — every locked, ungraded pick (a bet the desk has
+  // actually placed), newest lock first. lockStatus/result are the live filter:
+  // locked=1 AND result IS NULL means in-flight; once liveScoring settles a pick
+  // (result set) it drops out of here and surfaces in /api/archive. PASS rows are
+  // never locked, but we exclude tier='PASS' defensively. Returns the frozen
+  // locked* ledger values plus the live in-game score columns.
+  app.get("/api/bets/live", (_req: Request, res: Response) => {
+    try {
+      const rows = gradedDb()
+        .prepare(
+          `SELECT id, gameId, sport, awayTeam, homeTeam, awayTeamFull, homeTeamFull,
+                  matchup, pickSide, pickType, gameStartIso,
+                  lockedTier, lockedOdds, lockedStake, lockedAt,
+                  liveAwayScore, liveHomeScore, liveStatusDetail, edgePp
+             FROM picks
+            WHERE locked = 1 AND result IS NULL AND tier != 'PASS'
+            ORDER BY lockedAt DESC`,
+        )
+        .all() as Array<Record<string, unknown>>;
+      const bets = rows.map((r) => ({
+        pickId: r.id,
+        gameId: r.gameId,
+        sport: r.sport,
+        awayTeam: r.awayTeam,
+        homeTeam: r.homeTeam,
+        awayTeamFull: r.awayTeamFull,
+        homeTeamFull: r.homeTeamFull,
+        commenceTime: r.gameStartIso,
+        side: r.pickSide,
+        market: r.pickType,
+        lockedTier: r.lockedTier,
+        lockedOdds: r.lockedOdds,
+        lockedStake: r.lockedStake,
+        lockedAt: r.lockedAt,
+        liveAwayScore: r.liveAwayScore,
+        liveHomeScore: r.liveHomeScore,
+        liveStatusDetail: r.liveStatusDetail,
+        edgePp: r.edgePp,
+      }));
+      res.json({ bets });
+    } catch {
+      // best-effort; never blow up the page on a transient DB hiccup
+      res.json({ bets: [] });
+    }
+  });
+
   // v6.7.7: the passed-on pile — every evaluated pick (game OR prop) the desk did
   // NOT play (tier='PASS'), across both ledgers, newest-first. ?reason= filters by
   // pass_reason (outlier | model_outlier_v676 | below_threshold | low_data_quality
