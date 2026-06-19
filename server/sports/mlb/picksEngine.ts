@@ -1,7 +1,7 @@
 // Picks engine — ported from sports-engine sports/mlb/picks_engine.py.
 // Confidence (7-component), Kelly sizing, verdict tier, daily 6-pick cap.
 
-import { assignTier, downgradeTier, evaluateHardGates, isChalkierThanSniperCap, chalkCapReason } from "../../core/tier";
+import { assignTier, downgradeTier, evaluateHardGates, isChalkierThanSniperCap, chalkCapReason, HARD_PASS_TRAP_GAP_PP } from "../../core/tier";
 import { convictionUnits, applyJuicePenalty, unitsToStake, computeUnit } from "../../core/sizing";
 import { taperBigDogStake, capEvPer100, pickRankScore } from "../units";
 import { detectPhantomEdge, PHANTOM_NOTE } from "../../core/phantom";
@@ -174,6 +174,11 @@ export interface BuiltPick {
   qualifies: boolean;
   trapSignal: boolean;
   trapGapPp: number | null;
+  // v6.11.1: how the gap-trap resolved for this pick. "clear" = no trap fired;
+  // "pass" = trap fired and MODEL leans the public/rec side (real trap, killed);
+  // "recon_override" = trap fired but MODEL aligns with the sharp side, so the
+  // structural book dispersion was overridden to a 1u RECON flier instead of PASS.
+  gapTrapOutcome: "clear" | "pass" | "recon_override";
   eliteFadeApplied: boolean;
   dataQualityTier: string;
   hardPassReason: string | null;
@@ -425,6 +430,35 @@ export function signalStackUnitsAdjustment(
   if (stackCount === 0) return Math.max(0, baselineUnits - 1); // no corroboration: -1u floor 0
 
   return baselineUnits;
+}
+
+// v6.11.1 — resolve the gap-trap into one of three outcomes. Pure + exported so
+// the decision is unit-testable without driving the whole model.
+//
+// A large public/sharp gap usually means a stale/wrong line (a trap). But it can
+// also be benign structural book dispersion — rec books slow to move while sharp
+// books are already correct. The discriminator is which side MODEL agrees with:
+//   • MODEL closer to the SHARP side  → dispersion is in our favor → "recon_override"
+//     (1u RECON flier instead of a full PASS).
+//   • MODEL closer to the PUBLIC/rec side → real trap shape → "pass" (stay PASS).
+// Pcts are pick-side oriented (0–100); modelProb is the pick-side win prob (0–1).
+// When sharp/public/model data is missing we cannot prove sharp alignment, so we
+// conservatively keep the PASS.
+export function resolveGapTrap(input: {
+  trapFired: boolean;
+  otherGateFired: boolean;
+  modelProb: number | null;
+  sharpPct: number | null;
+  publicPct: number | null;
+}): "clear" | "pass" | "recon_override" {
+  if (!input.trapFired) return "clear";
+  if (input.otherGateFired) return "pass";
+  const { modelProb, sharpPct, publicPct } = input;
+  if (modelProb === null || sharpPct === null || publicPct === null) return "pass";
+  const sharpProb = sharpPct / 100;
+  const publicProb = publicPct / 100;
+  const modelLeansSharp = Math.abs(modelProb - sharpProb) < Math.abs(modelProb - publicProb);
+  return modelLeansSharp ? "recon_override" : "pass";
 }
 
 // Build the ML / spread / total market trio for a card. ML reuses the engine's
@@ -699,6 +733,36 @@ export function buildPick(
   let passReason: string | null = hardGate.fired ? hardGate.reason : null;
 
   let tier = assignTier(tierInput);
+
+  // v6.11.1: sharp-aligned gap-trap override. A large public/sharp gap is usually
+  // a stale/wrong-line trap — but it can also be benign structural book dispersion
+  // (rec books slow to move, sharp books already correct). When the gap-trap is the
+  // ONLY thing killing the pick and MODEL agrees with the sharp side, the dispersion
+  // is in our favor: demote to a 1u RECON flier instead of PASS. If MODEL leans the
+  // public/rec side, it's the real trap shape — keep PASS. (Threshold unchanged.)
+  const trapFired = model.trapSignal === true && (model.trapGapPp ?? 0) > HARD_PASS_TRAP_GAP_PP;
+  // The override can only rescue a trap PASS — never if another hard gate (EV
+  // ceiling / max odds / win-prob floor) independently kills the pick.
+  const otherGateFired = trapFired
+    ? evaluateHardGates({ ...tierInput, trapSignal: false }).fired
+    : false;
+  const gapTrapOutcome = resolveGapTrap({
+    trapFired,
+    otherGateFired,
+    modelProb: pickWp,
+    sharpPct: resolvedSharpPct,
+    publicPct: resolvedPublicPct,
+  });
+  if (gapTrapOutcome === "recon_override") {
+    tier = "RECON";
+    passReason = null;
+    model.modelNotes.push(
+      `v6.11.1 gap-trap overridden — MODEL aligns with sharp side (gap ${(model.trapGapPp ?? 0).toFixed(1)}pp); demoted to RECON flier instead of PASS`,
+    );
+  }
+  // gapTrapOutcome === "pass": tier is already PASS via the trap hard gate and
+  // passReason carries the gap text. "clear": no trap fired — nothing to do.
+
   // v6.8.1: if this pick is chalkier than the SNIPER cap and it landed on PASS,
   // attribute the PASS to the chalk cap (persistPicks maps "chalk" → chalk_cap).
   // A chalk pick that still clears EDGE stays EDGE — no reason override.
@@ -854,7 +918,12 @@ export function buildPick(
     : (model.projAwayScore - model.projHomeScore);
   const projContradictsPick = projDeltaForPickSide < -0.4;
 
-  if (!hardPass && !phantomEdge && projContradictsPick && signalStack.count < 2) {
+  // v6.11.1: a sharp-aligned gap-trap override is a deliberate 1u RECON flier —
+  // the override already weighed MODEL vs sharp, so the projection-contradicts and
+  // stack-no-corroboration guards must not silently re-kill it back to PASS.
+  const reconOverride = gapTrapOutcome === "recon_override";
+
+  if (!hardPass && !phantomEdge && !reconOverride && projContradictsPick && signalStack.count < 2) {
     // MODEL says we win on ML but projected score says opponent wins. Fewer than
     // 2 proximity-qualified signals corroborate. Monte-Carlo variance artifact — force PASS.
     verdictTier = 'PASS';
@@ -867,12 +936,15 @@ export function buildPick(
 
   // v6.10.4: apply signal-stack unit adjustment now that signalStack is computed.
   // hardPass / phantomEdge bypass stack adjustment (already PASS / 0 units).
+  // v6.11.1: a recon_override is pinned to a flat 1u flier (no stack scaling).
   let units = hardPass || phantomEdge
     ? taperedUnits
-    : Math.min(3, Math.max(0, signalStackUnitsAdjustment(taperedUnits, signalStack.count, signalStack.contradicting.length)));
+    : reconOverride
+      ? 1
+      : Math.min(3, Math.max(0, signalStackUnitsAdjustment(taperedUnits, signalStack.count, signalStack.contradicting.length)));
 
   // If stack adjustment dropped units to 0, force PASS.
-  if (units === 0 && taperedUnits > 0 && verdictTier !== 'PASS' && !hardPass && !phantomEdge) {
+  if (units === 0 && taperedUnits > 0 && verdictTier !== 'PASS' && !hardPass && !phantomEdge && !reconOverride) {
     verdictTier = 'PASS';
     tier = 'PASS';
     if (!passReason) passReason = 'stack_no_corroboration';
@@ -946,6 +1018,7 @@ export function buildPick(
     qualifies,
     trapSignal: model.trapSignal,
     trapGapPp: model.trapGapPp,
+    gapTrapOutcome,
     eliteFadeApplied,
     dataQualityTier: model.dataQualityTier,
     hardPassReason,

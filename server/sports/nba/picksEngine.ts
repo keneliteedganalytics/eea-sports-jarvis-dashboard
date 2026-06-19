@@ -232,6 +232,7 @@ export function buildPick(game: NbaGameInput, model: NbaModelResult, bankroll = 
     qualifies,
     trapSignal: false,
     trapGapPp: null,
+    gapTrapOutcome: "clear",
     eliteFadeApplied: false,
     dataQualityTier: model.dataQualityTier,
     hardPassReason,

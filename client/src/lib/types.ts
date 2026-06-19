@@ -90,6 +90,9 @@ export interface BuiltPick {
   qualifies: boolean;
   trapSignal: boolean;
   trapGapPp: number | null;
+  // v6.11.1: "clear" | "pass" | "recon_override" — optional for back-compat with
+  // any cached/older payloads that predate the field.
+  gapTrapOutcome?: "clear" | "pass" | "recon_override";
   eliteFadeApplied: boolean;
   dataQualityTier: string;
   hardPassReason: string | null;

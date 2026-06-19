@@ -220,6 +220,7 @@ export function buildPick(game: NhlGameInput, model: NhlModelResult, bankroll = 
     qualifies,
     trapSignal: false,
     trapGapPp: null,
+    gapTrapOutcome: "clear",
     eliteFadeApplied: false,
     dataQualityTier: model.dataQualityTier,
     hardPassReason,
