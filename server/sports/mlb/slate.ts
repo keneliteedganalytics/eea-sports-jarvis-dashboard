@@ -6,6 +6,8 @@ import { predictGame } from "./model";
 import { buildPick, applyDailyCap, BANKROLL_USD, type BuiltPick, type GameInput } from "./picksEngine";
 import { buildSlate } from "./data";
 import { hasOddsKey } from "../../adapters/oddsApi";
+import { hasWeatherKey } from "../../adapters/openWeather";
+import { hasApiSportsKey } from "../../adapters/apiSports";
 import { getOperatingDay, operatingDayAnchor } from "./operatingDay";
 import { DEMO_GAMES } from "./demoSlate";
 import { umpireAdjustmentForGame, NEUTRAL_UMPIRE, type UmpireAdjustment } from "./umpires";
@@ -155,6 +157,14 @@ async function runEngine(games: GameInput[], bankroll = BANKROLL_USD, dateStr?: 
   return applyDailyCap(picks);
 }
 
+// v6.12.1: which upstream feeds are live for this slate build (key presence).
+export interface SlateFeeds {
+  mlbStats: boolean;
+  oddsApi: boolean;
+  apiSports: boolean;
+  openWeather: boolean;
+}
+
 export interface SlatePayload {
   operatingDay: string;
   isDemo: boolean;
@@ -162,6 +172,18 @@ export interface SlatePayload {
   picks: BuiltPick[];
   // v6.10.1: set when the slate is empty for a diagnosable reason (not just off-day)
   emptyReason?: string;
+  // v6.12.1: live-feed snapshot (observability only).
+  feeds?: SlateFeeds;
+}
+
+// MLB Stats API needs no key (free public API), so it's always considered live.
+function currentFeeds(): SlateFeeds {
+  return {
+    mlbStats: true,
+    oddsApi: hasOddsKey(),
+    apiSports: hasApiSportsKey(),
+    openWeather: hasWeatherKey(),
+  };
 }
 
 export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<SlatePayload> {
@@ -169,12 +191,12 @@ export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promi
   if (hasOddsKey()) {
     const { operatingDay, games, emptyReason } = await buildSlate(now);
     if (games.length > 0) {
-      return { operatingDay, isDemo: false, bankroll, picks: await runEngine(games, bankroll, operatingDay) };
+      return { operatingDay, isDemo: false, bankroll, picks: await runEngine(games, bankroll, operatingDay), feeds: currentFeeds() };
     }
     // Odds key is present but no games found (e.g. future date / off-day, or
     // the-odds-api hasn't posted lines yet). Return the emptyReason so the client
     // can render an informative empty-state instead of a blank slate.
-    return { operatingDay, isDemo: false, bankroll, picks: [], emptyReason };
+    return { operatingDay, isDemo: false, bankroll, picks: [], emptyReason, feeds: currentFeeds() };
   }
   // Fallback: deterministic demo slate (no Odds key configured).
   const opDay = getOperatingDay(now);
@@ -183,6 +205,7 @@ export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promi
     isDemo: true,
     bankroll,
     picks: await runEngine(DEMO_GAMES(opDay), bankroll, opDay),
+    feeds: currentFeeds(),
   };
 }
 

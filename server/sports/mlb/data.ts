@@ -17,6 +17,74 @@ import type { TeamOffense } from "./ratings";
 import { getPitcherSabermetrics } from "./pitcherSabermetrics";
 import { getTeamOffenseSaber } from "./teamOffenseSaber";
 import { getHandednessSplit } from "./handednessSplits";
+import {
+  hasApiSportsKey,
+  fetchTeamStatistics as fetchApiSportsTeamStats,
+  resolveTeamId as resolveApiSportsTeamId,
+  fetchGamesByDate as fetchApiSportsGames,
+} from "../../adapters/apiSports";
+import type { ApiSportsXcheck } from "./picksEngine";
+
+// v6.12.1: additive RPG sanity threshold — two feeds within 0.30 RPG agree.
+export const API_SPORTS_RPG_ALIGN_THRESHOLD = 0.3;
+
+// Pure: classify two-feed agreement from a pair of (apiSports, mlbStats) RPGs.
+// Observability only — never feeds the model. 'no-data' when either side lacks
+// a usable api-sports number.
+export function computeXcheckAgreement(
+  homeApi: number | null,
+  homeMlb: number | null,
+  awayApi: number | null,
+  awayMlb: number | null,
+): ApiSportsXcheck {
+  const delta = (api: number | null, mlb: number | null): number | null =>
+    api !== null && mlb !== null ? Math.abs(api - mlb) : null;
+  const homeDelta = delta(homeApi, homeMlb);
+  const awayDelta = delta(awayApi, awayMlb);
+
+  let agreement: ApiSportsXcheck["agreement"];
+  if (homeDelta === null && awayDelta === null) {
+    agreement = "no-data";
+  } else {
+    const deltas = [homeDelta, awayDelta].filter((d): d is number => d !== null);
+    agreement = deltas.every((d) => d <= API_SPORTS_RPG_ALIGN_THRESHOLD)
+      ? "aligned"
+      : "divergent";
+  }
+  return {
+    home: { rpgApiSports: homeApi, deltaVsMlbStats: homeDelta },
+    away: { rpgApiSports: awayApi, deltaVsMlbStats: awayDelta },
+    agreement,
+  };
+}
+
+// Best-effort per-game api-sports RPG cross-check. Resolves both teams' ids and
+// pulls their season RPG, comparing to the MLB Stats numbers already in hand.
+// Any failure degrades to 'no-data' — the slate is never blocked.
+async function apiSportsGameXcheck(
+  homeTeamFull: string,
+  awayTeamFull: string,
+  homeMlbRpg: number | null,
+  awayMlbRpg: number | null,
+  season: number,
+): Promise<ApiSportsXcheck | null> {
+  if (!hasApiSportsKey()) return null;
+  try {
+    const [homeId, awayId] = await Promise.all([
+      resolveApiSportsTeamId(homeTeamFull, season).catch(() => null),
+      resolveApiSportsTeamId(awayTeamFull, season).catch(() => null),
+    ]);
+    const [homeStats, awayStats] = await Promise.all([
+      fetchApiSportsTeamStats(homeId, season).catch(() => ({ available: false }) as Awaited<ReturnType<typeof fetchApiSportsTeamStats>>),
+      fetchApiSportsTeamStats(awayId, season).catch(() => ({ available: false }) as Awaited<ReturnType<typeof fetchApiSportsTeamStats>>),
+    ]);
+    const homeApi = homeStats.available ? (homeStats.rpg ?? null) : null;
+    const awayApi = awayStats.available ? (awayStats.rpg ?? null) : null;
+    return computeXcheckAgreement(homeApi, homeMlbRpg, awayApi, awayMlbRpg);
+  } catch {
+    return computeXcheckAgreement(null, homeMlbRpg, null, awayMlbRpg);
+  }
+}
 
 // Translate an OddsEvent's BookPrice[] into the Bookmaker[] shape that the
 // consensus/best-price helpers expect (h2h market keyed by full team name).
@@ -75,6 +143,21 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
   }
   if (inWindow.length === 0) return { operatingDay: opDay, games: [] };
 
+  // v6.12.1: additive schedule cross-check — one call per slate refresh, only
+  // when the api-sports key is present. Logs a warning if the game count drifts
+  // from MLB Stats by more than 1. Never affects which games are built.
+  if (hasApiSportsKey()) {
+    fetchApiSportsGames(opDay)
+      .then((r) => {
+        if (r.available && Math.abs(r.games.length - schedule.length) > 1) {
+          console.warn(
+            `[api-sports xcheck] schedule count drift for ${opDay}: api-sports=${r.games.length} vs mlbStats=${schedule.length}`,
+          );
+        }
+      })
+      .catch(() => {});
+  }
+
   const games: GameInput[] = [];
   for (const ev of inWindow) {
     const bms = toBookmakers(ev);
@@ -118,6 +201,16 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
     ]);
     const homeSp: PitcherStats = withClassification(h);
     const awaySp: PitcherStats = withClassification(a);
+
+    // v6.12.1: additive RPG cross-check vs the MLB Stats numbers just fetched.
+    // Observability only — never blocks the slate, never feeds the model.
+    const apiSportsXcheck = await apiSportsGameXcheck(
+      ev.homeTeamFull,
+      ev.awayTeamFull,
+      homeOff.available ? (homeOff.rpg ?? null) : null,
+      awayOff.available ? (awayOff.rpg ?? null) : null,
+      year,
+    );
 
     // Public / sharp consensus from raw bookmaker data
     const { publicPct, sharpPct } = computePublicSharp(
@@ -178,6 +271,7 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       _homeHandedness: homeHandedness,
       _awayHandedness: awayHandedness,
       pitchersAnnounced,
+      _apiSportsXcheck: apiSportsXcheck,
     });
   }
 

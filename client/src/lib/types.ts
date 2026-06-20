@@ -93,6 +93,8 @@ export interface BuiltPick {
   // v6.11.1: "clear" | "pass" | "recon_override" — optional for back-compat with
   // any cached/older payloads that predate the field.
   gapTrapOutcome?: "clear" | "pass" | "recon_override";
+  // v6.12.1: per-game data-feed cross-check status (observability only).
+  dataFeeds?: { apiSportsXcheck: "aligned" | "divergent" | "no-data" } | null;
   eliteFadeApplied: boolean;
   dataQualityTier: string;
   hardPassReason: string | null;
@@ -192,6 +194,13 @@ export interface SlatePayload {
   bankroll: number;
   picks: BuiltPick[];
   emptyReason?: string;
+  // v6.12.1: live-feed snapshot (observability only).
+  feeds?: {
+    mlbStats: boolean;
+    oddsApi: boolean;
+    apiSports: boolean;
+    openWeather: boolean;
+  };
 }
 
 export interface SportSlate {

@@ -112,6 +112,17 @@ export interface GameInput {
   // v6.10.1: false when MLB Stats API hasn't published probable starters yet.
   // Game is still built and surfaced, but auto-tiered PASS with a "Awaiting starters" badge.
   pitchersAnnounced?: boolean;
+  // v6.12.1: additive api-sports.io RPG cross-check (observability only, never
+  // feeds the model). 'no-data' when the feed is off/unavailable.
+  _apiSportsXcheck?: ApiSportsXcheck | null;
+}
+
+// v6.12.1: api-sports.io vs MLB Stats RPG sanity check. Aligned when both feeds
+// land within 0.30 RPG of each other; divergent when farther apart.
+export interface ApiSportsXcheck {
+  home: { rpgApiSports: number | null; deltaVsMlbStats: number | null };
+  away: { rpgApiSports: number | null; deltaVsMlbStats: number | null };
+  agreement: "aligned" | "divergent" | "no-data";
 }
 
 // CLV payload sent to the client. null on the BuiltPick until the lock worker
@@ -277,6 +288,9 @@ export interface BuiltPick {
     oppSideWRCplus: number | null;
     handednessAdvantage: 'pick' | 'opp' | 'neutral';
   } | null;
+  // v6.12.1: per-game data-feed cross-check status (observability only). Carries
+  // the additive api-sports.io RPG agreement for this game.
+  dataFeeds?: { apiSportsXcheck: "aligned" | "divergent" | "no-data" } | null;
 }
 
 // 7-component confidence with elite-fade & sparse penalties (MLB variant).
@@ -1069,6 +1083,8 @@ export function buildPick(
     signalStack,
     pitcherEdge: pitcherEdgePayload,
     offenseEdge: offenseEdgePayload,
+    // v6.12.1: additive api-sports.io RPG cross-check status (observability only).
+    dataFeeds: { apiSportsXcheck: game._apiSportsXcheck?.agreement ?? "no-data" },
   };
 }
 
