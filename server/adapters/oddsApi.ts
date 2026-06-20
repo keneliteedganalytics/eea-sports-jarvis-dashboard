@@ -67,6 +67,10 @@ interface RawOutcome {
   // The Odds API DraftKings-specific fields (not always present)
   sid?: string;
   link?: string;
+  // Fix 4: premium-tier betting-percentage and handle fields.
+  // Present only when ODDS_API_HANDLE_ENABLED=true and the plan exposes them.
+  bet_pct?: number | null;
+  handle_pct?: number | null;
 }
 interface RawMarket {
   key: string;
