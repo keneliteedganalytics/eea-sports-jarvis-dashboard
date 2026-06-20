@@ -98,6 +98,17 @@ export interface GameInput {
   _awayOffenseSaber?: import('./teamOffenseSaber').TeamOffenseSaber | null;
   _homeHandedness?: import('./handednessSplits').HandednessSplit | null;
   _awayHandedness?: import('./handednessSplits').HandednessSplit | null;
+  // v6.12: advanced pillars — pre-fetched by slate.ts runEngine, all optional/null-safe
+  _homeSpRecentForm?: import('../../sources/recentForm').PitcherRecentForm | null;
+  _awaySpRecentForm?: import('../../sources/recentForm').PitcherRecentForm | null;
+  _homeTopBattersRecentForm?: import('../../sources/recentForm').HitterRecentForm | null;
+  _awayTopBattersRecentForm?: import('../../sources/recentForm').HitterRecentForm | null;
+  _homeInjuries?: import('../../sources/injuries').InjuryAssessment | null;
+  _awayInjuries?: import('../../sources/injuries').InjuryAssessment | null;
+  _homePitchMix?: number | null;   // home hitter vs away SP pitch-mix delta (dampened)
+  _awayPitchMix?: number | null;   // away hitter vs home SP pitch-mix delta (dampened)
+  _homeBpFatigue?: number | null;  // home bullpen fatigue 0..1
+  _awayBpFatigue?: number | null;  // away bullpen fatigue 0..1
   // v6.10.1: false when MLB Stats API hasn't published probable starters yet.
   // Game is still built and surfaced, but auto-tiered PASS with a "Awaiting starters" badge.
   pitchersAnnounced?: boolean;
