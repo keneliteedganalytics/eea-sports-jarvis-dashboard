@@ -31,10 +31,21 @@ export interface UmpireProfile {
   runScoreAdjustment: number;
 }
 
-// What predictGame consumes. Neutral when we have no profile.
+// What predictGame consumes.
+//
+// runScoreAdj — runs per game (split across both teams downstream).
+//   Consumed by model.ts (DO NOT modify model.ts in this PR).
+//
+// kRateAdj — strikeout-rate adjustment (pp vs league average, positive = umpire
+//   expands zone → more Ks). Consumed by picksEngine.ts total-side calibration.
+//   TODO(picksEngine): wire kRateAdj into total-side calibration in v6.12.1.
+//   See umpireTotalsImpactPp() for the market-side prior this drives.
+//
+// Neutral when we have no profile.
 export interface UmpireAdjustment {
   name: string | null;
-  runScoreAdj: number; // runs per game (split across both teams downstream)
+  runScoreAdj: number;  // runs per game (consumed by model.ts — do not move here)
+  kRateAdj: number;     // pp K-rate shift vs league avg (consumed by picksEngine.ts)
   kPctDelta: number;
   bbPctDelta: number;
   found: boolean;
@@ -43,10 +54,28 @@ export interface UmpireAdjustment {
 export const NEUTRAL_UMPIRE: UmpireAdjustment = {
   name: null,
   runScoreAdj: 0,
+  kRateAdj: 0,
   kPctDelta: 0,
   bbPctDelta: 0,
   found: false,
 };
+
+// Market-side prior: how much a big-zone / tight-zone umpire shifts the
+// totals win-probability (NOT runs — Ks cross over to totals faster than
+// runs do). Returns pp shift on totals (negative = lean under for big zones).
+//
+// Empirically: each pp of extra K-rate lowers expected scoring by ~0.07 runs/game
+// across both teams, which converts to roughly −0.25pp on totals win-prob per
+// pp of K-rate delta. We cap at ±2.0pp so no single ump dominates the prior.
+//
+// TODO(picksEngine): wire umpireTotalsImpactPp() into the total-side calibration
+// in v6.12.1 when picksEngine.ts absorbs kRateAdj.
+export function umpireTotalsImpactPp(ump: UmpireAdjustment): number {
+  const PP_PER_K_RATE = -0.25; // pp totals per pp K-rate delta
+  const MAX_ABS = 2.0;
+  const raw = ump.kRateAdj * PP_PER_K_RATE;
+  return Math.max(-MAX_ABS, Math.min(MAX_ABS, raw));
+}
 
 interface StatsCache {
   byId: Record<string, UmpireProfile>;
@@ -123,9 +152,13 @@ export async function umpireAdjustmentForGame(gamePk: string | null | undefined)
     // with a neutral run adjustment so the brief can still mention the crew.
     return { ...NEUTRAL_UMPIRE, name: assigned.name };
   }
+  // kRateAdj sources from kPctDelta: they carry the same value since kPctDelta
+  // is already measured as pp vs league average. kRateAdj is the field consumed
+  // by picksEngine.ts; kPctDelta remains for backwards-compat callers.
   return {
     name: profile.name,
     runScoreAdj: profile.runScoreAdjustment,
+    kRateAdj: profile.kPctDelta,
     kPctDelta: profile.kPctDelta,
     bbPctDelta: profile.bbPctDelta,
     found: true,

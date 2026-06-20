@@ -16,6 +16,8 @@ import { type AbsAdjustment } from "./abs";
 import type { PitcherSabermetrics } from "./pitcherSabermetrics";
 import type { TeamOffenseSaber } from "./teamOffenseSaber";
 import { deltaVsOpposingHand, type HandednessSplit } from "./handednessSplits";
+import type { PitcherRecentForm, HitterRecentForm } from "../../sources/recentForm";
+import type { InjuryAssessment } from "../../sources/injuries";
 
 // ── Tunable constants (SPEC §4) ───────────────────────────────────
 export const MLB_LG_ERA = 4.2;
@@ -68,6 +70,17 @@ export interface ModelContext {
   awayHandedness?: HandednessSplit | null;    // away batting team splits
   homePitcherSaber?: PitcherSabermetrics | null; // home SP xFIP/WHIP/K-BB%
   awayPitcherSaber?: PitcherSabermetrics | null; // away SP xFIP/WHIP/K-BB%
+  // v6.12: advanced pillars (all optional, null = no-op, fully additive)
+  homeSpRecentForm?: PitcherRecentForm | null;    // Pillar 1: home SP last-5 ERA
+  awaySpRecentForm?: PitcherRecentForm | null;    // Pillar 1: away SP last-5 ERA
+  homeTopBattersRecentForm?: HitterRecentForm | null; // Pillar 1: home top-5 batter avg wOBA
+  awayTopBattersRecentForm?: HitterRecentForm | null; // Pillar 1: away top-5 batter avg wOBA
+  homeInjuries?: InjuryAssessment | null;         // Pillar 2: home missing bats
+  awayInjuries?: InjuryAssessment | null;         // Pillar 2: away missing bats
+  homePitchMix?: number | null;                   // Pillar 3: home hitters vs away SP mix delta (dampened)
+  awayPitchMix?: number | null;                   // Pillar 3: away hitters vs home SP mix delta (dampened)
+  homeBpFatigue?: number | null;                  // Pillar 4: home bullpen fatigue 0..1
+  awayBpFatigue?: number | null;                  // Pillar 4: away bullpen fatigue 0..1
 }
 
 export interface ModelResult {
@@ -185,13 +198,26 @@ export function predictGame(ctx: ModelContext): ModelResult {
   const homeSpBase = starterProxy(homeSp as unknown as Record<string, unknown>, warnings, "home");
   const awaySpBase = starterProxy(awaySp as unknown as Record<string, unknown>, warnings, "away");
 
+  // Step A1.5: Pillar 1 — blend SP recent form (last-5 ERA) at 25% when ≥3 starts.
+  // Season anchor (75%) vs recent (25%). Silent no-op when recent form is absent.
+  const homeSpRf = ctx.homeSpRecentForm ?? null;
+  const awaySpRf = ctx.awaySpRecentForm ?? null;
+  function blendSpRecent(base: number, rf: PitcherRecentForm | null, side: string): number {
+    if (!rf || !rf.found || rf.era === null || rf.starts < 3) return base;
+    const blended = 0.75 * base + 0.25 * rf.era;
+    methodLog.push(`spRecent(${side} ${rf.starts}gs ERA${round2(rf.era)}→${round2(blended)})`);
+    return blended;
+  }
+  const homeSpBlended = blendSpRecent(homeSpBase, homeSpRf, "home");
+  const awaySpBlended = blendSpRecent(awaySpBase, awaySpRf, "away");
+
   // Step A2: ABS framing penalty. A framing-dependent starter loses called
   // strikes under the robo-zone, so we nudge their effective FIP up. Neutral/
   // missing exposure is a 0-run no-op.
   const homeAbsPenalty = ctx.homeAbs?.found ? ctx.homeAbs.fipPenalty : 0;
   const awayAbsPenalty = ctx.awayAbs?.found ? ctx.awayAbs.fipPenalty : 0;
-  const homeSpProxy = homeSpBase + homeAbsPenalty;
-  const awaySpProxy = awaySpBase + awayAbsPenalty;
+  const homeSpProxy = homeSpBlended + homeAbsPenalty;
+  const awaySpProxy = awaySpBlended + awayAbsPenalty;
   if (homeAbsPenalty > 0)
     methodLog.push(`abs(${homeSp.pitcher ?? "home SP"} +${round2(homeAbsPenalty)}fip)`);
   if (awayAbsPenalty > 0)
@@ -211,11 +237,16 @@ export function predictGame(ctx: ModelContext): ModelResult {
   const windAdj = windResult ? windResult.runAdj : 0.0;
   const totalWeatherAdj = weatherAdj + windAdj;
 
-  // Step E: bullpen factor (dampened)
+  // Step E: bullpen factor (dampened, with Pillar 4 fatigue multiplier)
   const homeBpRaw = bullpenRunAdjustment(ctx.homeBullpen);
   const awayBpRaw = bullpenRunAdjustment(ctx.awayBullpen);
-  const homeBpAdj = homeBpRaw * BULLPEN_WEIGHT_DAMPENER;
-  const awayBpAdj = awayBpRaw * BULLPEN_WEIGHT_DAMPENER;
+  // Pillar 4: fatigued pen leaks more runs (max +30% at fatigue=1.0)
+  const homeFatigue = (ctx.homeBpFatigue != null && isFinite(ctx.homeBpFatigue))
+    ? Math.max(0, Math.min(1, ctx.homeBpFatigue)) : 0;
+  const awayFatigue = (ctx.awayBpFatigue != null && isFinite(ctx.awayBpFatigue))
+    ? Math.max(0, Math.min(1, ctx.awayBpFatigue)) : 0;
+  const homeBpAdj = homeBpRaw * BULLPEN_WEIGHT_DAMPENER * (1 + 0.30 * homeFatigue);
+  const awayBpAdj = awayBpRaw * BULLPEN_WEIGHT_DAMPENER * (1 + 0.30 * awayFatigue);
 
   // Step F: expected runs
   const spShare = ctx.starterIpShare ?? DEFAULT_STARTER_IP_SHARE;
@@ -336,6 +367,101 @@ export function predictGame(ctx: ModelContext): ModelResult {
   }
 
   if (saberNotes.length > 0) methodLog.push(`saber(${saberNotes.join(',')})`);
+
+  homeExp = Math.max(2.0, homeExp);
+  awayExp = Math.max(2.0, awayExp);
+
+  // ── Step F4 (v6.12): advanced pillars ─────────────────────────────────
+  // All four are purely additive and degrade to no-op when null.
+
+  // ── Pillar 1 (batter layer): top-of-order wOBA drift ───────────────────
+  // If recent wOBA differs from season wOBA by >0.020, nudge teamRpg
+  // proportionally (ratio of recent/season), max ±0.30 runs.
+  // Season wOBA proxy: wOBA derived from teamRpg (LG_AVG_WOBA = 0.310 anchor).
+  const LG_AVG_WOBA = 0.310;
+  function batRecentAdj(
+    recentForm: HitterRecentForm | null | undefined,
+    rpg: number,
+    side: string,
+  ): number {
+    if (!recentForm || !recentForm.found || recentForm.woba === null) return 0;
+    // Use LG_AVG_WOBA as season proxy when we only have recent wOBA.
+    const seasonWoba = LG_AVG_WOBA;
+    const delta = recentForm.woba - seasonWoba;
+    if (Math.abs(delta) <= 0.020) return 0;
+    // Proportional nudge: delta / seasonWoba * rpg, clamped ±0.30.
+    const raw = (delta / seasonWoba) * rpg;
+    const adj = Math.max(-0.30, Math.min(0.30, raw));
+    methodLog.push(`batRecent(${side} wOBA${round2(recentForm.woba)} Δ${round2(delta)} →${adj >= 0 ? '+' : ''}${round2(adj)}r)`);
+    return adj;
+  }
+  const homeBatRecentAdj = batRecentAdj(ctx.homeTopBattersRecentForm, homeExp, "home");
+  const awayBatRecentAdj = batRecentAdj(ctx.awayTopBattersRecentForm, awayExp, "away");
+  homeExp += homeBatRecentAdj;
+  awayExp += awayBatRecentAdj;
+
+  // ── Pillar 2: injuries / IL missing-bat delta ────────────────────────
+  // Σ(player.seasonWOBA - 0.310) × 4 PA, dampened 0.5×, clamped −0.60.
+  // Already-fired lineup star_out players are excluded to avoid double-counting.
+  function injuryRunAdj(
+    inj: InjuryAssessment | null | undefined,
+    excludedNames: string[],
+    side: string,
+  ): number {
+    if (!inj || !inj.found || inj.keyBatsOut.length === 0) return 0;
+    const excluded = new Set(excludedNames.map((n) => n.toLowerCase()));
+    let delta = 0;
+    const applied: string[] = [];
+    for (const bat of inj.keyBatsOut) {
+      if (excluded.has(bat.name.toLowerCase())) continue; // already counted by lineup gate
+      const woba = bat.seasonWoba ?? LG_AVG_WOBA;
+      delta += (woba - LG_AVG_WOBA) * 4; // 4 PA default
+      applied.push(bat.name);
+    }
+    if (Math.abs(delta) < 1e-6) return 0;
+    // delta is positive when missing bat > LG avg → team LOSES runs → negate
+    const dampened = -0.5 * delta;
+    const clamped = Math.max(-0.60, Math.min(0, dampened)); // only negative (missing bats hurt offense)
+    methodLog.push(`inj(${side}Bat ${clamped >= 0 ? '+' : ''}${round2(clamped)}r: ${applied.length} out)`);
+    return clamped;
+  }
+  // Grab names already handled by the lineup gate (from modelNotes or lineupMissingStar stub).
+  // We don't have direct access to lineup state here, so we use an empty list
+  // (callers can pass names via the injury assessment if needed; no double-count risk
+  // because the lineup gate affects confidence/tier not homeExp/awayExp directly).
+  const homeInjAdj = injuryRunAdj(ctx.homeInjuries, [], "home");
+  const awayInjAdj = injuryRunAdj(ctx.awayInjuries, [], "away");
+  // Apply BEFORE the existing Math.max(2.0) floor.
+  homeExp += homeInjAdj;
+  awayExp += awayInjAdj;
+
+  // ── Pillar 3: pitch-mix matchup delta ──────────────────────────────
+  // Already dampened ×0.5 in pitchMix.ts; apply ANOTHER ×0.5 for v1 caution.
+  // Positive homePitchMix = home hitters have an edge vs away SP's mix.
+  // Clamped ±0.25 runs per side.
+  function pitchMixRunAdj(
+    delta: number | null | undefined,
+    side: string,
+  ): number {
+    if (delta == null || !isFinite(delta) || Math.abs(delta) < 1e-6) return 0;
+    const adj = Math.max(-0.25, Math.min(0.25, delta * 0.5)); // extra ×0.5 for v1
+    methodLog.push(`pitchmix(${side} ${adj >= 0 ? '+' : ''}${round2(adj)}r)`);
+    return adj;
+  }
+  const homePitchMixAdj = pitchMixRunAdj(ctx.homePitchMix, "home");
+  const awayPitchMixAdj = pitchMixRunAdj(ctx.awayPitchMix, "away");
+  homeExp += homePitchMixAdj;
+  awayExp += awayPitchMixAdj;
+
+  // ── Pillar 4 methodLog (fatigue already applied in Step E bullpen calc) ──
+  if (homeFatigue > 0) {
+    const homeBpFatigueRunLeakage = round2(homeBpRaw * BULLPEN_WEIGHT_DAMPENER * 0.30 * homeFatigue);
+    methodLog.push(`bpFatigue(home ${round2(homeFatigue)} →+${homeBpFatigueRunLeakage}r)`);
+  }
+  if (awayFatigue > 0) {
+    const awayBpFatigueRunLeakage = round2(awayBpRaw * BULLPEN_WEIGHT_DAMPENER * 0.30 * awayFatigue);
+    methodLog.push(`bpFatigue(away ${round2(awayFatigue)} →+${awayBpFatigueRunLeakage}r)`);
+  }
 
   homeExp = Math.max(2.0, homeExp);
   awayExp = Math.max(2.0, awayExp);

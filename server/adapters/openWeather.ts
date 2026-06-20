@@ -13,10 +13,16 @@ export function hasWeatherKey(): boolean {
 
 interface RawWeather {
   main?: { temp?: number; humidity?: number };
-  wind?: { speed?: number };
+  wind?: {
+    speed?: number;
+    deg?: number;   // compass bearing wind is blowing FROM (0=N, 90=E)
+  };
 }
 
 // Fetch current conditions for a ballpark. `lat`/`lon` are the stadium coords.
+// OpenWeather returns wind.deg as the direction wind is coming FROM (meteorological
+// convention). We convert to "blowing TO" by adding 180° mod 360 so that
+// windDirectionRunAdjust() can compare it directly to PARK_ORIENTATIONS.
 export async function fetchWeather(lat: number, lon: number): Promise<WeatherRefined | null> {
   if (!hasWeatherKey()) return null;
 
@@ -28,9 +34,17 @@ export async function fetchWeather(lat: number, lon: number): Promise<WeatherRef
   });
   if (!res.ok || !res.data) return null;
 
+  // wind.deg is "coming from" bearing; convert to "blowing to" for park math.
+  const windFromDeg = res.data.wind?.deg;
+  const windBearingDeg =
+    windFromDeg !== null && windFromDeg !== undefined
+      ? (windFromDeg + 180) % 360
+      : null;
+
   return {
     tempF: res.data.main?.temp ?? null,
     humidity: res.data.main?.humidity ?? null,
     windMph: res.data.wind?.speed ?? null,
+    windBearingDeg,
   };
 }

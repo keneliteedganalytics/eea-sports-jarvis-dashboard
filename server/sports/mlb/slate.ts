@@ -11,6 +11,20 @@ import { DEMO_GAMES } from "./demoSlate";
 import { umpireAdjustmentForGame, NEUTRAL_UMPIRE, type UmpireAdjustment } from "./umpires";
 import { absAdjustmentForPitcher, NEUTRAL_ABS, type AbsAdjustment } from "./abs";
 import { fetchLineups, lineupStatusForSide, PENDING_LINEUP, type LineupResult } from "./lineups";
+// v6.12: advanced pillars — fetched in parallel, all degrade to null on failure
+import {
+  pitcherRecentForm,
+  type HitterRecentForm,
+} from "../../sources/recentForm";
+import {
+  isKeyBatOut,
+} from "../../sources/injuries";
+import {
+  fetchPitcherArsenals,
+} from "../../sources/pitchMix";
+import {
+  bullpenLoadForTeam,
+} from "../../sources/bullpenLoad";
 
 interface PitcherLike {
   pitcher?: string;
@@ -32,15 +46,53 @@ async function runEngine(games: GameInput[], bankroll = BANKROLL_USD, dateStr?: 
     ? await fetchLineups(dateStr).catch(() => ({}))
     : {};
 
+  // v6.12: pre-fetch pitcher arsenals once (shared across all games this slate).
+  // Failure degrades to an empty map — pitch-mix adjustments become no-ops.
+  const arsenals = await fetchPitcherArsenals().catch(() => new Map());
+  void arsenals; // reserved for future per-player pitch-mix expansion
+
   // Best-effort external lookups in parallel; any failure degrades to neutral so
   // the slate is never blocked.
   const enrichments = await Promise.all(
     games.map(async (g) => {
-      const [umpire, homeAbs, awayAbs] = await Promise.all([
+      // Grab pitcher IDs from stats objects for recent-form lookups.
+      const homeSp = g.homeSpStats as Record<string, unknown> | undefined;
+      const awaySp = g.awaySpStats as Record<string, unknown> | undefined;
+      const homeSpId = (homeSp?.pitcherId as number | null) ?? null;
+      const awaySpId = (awaySp?.pitcherId as number | null) ?? null;
+
+      // v6.12: fetch all four advanced pillars in parallel, each .catch(() => null)
+      // so any single failure degrades to a no-op.
+      const [
+        umpire, homeAbs, awayAbs,
+        homeSpRf, awaySpRf,
+        homeInj, awayInj,
+        homeBpLoad, awayBpLoad,
+      ] = await Promise.all([
         umpireAdjustmentForGame(g.gamePk).catch(() => NEUTRAL_UMPIRE),
         safeAbs(g.homeSpStats as PitcherLike | undefined),
         safeAbs(g.awaySpStats as PitcherLike | undefined),
+        // Pillar 1a: SP recent form (last-5 starts ERA)
+        pitcherRecentForm(homeSpId, (homeSp?.pitcher as string) ?? "").catch(() => null),
+        pitcherRecentForm(awaySpId, (awaySp?.pitcher as string) ?? "").catch(() => null),
+        // Pillar 2: injuries (no bats roster wired yet — degrades to NEUTRAL)
+        isKeyBatOut(null, g.gamePk ?? null, "home", []).catch(() => null),
+        isKeyBatOut(null, g.gamePk ?? null, "away", []).catch(() => null),
+        // Pillar 4: bullpen fatigue (teamId not yet in GameInput — degrades to null)
+        bullpenLoadForTeam(null).catch(() => null),
+        bullpenLoadForTeam(null).catch(() => null),
       ]);
+
+      // Pillar 1b: top-of-order batter recent form — hitterRecentForm needs playerIds;
+      // without a roster feed we pass null (no-op). Future: wire via data.ts.
+      const homeTopBattersRf: HitterRecentForm | null = null;
+      const awayTopBattersRf: HitterRecentForm | null = null;
+
+      // Pillar 3: pitch-mix matchup delta — requires per-player Savant pitch-value
+      // data not yet in GameInput. Passes null (no-op). Future: wire via data.ts.
+      const homePitchMix: number | null = null;
+      const awayPitchMix: number | null = null;
+
       // Star lists are not yet wired (needs per-player wRC+); with none supplied
       // lineupStatusForSide reports confirmed/pending only — a no-op for sizing.
       const posted = g.gamePk ? lineups[String(g.gamePk)] : undefined;
@@ -50,9 +102,18 @@ async function runEngine(games: GameInput[], bankroll = BANKROLL_USD, dateStr?: 
       const awayLineup: LineupResult = posted
         ? lineupStatusForSide(posted.away, [])
         : PENDING_LINEUP;
-      return { umpire, homeAbs, awayAbs, homeLineup, awayLineup };
+
+      return {
+        umpire, homeAbs, awayAbs, homeLineup, awayLineup,
+        homeSpRf, awaySpRf,
+        homeTopBattersRf, awayTopBattersRf,
+        homeInj, awayInj,
+        homePitchMix, awayPitchMix,
+        homeBpLoad, awayBpLoad,
+      };
     }),
   );
+
   const picks = games.map((g, i) => {
     const e = enrichments[i];
     const model = predictGame({
@@ -77,6 +138,17 @@ async function runEngine(games: GameInput[], bankroll = BANKROLL_USD, dateStr?: 
       awayOffenseSaber: g._awayOffenseSaber ?? null,
       homeHandedness: g._homeHandedness ?? null,
       awayHandedness: g._awayHandedness ?? null,
+      // v6.12: advanced pillars (all optional, null = no-op)
+      homeSpRecentForm: e.homeSpRf ?? null,
+      awaySpRecentForm: e.awaySpRf ?? null,
+      homeTopBattersRecentForm: e.homeTopBattersRf ?? null,
+      awayTopBattersRecentForm: e.awayTopBattersRf ?? null,
+      homeInjuries: e.homeInj ?? null,
+      awayInjuries: e.awayInj ?? null,
+      homePitchMix: e.homePitchMix ?? null,
+      awayPitchMix: e.awayPitchMix ?? null,
+      homeBpFatigue: e.homeBpLoad?.fatigue ?? null,
+      awayBpFatigue: e.awayBpLoad?.fatigue ?? null,
     });
     return buildPick({ ...g, _lineupHome: e.homeLineup, _lineupAway: e.awayLineup }, model, bankroll);
   });
