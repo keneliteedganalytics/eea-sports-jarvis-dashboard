@@ -76,7 +76,7 @@ export function computeFadeFlag(
 }
 
 // ── Rule 2: Statcast contact-quality composite ───────────────────────────
-// score = 50 + 200*(xBA-.240) + 5*(barrel-7.0) + 2.5*(sweetSpot-33.3). Lower is
+// score = 50 + 200*(xBA-.240) + 10*(barrel-7.0) + 2.5*(sweetSpot-33.3). Lower is
 // better (elite suppressor). <35 elite → -0.15 runs/9; 35..65 neutral → 0;
 // >65 weak → +0.15 runs/9. Each missing field falls back to league average, so
 // an entirely-absent feed yields exactly 50 / neutral / 0.
@@ -91,7 +91,7 @@ export function computeContactQualityScore(
   const score =
     50 +
     200 * (xba - LG_AVG_XBA) +
-    5 * (barrel - LG_AVG_BARREL_PCT) +
+    10 * (barrel - LG_AVG_BARREL_PCT) +
     2.5 * (sweet - LG_AVG_SWEETSPOT_PCT);
   let band: ContactBand = "neutral";
   let runsAdj = 0;

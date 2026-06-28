@@ -168,6 +168,9 @@ export interface SlateFeeds {
   oddsApi: boolean;
   apiSports: boolean;
   openWeather: boolean;
+  // v6.13.1: true when the Baseball Savant Statcast feed resolved ≥1 starter
+  // this build. Unlike the others this is data-derived, not key presence.
+  savant: boolean;
 }
 
 export interface SlatePayload {
@@ -182,26 +185,29 @@ export interface SlatePayload {
 }
 
 // MLB Stats API needs no key (free public API), so it's always considered live.
-function currentFeeds(): SlateFeeds {
+// savant defaults false; getSlate overrides it from the build result, since it
+// reflects whether the feed actually returned data (not just a key).
+function currentFeeds(savant = false): SlateFeeds {
   return {
     mlbStats: true,
     oddsApi: hasOddsKey(),
     apiSports: hasApiSportsKey(),
     openWeather: hasWeatherKey(),
+    savant,
   };
 }
 
 export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<SlatePayload> {
   const now = dateIso ? operatingDayAnchor(dateIso) : new Date();
   if (hasOddsKey()) {
-    const { operatingDay, games, emptyReason } = await buildSlate(now);
+    const { operatingDay, games, emptyReason, savantResolved } = await buildSlate(now);
     if (games.length > 0) {
-      return { operatingDay, isDemo: false, bankroll, picks: await runEngine(games, bankroll, operatingDay), feeds: currentFeeds() };
+      return { operatingDay, isDemo: false, bankroll, picks: await runEngine(games, bankroll, operatingDay), feeds: currentFeeds(savantResolved) };
     }
     // Odds key is present but no games found (e.g. future date / off-day, or
     // the-odds-api hasn't posted lines yet). Return the emptyReason so the client
     // can render an informative empty-state instead of a blank slate.
-    return { operatingDay, isDemo: false, bankroll, picks: [], emptyReason, feeds: currentFeeds() };
+    return { operatingDay, isDemo: false, bankroll, picks: [], emptyReason, feeds: currentFeeds(savantResolved) };
   }
   // Fallback: deterministic demo slate (no Odds key configured).
   const opDay = getOperatingDay(now);

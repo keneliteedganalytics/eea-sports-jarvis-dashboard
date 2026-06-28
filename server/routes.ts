@@ -22,6 +22,7 @@ import { buildF5Slate, getF5PicksForDay } from "./sports/mlb/f5Slate";
 import { startLockWorker } from "./jobs/lockWorker";
 import { startPropIngestWorker, getLastIngestSummary } from "./jobs/propIngest";
 import { startLivePropTracker } from "./jobs/livePropTracker";
+import { startSavantRefresh } from "./jobs/refreshSavant";
 import { reconciliationFlag } from "./jobs/reconcileFalseGrades";
 import { recomputeFlag } from "./jobs/recomputeProps";
 import { backfillChalkCapV681, chalkCapBackfillFlag, BACKFILL_FLAG } from "./jobs/backfillChalkCap";
@@ -151,6 +152,7 @@ export function startBackgroundWorkers(): void {
   startLockWorker();
   startPropIngestWorker();
   startLivePropTracker();
+  startSavantRefresh();
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {

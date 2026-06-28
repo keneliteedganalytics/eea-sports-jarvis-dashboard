@@ -200,6 +200,7 @@ export interface SlatePayload {
     oddsApi: boolean;
     apiSports: boolean;
     openWeather: boolean;
+    savant?: boolean;
   };
 }
 

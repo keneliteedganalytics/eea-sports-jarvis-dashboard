@@ -26,22 +26,42 @@ import {
 } from "../../adapters/apiSports";
 import type { ApiSportsXcheck } from "./picksEngine";
 import type { StarterStatcast } from "./hatfieldRules";
+import { getCachedSavantProfile } from "../../adapters/savantStats";
 
-// v6.13: best-effort Hatfield Statcast pull for a starter. Key-gated and
-// never-throwing; the api-sports baseball plan does NOT expose true Statcast
-// fields, so this resolves to all-null in practice and the model falls back to
-// league average (Rule 2) / no-op (Rule 1/3). Returns null (rather than an
-// all-null object) when the feed is off, so the model ctx stays a clean no-op.
+// v6.13.1: best-effort Hatfield Statcast pull for a starter. Primary source is
+// Baseball Savant (real xERA/xBA/barrel%/sweet-spot%/BB%); api-sports is a
+// secondary fill for any field Savant leaves null. Never throws — returns null
+// (rather than an all-null object) when nothing resolves, so the model ctx
+// stays a clean no-op and reproduces v6.13.0 output exactly.
 async function pitcherStatcastOrNull(
   pitcherId: number | null | undefined,
   season: number,
 ): Promise<StarterStatcast | null> {
-  if (!hasApiSportsKey() || !pitcherId) return null;
+  if (!pitcherId) return null;
+  let savant: StarterStatcast | null = null;
   try {
-    return await fetchApiSportsPitcherStatcast(pitcherId, season);
+    savant = await getCachedSavantProfile(pitcherId, season);
   } catch {
-    return null;
+    savant = null;
   }
+  if (!hasApiSportsKey()) return savant;
+  let api: StarterStatcast | null = null;
+  try {
+    api = await fetchApiSportsPitcherStatcast(pitcherId, season);
+  } catch {
+    api = null;
+  }
+  if (!savant) return api;
+  if (!api) return savant;
+  // Savant wins per field; api-sports only fills a gap Savant left null.
+  return {
+    era: savant.era ?? api.era,
+    xera: savant.xera ?? api.xera,
+    xbaAllowed: savant.xbaAllowed ?? api.xbaAllowed,
+    barrelRatePct: savant.barrelRatePct ?? api.barrelRatePct,
+    sweetSpotPct: savant.sweetSpotPct ?? api.sweetSpotPct,
+    bbPct: savant.bbPct ?? api.bbPct,
+  };
 }
 
 // v6.12.1: additive RPG sanity threshold — two feeds within 0.30 RPG agree.
@@ -141,6 +161,22 @@ export interface SlateBuildResult {
   games: GameInput[];
   // Set when the slate is empty for a diagnosable reason (not just no games today)
   emptyReason?: string;
+  // v6.13.1: true when ≥1 starter resolved a non-null Savant Statcast field this
+  // build (drives feeds.savant). False when the Savant feed yielded nothing.
+  savantResolved?: boolean;
+}
+
+// A Statcast profile "resolved" if any of its fields came back non-null.
+function statcastHasData(s: StarterStatcast | null): boolean {
+  return (
+    s !== null &&
+    (s.era !== null ||
+      s.xera !== null ||
+      s.xbaAllowed !== null ||
+      s.barrelRatePct !== null ||
+      s.sweetSpotPct !== null ||
+      s.bbPct !== null)
+  );
 }
 
 // Build today's MLB slate. Joins consensus odds with probable pitchers.
@@ -178,6 +214,7 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
   }
 
   const games: GameInput[] = [];
+  let savantResolved = false;
   for (const ev of inWindow) {
     const bms = toBookmakers(ev);
     const consensus = consensusSnhl(bms, ev.homeTeamFull, ev.awayTeamFull, "shin");
@@ -237,6 +274,9 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       pitcherStatcastOrNull(homeSp.pitcherId ?? null, year),
       pitcherStatcastOrNull(awaySp.pitcherId ?? null, year),
     ]);
+    if (statcastHasData(homeSpStatcast) || statcastHasData(awaySpStatcast)) {
+      savantResolved = true;
+    }
 
     // Public / sharp consensus from raw bookmaker data
     const { publicPct, sharpPct } = computePublicSharp(
@@ -309,5 +349,5 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
   // history accrues across slate builds. Best-effort — never blocks the slate.
   captureSnapshot(inWindow, "mlb");
 
-  return { operatingDay: opDay, games };
+  return { operatingDay: opDay, games, savantResolved };
 }

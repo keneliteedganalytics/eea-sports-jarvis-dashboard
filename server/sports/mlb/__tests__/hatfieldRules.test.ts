@@ -3,13 +3,11 @@
 // regression-safety guarantee: with Statcast/series inputs absent, predictGame
 // reproduces the prior (v6.12.x) numeric output exactly.
 //
-// NOTE (Rule 2 spec inconsistency): the spec's Tests section annotates the
-// "Rodon-ish" case (xBA .224, barrel 5.8%, sweetSpot 32%) as the ELITE band
-// (-0.15). With the spec's published coefficients (200/5/2.5) that input scores
-// 37.55, which is the NEUTRAL band (35-65 → 0). The formula is the precise,
-// authoritative definition, so it is implemented as written; this test asserts
-// the formula's actual output (neutral) and flags the discrepancy. To land that
-// case in the elite band the barrel coefficient would need to be 10, not 5.
+// Rule 2 coefficients (v6.13.1): score = 50 + 200*(xBA-.240) + 10*(barrel-7.0)
+// + 2.5*(sweetSpot-33.3). The barrel coefficient is 10 (corrected from 5 in
+// v6.13.0): that reconciles the spec's worked examples — Rodon-ish
+// (.224, 5.8%, 32%) → 31.55 → ELITE (-0.15) and Gray-ish (.300, 11%, 36.5%) →
+// 110 → WEAK (+0.15).
 // Run: tsx server/sports/mlb/__tests__/hatfieldRules.test.ts
 
 import assert from "node:assert/strict";
@@ -74,17 +72,17 @@ test("Rule 1: missing era/xera → no-op, gap null", () => {
 });
 
 // ── Rule 2: contact-quality composite ────────────────────────────────────
-test("Rule 2: Gray (.300, 11%, 36.5%) → score 90, weak band, +0.15", () => {
+test("Rule 2: Gray (.300, 11%, 36.5%) → score 110, weak band, +0.15", () => {
   const r = computeContactQualityScore(0.3, 11, 36.5);
-  assert.ok(near(r.score, 90));
+  assert.ok(near(r.score, 110));
   assert.equal(r.band, "weak");
   assert.ok(near(r.runsAdj, 0.15));
 });
-test("Rule 2: Rodon (.224, 5.8%, 32%) → score 37.55, NEUTRAL per formula (spec annotates elite — see header)", () => {
+test("Rule 2: Rodon (.224, 5.8%, 32%) → score 31.55, elite band, -0.15", () => {
   const r = computeContactQualityScore(0.224, 5.8, 32);
-  assert.ok(near(r.score, 37.55, 1e-6));
-  assert.equal(r.band, "neutral");
-  assert.equal(r.runsAdj, 0);
+  assert.ok(near(r.score, 31.55, 1e-6));
+  assert.equal(r.band, "elite");
+  assert.ok(near(r.runsAdj, -0.15));
 });
 test("Rule 2: clearly elite suppressor (.200, 4%, 28%) → score < 35, -0.15", () => {
   const r = computeContactQualityScore(0.2, 4, 28);
