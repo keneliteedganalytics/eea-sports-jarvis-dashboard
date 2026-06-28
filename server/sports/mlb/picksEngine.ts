@@ -11,6 +11,12 @@ import { emptyMarket } from "../../core/types";
 import type { PickSignals } from "../../../shared/types/signals";
 import { assembleSignals } from "../signals/assembleSignals";
 import type { ModelResult } from "./model";
+import {
+  computePriceCap,
+  computeTrendConfirm,
+  computeLineupHealth,
+  assembleSpotProfile,
+} from "./hatfieldRules";
 import { SOLID_IP_MIN, type PitcherStats } from "./pitchers";
 import type { TeamOffense } from "./ratings";
 import type { OddsEvent } from "../../adapters/oddsApi";
@@ -78,6 +84,7 @@ export interface GameInput {
   totalOverPrice?: number | null;
   totalUnderPrice?: number | null;
   totalBook?: string | null;
+  openTotalLine?: number | null; // v6.13 Rule 5: opening total (for price-cap discipline)
   // Pre-computed public/sharp consensus (set by data.ts, optional)
   _publicPct?: number | null;
   _sharpPct?: number | null;
@@ -115,6 +122,13 @@ export interface GameInput {
   // v6.12.1: additive api-sports.io RPG cross-check (observability only, never
   // feeds the model). 'no-data' when the feed is off/unavailable.
   _apiSportsXcheck?: ApiSportsXcheck | null;
+  // v6.13: Hatfield Statcast + spot inputs (all optional, null = no-op). Threaded
+  // into the model ctx + buildPick. Statcast nulls fall back to league average.
+  _homeSpStatcast?: import('./hatfieldRules').StarterStatcast | null;
+  _awaySpStatcast?: import('./hatfieldRules').StarterStatcast | null;
+  _seriesContext?: import('./hatfieldRules').SeriesContext | null;     // Rule 4
+  _homeLast18?: import('./hatfieldRules').Last18Record | null;         // Rule 6
+  _awayLast18?: import('./hatfieldRules').Last18Record | null;         // Rule 6
 }
 
 // v6.12.1: api-sports.io vs MLB Stats RPG sanity check. Aligned when both feeds
@@ -291,6 +305,12 @@ export interface BuiltPick {
   // v6.12.1: per-game data-feed cross-check status (observability only). Carries
   // the additive api-sports.io RPG agreement for this game.
   dataFeeds?: { apiSportsXcheck: "aligned" | "divergent" | "no-data" } | null;
+  // v6.13: Hatfield composite spot summary (Rules 1-7). priceCap drives the
+  // auto-lock suppression in persistPicks; the rest are surfaced for the UI.
+  spotProfile?: import('./hatfieldRules').SpotProfile | null;
+  // v6.13 Rule 5 convenience mirror — true when the posted price/total has moved
+  // past the playable window. Equals spotProfile.priceCap.
+  priceCap?: { side: boolean; total: boolean } | null;
 }
 
 // 7-component confidence with elite-fade & sparse penalties (MLB variant).
@@ -985,6 +1005,33 @@ export function buildPick(
   const qualifies = verdictTier !== "PASS" && !hardPass;
   const verdict: "PLAY" | "PASS" = qualifies ? "PLAY" : "PASS";
 
+  // ── v6.13: Hatfield composite spot profile (Rules 1-7) ───────────────────
+  // Statcast/spot rules 1-4 already shaped the model run/winProb projections;
+  // here we assemble the per-pick summary and the Rule 5 price caps. Everything
+  // is null-safe: absent inputs yield false flags / neutral score 50 / healthy.
+  // The fade + contact fields are oriented to the OPPOSING starter (the SP the
+  // pick team faces), since that is the matchup that moves the pick.
+  const oppFadeFlag = pickSide === "home" ? model.awayFadeFlag : model.homeFadeFlag;
+  const oppEraXeraGap = pickSide === "home" ? model.awayEraXeraGap : model.homeEraXeraGap;
+  const oppContactScore = pickSide === "home" ? model.awayContactQualityScore : model.homeContactQualityScore;
+  const oppStatcast = pickSide === "home" ? (game._awaySpStatcast ?? null) : (game._homeSpStatcast ?? null);
+  const priceCap = computePriceCap(verdictTier, pickMl, game.totalLine ?? null, game.openTotalLine ?? null);
+  const isAwayPick = pickSide === "away";
+  const pickLast18 = isAwayPick ? (game._awayLast18 ?? null) : (game._homeLast18 ?? null);
+  const trend = computeTrendConfirm(isAwayPick, pickLast18);
+  const pickInjuries = pickSide === "home" ? game._homeInjuries : game._awayInjuries;
+  const lineupHealth = computeLineupHealth(pickInjuries?.wobaPenalty ?? null);
+  const spotProfile = assembleSpotProfile({
+    fade: { fadeFlag: oppFadeFlag, eraXeraGap: oppEraXeraGap },
+    contact: { score: oppContactScore },
+    statcast: oppStatcast,
+    baseTraffic: { tilt: model.baseTrafficOverTilt },
+    sweep: { sweepAvoidanceSpot: model.sweepAvoidanceSpot && model.sweepAvoidanceSide === pickSide },
+    priceCap,
+    trend,
+    lineup: lineupHealth,
+  });
+
   const hardPassOrPhantom = hardPass || phantomEdge;
   const markets = buildMlbMarkets(
     game,
@@ -1085,6 +1132,9 @@ export function buildPick(
     offenseEdge: offenseEdgePayload,
     // v6.12.1: additive api-sports.io RPG cross-check status (observability only).
     dataFeeds: { apiSportsXcheck: game._apiSportsXcheck?.agreement ?? "no-data" },
+    // v6.13: Hatfield composite spot profile + Rule 5 price-cap mirror.
+    spotProfile,
+    priceCap,
   };
 }
 

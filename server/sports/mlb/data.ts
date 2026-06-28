@@ -22,8 +22,27 @@ import {
   fetchTeamStatistics as fetchApiSportsTeamStats,
   resolveTeamId as resolveApiSportsTeamId,
   fetchGamesByDate as fetchApiSportsGames,
+  fetchPitcherStatcast as fetchApiSportsPitcherStatcast,
 } from "../../adapters/apiSports";
 import type { ApiSportsXcheck } from "./picksEngine";
+import type { StarterStatcast } from "./hatfieldRules";
+
+// v6.13: best-effort Hatfield Statcast pull for a starter. Key-gated and
+// never-throwing; the api-sports baseball plan does NOT expose true Statcast
+// fields, so this resolves to all-null in practice and the model falls back to
+// league average (Rule 2) / no-op (Rule 1/3). Returns null (rather than an
+// all-null object) when the feed is off, so the model ctx stays a clean no-op.
+async function pitcherStatcastOrNull(
+  pitcherId: number | null | undefined,
+  season: number,
+): Promise<StarterStatcast | null> {
+  if (!hasApiSportsKey() || !pitcherId) return null;
+  try {
+    return await fetchApiSportsPitcherStatcast(pitcherId, season);
+  } catch {
+    return null;
+  }
+}
 
 // v6.12.1: additive RPG sanity threshold — two feeds within 0.30 RPG agree.
 export const API_SPORTS_RPG_ALIGN_THRESHOLD = 0.3;
@@ -212,6 +231,13 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       year,
     );
 
+    // v6.13: Hatfield Statcast pull per starter (key-gated, null in prod since
+    // the baseball plan lacks Statcast → model falls back to league average).
+    const [homeSpStatcast, awaySpStatcast] = await Promise.all([
+      pitcherStatcastOrNull(homeSp.pitcherId ?? null, year),
+      pitcherStatcastOrNull(awaySp.pitcherId ?? null, year),
+    ]);
+
     // Public / sharp consensus from raw bookmaker data
     const { publicPct, sharpPct } = computePublicSharp(
       ev.rawBookmakers as RawBookmaker[],
@@ -272,6 +298,10 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       _awayHandedness: awayHandedness,
       pitchersAnnounced,
       _apiSportsXcheck: apiSportsXcheck,
+      // v6.13: Hatfield Statcast inputs (null = no-op). Series/last-18 spot
+      // inputs have no live feed yet → left undefined so those flags never fire.
+      _homeSpStatcast: homeSpStatcast,
+      _awaySpStatcast: awaySpStatcast,
     });
   }
 

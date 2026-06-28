@@ -151,6 +151,11 @@ async function runEngine(games: GameInput[], bankroll = BANKROLL_USD, dateStr?: 
       awayPitchMix: e.awayPitchMix ?? null,
       homeBpFatigue: e.homeBpLoad?.fatigue ?? null,
       awayBpFatigue: e.awayBpLoad?.fatigue ?? null,
+      // v6.13: Hatfield Statcast + spot inputs (null = no-op; Statcast nulls
+      // fall back to league average inside the model).
+      homeSpStatcast: g._homeSpStatcast ?? null,
+      awaySpStatcast: g._awaySpStatcast ?? null,
+      seriesContext: g._seriesContext ?? null,
     });
     return buildPick({ ...g, _lineupHome: e.homeLineup, _lineupAway: e.awayLineup }, model, bankroll);
   });

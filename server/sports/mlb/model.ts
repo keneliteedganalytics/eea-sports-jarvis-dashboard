@@ -18,6 +18,16 @@ import type { TeamOffenseSaber } from "./teamOffenseSaber";
 import { deltaVsOpposingHand, type HandednessSplit } from "./handednessSplits";
 import type { PitcherRecentForm, HitterRecentForm } from "../../sources/recentForm";
 import type { InjuryAssessment } from "../../sources/injuries";
+import {
+  computeFadeFlag,
+  computeContactQualityScore,
+  computeBaseTrafficTilt,
+  computeSweepSpot,
+  MAX_SPOT_WINPROB_ADJ,
+  type StarterStatcast,
+  type SeriesContext,
+  type ContactBand,
+} from "./hatfieldRules";
 
 // ── Tunable constants (SPEC §4) ───────────────────────────────────
 export const MLB_LG_ERA = 4.2;
@@ -81,6 +91,10 @@ export interface ModelContext {
   awayPitchMix?: number | null;                   // Pillar 3: away hitters vs home SP mix delta (dampened)
   homeBpFatigue?: number | null;                  // Pillar 4: home bullpen fatigue 0..1
   awayBpFatigue?: number | null;                  // Pillar 4: away bullpen fatigue 0..1
+  // v6.13: Hatfield Statcast + spot inputs (all optional, null = no-op, additive)
+  homeSpStatcast?: StarterStatcast | null;        // Rule 1/2/3: home SP xERA/contact/bb%
+  awaySpStatcast?: StarterStatcast | null;        // Rule 1/2/3: away SP xERA/contact/bb%
+  seriesContext?: SeriesContext | null;           // Rule 4: division sweep-avoidance state
 }
 
 export interface ModelResult {
@@ -126,6 +140,18 @@ export interface ModelResult {
   awayWRCplus: number | null;
   homeHandednessAdj: number | null;
   awayHandednessAdj: number | null;
+  // v6.13 Hatfield outputs (for spotProfile assembly in buildPick)
+  homeFadeFlag: boolean;            // Rule 1: home SP overperforming
+  awayFadeFlag: boolean;            // Rule 1: away SP overperforming
+  homeEraXeraGap: number | null;    // Rule 1
+  awayEraXeraGap: number | null;    // Rule 1
+  homeContactQualityScore: number;  // Rule 2 (50 = neutral/no-data)
+  awayContactQualityScore: number;  // Rule 2
+  homeContactBand: ContactBand;     // Rule 2
+  awayContactBand: ContactBand;     // Rule 2
+  baseTrafficOverTilt: boolean;     // Rule 3
+  sweepAvoidanceSpot: boolean;      // Rule 4
+  sweepAvoidanceSide: "home" | "away" | null; // Rule 4
 }
 
 function safeFloat(v: unknown, dflt: number | null = null): number | null {
@@ -465,6 +491,50 @@ export function predictGame(ctx: ModelContext): ModelResult {
 
   homeExp = Math.max(2.0, homeExp);
   awayExp = Math.max(2.0, awayExp);
+
+  // ── Step F5 (v6.13): Hatfield Statcast + spot rules ──────────────────────
+  // All additive and regression-safe: with no Statcast/series inputs every
+  // adjustment below is 0 and the flags are false, so homeExp/awayExp/homeProb
+  // are unchanged from the v6.12 result.
+  const homeStatcast = ctx.homeSpStatcast ?? null;
+  const awayStatcast = ctx.awaySpStatcast ?? null;
+  const hatNotes: string[] = [];
+
+  // Rule 1 — ERA vs xERA fade. A SP overperforming its xERA reverts → the
+  // OPPONENT scores +0.20 runs. Home SP fade lifts awayExp; away SP fade lifts homeExp.
+  const homeFade = computeFadeFlag(homeStatcast?.era, homeStatcast?.xera);
+  const awayFade = computeFadeFlag(awayStatcast?.era, awayStatcast?.xera);
+  if (homeFade.runsAdj !== 0) { awayExp += homeFade.runsAdj; hatNotes.push(`fade(homeSP +${round2(homeFade.runsAdj)}→away)`); }
+  if (awayFade.runsAdj !== 0) { homeExp += awayFade.runsAdj; hatNotes.push(`fade(awaySP +${round2(awayFade.runsAdj)}→home)`); }
+
+  // Rule 2 — contact-quality composite. Elite suppressor (-0.15) / weak (+0.15)
+  // applied to the OPPONENT's runs. Neutral (or no data) → 0.
+  const homeContact = computeContactQualityScore(
+    homeStatcast?.xbaAllowed, homeStatcast?.barrelRatePct, homeStatcast?.sweetSpotPct);
+  const awayContact = computeContactQualityScore(
+    awayStatcast?.xbaAllowed, awayStatcast?.barrelRatePct, awayStatcast?.sweetSpotPct);
+  if (homeContact.runsAdj !== 0) { awayExp += homeContact.runsAdj; hatNotes.push(`contact(homeSP ${round2(homeContact.runsAdj)}→away)`); }
+  if (awayContact.runsAdj !== 0) { homeExp += awayContact.runsAdj; hatNotes.push(`contact(awaySP ${round2(awayContact.runsAdj)}→home)`); }
+
+  // Rule 3 — walk-rate base-traffic Over tilt. Raise the run environment by
+  // splitting the tilt evenly across both sides so the total rises without
+  // biasing winProb.
+  const baseTraffic = computeBaseTrafficTilt(homeStatcast?.bbPct, awayStatcast?.bbPct);
+  if (baseTraffic.runsEnvAdj !== 0) {
+    homeExp += baseTraffic.runsEnvAdj / 2;
+    awayExp += baseTraffic.runsEnvAdj / 2;
+    hatNotes.push(`baseTraffic(+${round2(baseTraffic.runsEnvAdj)}runsEnv)`);
+  }
+
+  // Rule 4 — division sweep-avoidance spot. Computed here; the winProb nudge is
+  // applied in Step H (capped at MAX_SPOT_WINPROB_ADJ).
+  const sweep = computeSweepSpot(ctx.seriesContext);
+  if (sweep.sweepAvoidanceSpot) hatNotes.push(`sweepSpot(${sweep.side} +${round2(sweep.winProbAdj)}wp)`);
+
+  if (hatNotes.length > 0) methodLog.push(`hatfield(${hatNotes.join(',')})`);
+
+  homeExp = Math.max(2.0, homeExp);
+  awayExp = Math.max(2.0, awayExp);
   const predictedTotal = round2(homeExp + awayExp);
 
   // Step G: Pythagenpat + OPS blend
@@ -492,6 +562,13 @@ export function predictGame(ctx: ModelContext): ModelResult {
     const w = MODEL_TRUST_WEIGHT;
     homeProb = w * homeProbFormula + (1.0 - w) * homeFairMkt;
     shrinkageApplied = true;
+  }
+
+  // Rule 4 (v6.13): apply the sweep-avoidance winProb nudge to the trailing
+  // side, capped at MAX_SPOT_WINPROB_ADJ so spots can never override the model.
+  if (sweep.sweepAvoidanceSpot && sweep.side) {
+    const cappedAdj = Math.min(sweep.winProbAdj, MAX_SPOT_WINPROB_ADJ);
+    homeProb += sweep.side === "home" ? cappedAdj : -cappedAdj;
   }
 
   // clamp
@@ -572,6 +649,18 @@ export function predictGame(ctx: ModelContext): ModelResult {
     awayWRCplus: awayOffSaber?.wRCplus ?? null,
     homeHandednessAdj: homeHandednessAdj,
     awayHandednessAdj: awayHandednessAdj,
+    // v6.13 Hatfield outputs
+    homeFadeFlag: homeFade.fadeFlag,
+    awayFadeFlag: awayFade.fadeFlag,
+    homeEraXeraGap: homeFade.eraXeraGap,
+    awayEraXeraGap: awayFade.eraXeraGap,
+    homeContactQualityScore: round2(homeContact.score),
+    awayContactQualityScore: round2(awayContact.score),
+    homeContactBand: homeContact.band,
+    awayContactBand: awayContact.band,
+    baseTrafficOverTilt: baseTraffic.tilt,
+    sweepAvoidanceSpot: sweep.sweepAvoidanceSpot,
+    sweepAvoidanceSide: sweep.side,
   };
 }
 

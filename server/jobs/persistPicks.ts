@@ -47,7 +47,13 @@ export function persistPick(pick: BuiltPick): boolean {
   // v6.11.0: freeze qualifying picks into the immutable lock ledger on first
   // persist. autoLockPick is a no-op once the row is locked, so it never
   // clobbers a prior snapshot.
-  if (wrote) autoLockPick(pickId(pick.gameId, pick.pickType, pick.pickSide));
+  // v6.13 Rule 5: price-cap discipline. When the posted price/total has moved
+  // past the playable window, suppress the auto-lock for non-SNIPER tiers — the
+  // pick still persists (and re-evaluates next tick) but is not auto-locked at a
+  // price the model can't beat. SNIPER keeps its own -250 cap and is exempt.
+  const priceCapped = Boolean(pick.priceCap?.side || pick.priceCap?.total);
+  const suppressAutoLock = priceCapped && pick.verdictTier !== "SNIPER";
+  if (wrote && !suppressAutoLock) autoLockPick(pickId(pick.gameId, pick.pickType, pick.pickSide));
   return wrote;
 }
 

@@ -11,6 +11,7 @@
 
 import { getJson } from "./http";
 import type { TeamOffense } from "../sports/mlb/ratings";
+import type { StarterStatcast } from "../sports/mlb/hatfieldRules";
 
 const BASE = "https://v1.baseball.api-sports.io";
 const MLB_LEAGUE = 1;
@@ -292,6 +293,66 @@ export async function fetchOddsForGame(gameId: number | null): Promise<ApiSports
       };
     });
     return { available: true, books };
+  });
+}
+
+// ── Pitcher Statcast (Hatfield contact-quality stack, v6.13.0) ──────────────
+// Best-effort pull of a starter's xERA / xBA-allowed / barrel% / sweet-spot% /
+// walk% from the api-sports player-statistics endpoint. The baseball plan does
+// NOT expose true Statcast fields, so in practice these read null and the model
+// falls back to league average (Rule 2) / no-op (Rule 1/3). Defensive: missing
+// fields stay null, errors/no-key degrade to an all-null StarterStatcast.
+
+interface RawPlayerStatItem {
+  statistics?: Array<{
+    pitching?: {
+      era?: number | string | null;
+      xera?: number | string | null;
+      expected_era?: number | string | null;
+      xba?: number | string | null;
+      xba_allowed?: number | string | null;
+      barrel_rate?: number | string | null;
+      barrels?: number | string | null;
+      sweet_spot?: number | string | null;
+      sweet_spot_percent?: number | string | null;
+      walks?: { percent?: number | string | null };
+      bb_percent?: number | string | null;
+    };
+  }>;
+}
+interface RawPlayerStats {
+  response?: RawPlayerStatItem[];
+}
+
+const NULL_STATCAST: StarterStatcast = {
+  era: null,
+  xera: null,
+  xbaAllowed: null,
+  barrelRatePct: null,
+  sweetSpotPct: null,
+  bbPct: null,
+};
+
+export async function fetchPitcherStatcast(
+  playerId: number | null,
+  season: number = currentSeason(),
+  leagueId: number = MLB_LEAGUE,
+): Promise<StarterStatcast> {
+  if (!hasApiSportsKey() || !playerId) return { ...NULL_STATCAST };
+  const path = `${BASE}/players/statistics`;
+  const params = { id: playerId, season, league: leagueId };
+  return cached(cacheKey(path, params), async () => {
+    const res = await getJson<RawPlayerStats>(path, params, key());
+    const p = res.ok ? res.data?.response?.[0]?.statistics?.[0]?.pitching : undefined;
+    if (!p) return { ...NULL_STATCAST };
+    return {
+      era: num(p.era),
+      xera: num(p.xera) ?? num(p.expected_era),
+      xbaAllowed: num(p.xba_allowed) ?? num(p.xba),
+      barrelRatePct: num(p.barrel_rate) ?? num(p.barrels),
+      sweetSpotPct: num(p.sweet_spot_percent) ?? num(p.sweet_spot),
+      bbPct: num(p.bb_percent) ?? num(p.walks?.percent),
+    };
   });
 }
 
