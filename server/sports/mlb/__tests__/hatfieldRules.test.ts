@@ -24,6 +24,7 @@ import {
   type SeriesContext,
 } from "../hatfieldRules";
 import { predictGame, type ModelContext } from "../model";
+import { buildPick, type GameInput } from "../picksEngine";
 
 let passed = 0;
 let failed = 0;
@@ -364,6 +365,98 @@ test("INTEGRATION Rule 4: home is trailing team → homeWinProb +0.025", () => {
   assert.equal(spot.sweepAvoidanceSpot, true);
   assert.ok(near(spot.homeWinProb - baseline.homeWinProb, 0.025, 1e-6),
     `homeWinProb delta ${spot.homeWinProb - baseline.homeWinProb}`);
+});
+
+// v6.13.2 — live-feed → model wiring for Rules 4 & 6. The series context and
+// last-18 record below are exactly the shapes the new mlbStats adapters produce
+// (see mlbStats.test.ts), confirming the wired path fires the spot rules.
+
+test("INTEGRATION Rule 4: away is trailing team (0-2 division) → awayWinProb +0.025", () => {
+  // Game 3 of a 3-game division series where the AWAY club trails 0-2 with a
+  // positive YTD run differential (fetchSeriesContext → trailingSide 'away').
+  const baseline = predictGame(baseCtx());
+  const spot = predictGame({
+    ...baseCtx(),
+    seriesContext: {
+      sameDivision: true,
+      seriesLength: 3,
+      gameNumberInSeries: 3,
+      trailingTeamLostFirstTwo: true,
+      trailingTeamPositiveRunDiff: true,
+      trailingSide: "away",
+    },
+  });
+  assert.equal(spot.sweepAvoidanceSpot, true);
+  assert.equal(spot.sweepAvoidanceSide, "away");
+  assert.ok(near(spot.awayWinProb - baseline.awayWinProb, 0.025, 1e-6),
+    `awayWinProb delta ${spot.awayWinProb - baseline.awayWinProb}`);
+});
+
+// An away-favored matchup so buildPick lands the pick on the away side, which is
+// the only side that can carry Rule 6's trendConfirm.
+function awaySidedGame(extra: Partial<GameInput> = {}): GameInput {
+  return {
+    gameId: "rule6-away-trend",
+    gameDate: "2026-06-28",
+    gameTimeEt: "7:10 PM ET",
+    venue: "Wrigley Field",
+    homeTeam: "CHC",
+    awayTeam: "COL",
+    homeTeamFull: "Chicago Cubs",
+    awayTeamFull: "Colorado Rockies",
+    mlHome: 120,
+    mlAway: -130,
+    homeFairProb: 0.4,
+    awayFairProb: 0.6,
+    homeSpStats: { available: true, pitcher: "P1", era: 6.0, fip: 6.1, ip: 80 },
+    awaySpStats: { available: true, pitcher: "P2", era: 2.2, fip: 2.3, ip: 85 },
+    homeOffStats: { ops: 0.66 },
+    awayOffStats: { ops: 0.80 },
+    ...extra,
+  } as GameInput;
+}
+
+test("INTEGRATION Rule 6: away pick + 13-5 last-18 away record → trendConfirm true", () => {
+  const game = awaySidedGame({
+    _awayLast18: { awayWinPct: 13 / 18, homeWinPct: 0.5 },
+    _homeLast18: { awayWinPct: 0.4, homeWinPct: 0.5 },
+  });
+  const model = predictGame({
+    homeTeam: game.homeTeam,
+    awayTeam: game.awayTeam,
+    homeTeamFull: game.homeTeamFull,
+    awayTeamFull: game.awayTeamFull,
+    homeSpStats: game.homeSpStats ?? {},
+    awaySpStats: game.awaySpStats ?? {},
+    homeOffStats: game.homeOffStats ?? {},
+    awayOffStats: game.awayOffStats ?? {},
+    venueTriCode: game.homeTeam,
+    homeFairProb: game.homeFairProb,
+    awayFairProb: game.awayFairProb,
+  });
+  const pick = buildPick(game, model);
+  assert.equal(pick.pickSide, "away", "scenario must land on the away side");
+  assert.ok(pick.spotProfile, "spot profile attached");
+  assert.equal(pick.spotProfile!.trendConfirm, true, "away 13-5 last-18 → trendConfirm");
+});
+
+test("INTEGRATION Rule 6: trendConfirm stays false when last-18 record absent", () => {
+  const game = awaySidedGame(); // no _awayLast18
+  const model = predictGame({
+    homeTeam: game.homeTeam,
+    awayTeam: game.awayTeam,
+    homeTeamFull: game.homeTeamFull,
+    awayTeamFull: game.awayTeamFull,
+    homeSpStats: game.homeSpStats ?? {},
+    awaySpStats: game.awaySpStats ?? {},
+    homeOffStats: game.homeOffStats ?? {},
+    awayOffStats: game.awayOffStats ?? {},
+    venueTriCode: game.homeTeam,
+    homeFairProb: game.homeFairProb,
+    awayFairProb: game.awayFairProb,
+  });
+  const pick = buildPick(game, model);
+  assert.equal(pick.spotProfile!.trendConfirm, false, "no record → no-op");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

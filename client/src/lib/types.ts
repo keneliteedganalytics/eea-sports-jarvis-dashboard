@@ -201,6 +201,8 @@ export interface SlatePayload {
     apiSports: boolean;
     openWeather: boolean;
     savant?: boolean;
+    seriesContext?: boolean;
+    last18Trend?: boolean;
   };
 }
 

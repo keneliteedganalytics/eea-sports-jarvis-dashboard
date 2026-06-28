@@ -171,6 +171,11 @@ export interface SlateFeeds {
   // v6.13.1: true when the Baseball Savant Statcast feed resolved ≥1 starter
   // this build. Unlike the others this is data-derived, not key presence.
   savant: boolean;
+  // v6.13.2: data-derived. seriesContext = ≥1 game resolved a division-rival
+  // series (Rule 4); last18Trend = ≥1 team resolved a non-empty last-18 record
+  // (Rule 6).
+  seriesContext: boolean;
+  last18Trend: boolean;
 }
 
 export interface SlatePayload {
@@ -187,27 +192,29 @@ export interface SlatePayload {
 // MLB Stats API needs no key (free public API), so it's always considered live.
 // savant defaults false; getSlate overrides it from the build result, since it
 // reflects whether the feed actually returned data (not just a key).
-function currentFeeds(savant = false): SlateFeeds {
+function currentFeeds(savant = false, seriesContext = false, last18Trend = false): SlateFeeds {
   return {
     mlbStats: true,
     oddsApi: hasOddsKey(),
     apiSports: hasApiSportsKey(),
     openWeather: hasWeatherKey(),
     savant,
+    seriesContext,
+    last18Trend,
   };
 }
 
 export async function getSlate(bankroll = BANKROLL_USD, dateIso?: string): Promise<SlatePayload> {
   const now = dateIso ? operatingDayAnchor(dateIso) : new Date();
   if (hasOddsKey()) {
-    const { operatingDay, games, emptyReason, savantResolved } = await buildSlate(now);
+    const { operatingDay, games, emptyReason, savantResolved, seriesContextResolved, last18Resolved } = await buildSlate(now);
     if (games.length > 0) {
-      return { operatingDay, isDemo: false, bankroll, picks: await runEngine(games, bankroll, operatingDay), feeds: currentFeeds(savantResolved) };
+      return { operatingDay, isDemo: false, bankroll, picks: await runEngine(games, bankroll, operatingDay), feeds: currentFeeds(savantResolved, seriesContextResolved, last18Resolved) };
     }
     // Odds key is present but no games found (e.g. future date / off-day, or
     // the-odds-api hasn't posted lines yet). Return the emptyReason so the client
     // can render an informative empty-state instead of a blank slate.
-    return { operatingDay, isDemo: false, bankroll, picks: [], emptyReason, feeds: currentFeeds(savantResolved) };
+    return { operatingDay, isDemo: false, bankroll, picks: [], emptyReason, feeds: currentFeeds(savantResolved, seriesContextResolved, last18Resolved) };
   }
   // Fallback: deterministic demo slate (no Odds key configured).
   const opDay = getOperatingDay(now);

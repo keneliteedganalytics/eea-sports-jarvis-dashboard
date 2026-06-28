@@ -3,7 +3,7 @@
 // no API keys it returns an empty slate ("no slate today" in the UI).
 
 import { fetchOdds, type OddsEvent, type BookPrice } from "../../adapters/oddsApi";
-import { fetchSchedule, fetchPitcherStats, fetchTeamOffense, type ScheduleGame } from "../../adapters/mlbStats";
+import { fetchSchedule, fetchPitcherStats, fetchTeamOffense, fetchSeriesContext, fetchLast18MLRecord, type ScheduleGame } from "../../adapters/mlbStats";
 import { consensusSnhl, bestPrice, type Bookmaker } from "../../core/odds";
 import { computePublicSharp, type RawBookmaker } from "../../core/consensus";
 import { fetchPolymarketForGame, type PolymarketResult } from "../../adapters/polymarket";
@@ -25,7 +25,7 @@ import {
   fetchPitcherStatcast as fetchApiSportsPitcherStatcast,
 } from "../../adapters/apiSports";
 import type { ApiSportsXcheck } from "./picksEngine";
-import type { StarterStatcast } from "./hatfieldRules";
+import type { StarterStatcast, SeriesContext, Last18Record } from "./hatfieldRules";
 import { getCachedSavantProfile } from "../../adapters/savantStats";
 
 // v6.13.1: best-effort Hatfield Statcast pull for a starter. Primary source is
@@ -164,6 +164,16 @@ export interface SlateBuildResult {
   // v6.13.1: true when ≥1 starter resolved a non-null Savant Statcast field this
   // build (drives feeds.savant). False when the Savant feed yielded nothing.
   savantResolved?: boolean;
+  // v6.13.2: true when ≥1 game resolved a division-rival series context (drives
+  // feeds.seriesContext) / ≥1 team resolved a non-empty last-18 record (drives
+  // feeds.last18Trend).
+  seriesContextResolved?: boolean;
+  last18Resolved?: boolean;
+}
+
+// A last-18 record "resolved" if either venue split came back non-null.
+function last18HasData(r: Last18Record | null): boolean {
+  return r !== null && (r.homeWinPct !== null || r.awayWinPct !== null);
 }
 
 // A Statcast profile "resolved" if any of its fields came back non-null.
@@ -215,6 +225,8 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
 
   const games: GameInput[] = [];
   let savantResolved = false;
+  let seriesContextResolved = false;
+  let last18Resolved = false;
   for (const ev of inWindow) {
     const bms = toBookmakers(ev);
     const consensus = consensusSnhl(bms, ev.homeTeamFull, ev.awayTeamFull, "shin");
@@ -278,6 +290,21 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       savantResolved = true;
     }
 
+    // v6.13.2: Rule 4 series context + Rule 6 last-18 trend (best-effort; null
+    // on any failure → those flags never fire, reproducing v6.13.1 output).
+    let seriesContext: SeriesContext | null = null;
+    let homeLast18: Last18Record | null = null;
+    let awayLast18: Last18Record | null = null;
+    if (sched.gamePk) {
+      [seriesContext, homeLast18, awayLast18] = await Promise.all([
+        fetchSeriesContext(sched.gamePk, sched.awayTeamId, sched.homeTeamId, opDay).catch(() => null),
+        sched.homeTeamId ? fetchLast18MLRecord(sched.homeTeamId, opDay, year).catch(() => null) : Promise.resolve(null),
+        sched.awayTeamId ? fetchLast18MLRecord(sched.awayTeamId, opDay, year).catch(() => null) : Promise.resolve(null),
+      ]);
+    }
+    if (seriesContext && seriesContext.sameDivision) seriesContextResolved = true;
+    if (last18HasData(homeLast18) || last18HasData(awayLast18)) last18Resolved = true;
+
     // Public / sharp consensus from raw bookmaker data
     const { publicPct, sharpPct } = computePublicSharp(
       ev.rawBookmakers as RawBookmaker[],
@@ -338,10 +365,13 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       _awayHandedness: awayHandedness,
       pitchersAnnounced,
       _apiSportsXcheck: apiSportsXcheck,
-      // v6.13: Hatfield Statcast inputs (null = no-op). Series/last-18 spot
-      // inputs have no live feed yet → left undefined so those flags never fire.
+      // v6.13: Hatfield Statcast inputs (null = no-op).
       _homeSpStatcast: homeSpStatcast,
       _awaySpStatcast: awaySpStatcast,
+      // v6.13.2: Rule 4 / Rule 6 live spot inputs (null = no-op).
+      _seriesContext: seriesContext,
+      _homeLast18: homeLast18,
+      _awayLast18: awayLast18,
     });
   }
 
@@ -349,5 +379,5 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
   // history accrues across slate builds. Best-effort — never blocks the slate.
   captureSnapshot(inWindow, "mlb");
 
-  return { operatingDay: opDay, games, savantResolved };
+  return { operatingDay: opDay, games, savantResolved, seriesContextResolved, last18Resolved };
 }
