@@ -69,6 +69,9 @@ export interface GameInput {
   mlAwayBook?: string | null;
   homeFairProb?: number | null;
   awayFairProb?: number | null;
+  // v6.14.0: false when fewer than MIN_BOOK_QUORUM valid trusted-book quotes
+  // priced this game — the market is not reliably priceable → hard PASS.
+  _bookQuorumMet?: boolean | null;
   homeSpStats?: PitcherStats | Record<string, never>;
   awaySpStats?: PitcherStats | Record<string, never>;
   homeOffStats?: TeamOffense | Record<string, never>;
@@ -506,6 +509,29 @@ export function resolveGapTrap(input: {
   return modelLeansSharp ? "recon_override" : "pass";
 }
 
+// v6.14.0 — disambiguate a fired trap that would otherwise PASS. A large
+// public/sharp gap has two very different causes:
+//   • "data_error": the model's own implied edge is absurd (> 25pp) OR the book
+//     quorum is thin (< MIN_BOOK_QUORUM). The gap is a data artifact, not a real
+//     trap — we degrade to a half-stake RECON flier to observe without betting.
+//   • "sharp_disagree": edge + book coverage are sane and the model leans the
+//     public/rec side — the classic stale-line trap. Stay PASS.
+//   • "unknown": trap fired but we cannot prove either shape — conservative PASS.
+// Only meaningful when the trap fired and no sharp-aligned RECON override applied.
+export type TrapClass = "data_error" | "sharp_disagree" | "unknown";
+export const TRAP_DATA_ERROR_EDGE_PP = 25;
+export function classifyTrap(input: {
+  trapFired: boolean;
+  impliedEdgePp: number | null;
+  bookQuorumMet: boolean | null;
+}): TrapClass | null {
+  if (!input.trapFired) return null;
+  const edge = input.impliedEdgePp;
+  const absurdEdge = edge !== null && Math.abs(edge) > TRAP_DATA_ERROR_EDGE_PP;
+  if (absurdEdge || input.bookQuorumMet === false) return "data_error";
+  return "sharp_disagree";
+}
+
 // Build the ML / spread / total market trio for a card. ML reuses the engine's
 // devigged fair line; spread (run-line) and total derive model cover/over
 // probabilities from the projected scores.
@@ -645,6 +671,14 @@ export function buildPick(
       hardPass = true;
       hardPassReason = "missing_pitcher_data_with_heavy_favorite";
     }
+  }
+
+  // v6.14.0: insufficient book quorum — fewer than MIN_BOOK_QUORUM valid
+  // trusted-book quotes priced this game, so consensus is unreliable. Hard-PASS
+  // rather than trade a phantom edge off one or two stray lines.
+  if (game._bookQuorumMet === false) {
+    hardPass = true;
+    hardPassReason = hardPassReason ?? "insufficient_book_quorum";
   }
 
   // pick side (max edge)
@@ -798,15 +832,38 @@ export function buildPick(
     sharpPct: resolvedSharpPct,
     publicPct: resolvedPublicPct,
   });
+  // v6.14.0: disambiguate a "pass" trap into data_error (RECON half-stake, not a
+  // real trap) vs sharp_disagree/unknown (stay PASS with a specific reason).
+  let trapDataErrorHalfStake = false;
   if (gapTrapOutcome === "recon_override") {
     tier = "RECON";
     passReason = null;
     model.modelNotes.push(
       `v6.11.1 gap-trap overridden — MODEL aligns with sharp side (gap ${(model.trapGapPp ?? 0).toFixed(1)}pp); demoted to RECON flier instead of PASS`,
     );
+  } else if (gapTrapOutcome === "pass") {
+    const trapClass = classifyTrap({
+      trapFired,
+      impliedEdgePp: pickEdge,
+      bookQuorumMet: game._bookQuorumMet ?? null,
+    });
+    const gapTxt = `${Math.round(model.trapGapPp ?? 0)}pp public/sharp gap`;
+    if (trapClass === "data_error") {
+      // Suspect data, not a real trap: don't PASS. Half-stake RECON flier so the
+      // pick is logged/observed without betting into a phantom edge.
+      tier = "RECON";
+      passReason = null;
+      trapDataErrorHalfStake = true;
+      model.modelNotes.push(
+        `v6.14.0 trap: data_error — implied edge ${(pickEdge ?? 0).toFixed(1)}pp / thin book quorum looks like a data artifact, not a real trap; demoted to half-stake RECON`,
+      );
+    } else if (trapClass === "sharp_disagree") {
+      passReason = `trap: sharp_disagree (${gapTxt})`;
+    } else {
+      passReason = `trap: unknown (${gapTxt})`;
+    }
   }
-  // gapTrapOutcome === "pass": tier is already PASS via the trap hard gate and
-  // passReason carries the gap text. "clear": no trap fired — nothing to do.
+  // gapTrapOutcome === "clear": no trap fired — nothing to do.
 
   // v6.8.1: if this pick is chalkier than the SNIPER cap and it landed on PASS,
   // attribute the PASS to the chalk cap (persistPicks maps "chalk" → chalk_cap).
@@ -833,6 +890,10 @@ export function buildPick(
   // +1001-or-longer dog is tapered to 0 (and gated to PASS below). Applied
   // AFTER sizing, BEFORE the verdict is finalized.
   let taperedUnits = pickMl !== null ? taperBigDogStake(juicedUnits, pickMl) : juicedUnits;
+  // v6.14.0: a data_error trap RECON is a half-stake observation flier.
+  if (trapDataErrorHalfStake && taperedUnits > 0) {
+    taperedUnits = Math.round(taperedUnits * 0.5 * 100) / 100;
+  }
   if (taperedUnits === 0 && juicedUnits > 0 && verdictTier !== "PASS") {
     // Taper zeroed the stake (price too long to play) — force PASS to match.
     verdictTier = "PASS";

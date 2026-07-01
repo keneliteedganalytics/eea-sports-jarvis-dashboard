@@ -23,6 +23,11 @@ import { startLockWorker } from "./jobs/lockWorker";
 import { startPropIngestWorker, getLastIngestSummary } from "./jobs/propIngest";
 import { startLivePropTracker } from "./jobs/livePropTracker";
 import { startSavantRefresh } from "./jobs/refreshSavant";
+import { startDailyCardLock, lockTodayCard } from "./jobs/dailyCardLock";
+import { startDailyDigest } from "./jobs/dailyDigest";
+import { getTodayCard, getCard } from "./core/dailyCard";
+import { hasWeatherKey } from "./adapters/openWeather";
+import { hasApiSportsKey } from "./adapters/apiSports";
 import { reconciliationFlag } from "./jobs/reconcileFalseGrades";
 import { recomputeFlag } from "./jobs/recomputeProps";
 import { backfillChalkCapV681, chalkCapBackfillFlag, BACKFILL_FLAG } from "./jobs/backfillChalkCap";
@@ -153,6 +158,17 @@ export function startBackgroundWorkers(): void {
   startPropIngestWorker();
   startLivePropTracker();
   startSavantRefresh();
+  startDailyCardLock();
+  startDailyDigest();
+}
+
+// v6.14.0 — resolve the app version from package.json once at module load.
+let _appVersion = process.env.APP_VERSION || "unknown";
+try {
+  const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  if (typeof pkg.version === "string") _appVersion = pkg.version;
+} catch {
+  // keep env/unknown fallback
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
@@ -179,6 +195,71 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // Sizing used the configured starting bankroll; the board shows the running
     // bankroll, which adjusts as picks grade W/L.
     res.json({ ...slate, bankroll: getBankrollState().current });
+  });
+
+  // v6.14.0 — Daily card (locked). The home page reads /api/card/today; the
+  // card is frozen once per operating day so odds/tiers don't drift mid-day.
+  app.get("/api/card/today", (_req: Request, res: Response) => {
+    const cardDate = getOperatingDay(new Date());
+    const card = getTodayCard();
+    if (!card) {
+      res.json({ cardDate, locked: false, picks: [], parlays: [], passReason: null });
+      return;
+    }
+    res.json({ ...card, locked: true, bankroll: getBankrollState().current });
+  });
+
+  app.get("/api/card/:date", (req: Request, res: Response) => {
+    const date = parseDateParam(req.params.date);
+    if (!date) {
+      res.status(400).json({ message: "date must be YYYY-MM-DD" });
+      return;
+    }
+    const card = getCard(date);
+    if (!card) {
+      res.json({ cardDate: date, locked: false, picks: [], parlays: [], passReason: null });
+      return;
+    }
+    res.json({ ...card, locked: true });
+  });
+
+  // Admin: force-regenerate (overwrite) today's locked card.
+  app.post("/api/card/regenerate", async (req: Request, res: Response) => {
+    if (!requireAdminPin(req, res)) return;
+    const card = await lockTodayCard(new Date(), { force: true });
+    if (!card) {
+      res.status(500).json({ message: "card regeneration failed" });
+      return;
+    }
+    res.json({ ...card, locked: true, regenerated: true });
+  });
+
+  // v6.14.0 — health probe: version, uptime, feed availability, last card lock.
+  app.get("/api/health", (_req: Request, res: Response) => {
+    let dbHealthy = true;
+    let lastCardLocked: string | null = null;
+    let cardPickCount = 0;
+    try {
+      const card = getTodayCard();
+      lastCardLocked = card?.lockedAt ?? null;
+      cardPickCount = card?.picks.length ?? 0;
+    } catch {
+      dbHealthy = false;
+    }
+    res.json({
+      version: _appVersion,
+      uptime: Math.round(process.uptime()),
+      feeds: {
+        mlbStats: true, // free public API, no key required
+        savant: true, // free public API
+        oddsApi: hasOddsKey(),
+        openWeather: hasWeatherKey(),
+        apiSports: hasApiSportsKey(),
+      },
+      lastCardLocked,
+      cardPickCount,
+      dbHealthy,
+    });
   });
 
   // NHL + NBA slates.

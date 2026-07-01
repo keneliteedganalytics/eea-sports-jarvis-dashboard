@@ -4,7 +4,7 @@
 // game for 5 minutes. Returns [] when ODDS_API_KEY is unset.
 
 import { getJson } from "../adapters/http";
-import { TRUSTED_BOOKS } from "../core/odds";
+import { TRUSTED_BOOKS, PROPS_ONLY_BOOKS } from "../core/odds";
 
 const BASE = "https://api.the-odds-api.com/v4/sports";
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -83,7 +83,8 @@ export async function fetchEventProps(sport: string, eventId: string): Promise<R
     return [];
   }
 
-  const trusted = new Set(TRUSTED_BOOKS);
+  // Props surface: real sportsbooks + the DFS/props operators (PROPS_ONLY_BOOKS).
+  const trusted = new Set([...TRUSTED_BOOKS, ...PROPS_ONLY_BOOKS]);
   // key = `${player}|${market}` → {over,under,line,book}
   const byPlayer = new Map<string, RawProp>();
   for (const bm of res.data.bookmakers) {

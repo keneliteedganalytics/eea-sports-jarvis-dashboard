@@ -335,6 +335,7 @@ export async function buildSlate(now: Date = new Date()): Promise<SlateBuildResu
       mlAwayBook: awayBook,
       homeFairProb: consensus?.homeFairProb ?? null,
       awayFairProb: consensus?.awayFairProb ?? null,
+      _bookQuorumMet: consensus ? consensus.quorumMet : null,
       homeSpStats: homeSp,
       awaySpStats: awaySp,
       homeOffStats: homeOff,

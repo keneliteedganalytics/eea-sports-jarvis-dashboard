@@ -1,6 +1,12 @@
 // Odds math — ported from sports-engine core/odds.py + sports/mlb/odds_math.py
 // American <-> decimal <-> prob, Shin de-vig (brentq solver), additive de-vig, consensus.
 
+// v6.14.0: TRUSTED_BOOKS is the h2h/spreads/totals consensus set — real
+// sportsbooks only. PrizePicks and Underdog are DFS/props operators; their
+// "quotes" are not true two-way sportsbook prices and, when treated as h2h,
+// produce garbage (−1 juice, +3300 on a mid-market ML, Over 5.5 totals) that
+// manufactures phantom edges. They are ingested separately via PROPS_ONLY_BOOKS
+// for the player-props surface only, never for game-line consensus.
 export const TRUSTED_BOOKS = [
   "draftkings",
   "fanduel",
@@ -10,10 +16,21 @@ export const TRUSTED_BOOKS = [
   "betrivers",
   "wynnbet",
   "barstool",
-  // §9.10 — props books stubbed in for v2
-  "prizepicks",
-  "underdog",
 ];
+
+// DFS / player-props operators — props surface only, never game-line consensus.
+export const PROPS_ONLY_BOOKS = ["prizepicks", "underdog"];
+
+// v6.14.0: a trusted-book h2h quote whose two-way implied vig lands outside this
+// band is structurally broken (missing/placeholder side, DFS payout, etc.) and
+// is dropped from the consensus median. Wider than the per-market maxHold so a
+// merely-juicy-but-real book still counts.
+export const BOOK_VIG_MIN = 0.95;
+export const BOOK_VIG_MAX = 1.25;
+
+// v6.14.0: consensus requires at least this many valid trusted-book quotes.
+// Below quorum the market is not priceable (passReason "insufficient_book_quorum").
+export const MIN_BOOK_QUORUM = 3;
 
 // ── Conversions ───────────────────────────────────────────────────
 
@@ -218,6 +235,9 @@ export interface Consensus {
   medianHold: number;
   booksCounted: number;
   method: string;
+  // v6.14.0: true when booksCounted >= MIN_BOOK_QUORUM. When false the caller
+  // should treat the market as unavailable (passReason "insufficient_book_quorum").
+  quorumMet: boolean;
 }
 
 function median(xs: number[]): number {
@@ -237,7 +257,12 @@ export function consensusSnhl(
   const awayFairs: number[] = [];
   const holds: number[] = [];
 
+  // Only real sportsbooks feed the game-line median — DFS/props operators
+  // (PROPS_ONLY_BOOKS) never do, even if they appear in the raw feed.
+  const propsOnly = new Set(PROPS_ONLY_BOOKS);
+
   for (const bk of bookmakers) {
+    if (bk.key && propsOnly.has(bk.key)) continue;
     for (const mk of bk.markets ?? []) {
       if (mk.key !== "h2h") continue;
       const prices: Record<string, number> = {};
@@ -248,7 +273,11 @@ export function consensusSnhl(
       const ph = americanToProb(hp);
       const pa = americanToProb(ap);
       if (ph === null || pa === null) continue;
-      const hold = ph + pa - 1.0;
+      const vig = ph + pa; // two-way implied total (1.0 = no vig)
+      // v6.14.0 book-level sanity: drop a book whose two-way vig is structurally
+      // broken (a placeholder/DFS side pushes it outside [0.95, 1.25]).
+      if (vig < BOOK_VIG_MIN || vig > BOOK_VIG_MAX) continue;
+      const hold = vig - 1.0;
       if (hold > maxHold) continue;
       const result = syntheticNoHoldLine(hp, ap, method);
       if (result) {
@@ -276,6 +305,7 @@ export function consensusSnhl(
     medianHold: median(holds),
     booksCounted: homeFairs.length,
     method,
+    quorumMet: homeFairs.length >= MIN_BOOK_QUORUM,
   };
 }
 

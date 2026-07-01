@@ -4,10 +4,48 @@
 
 import { getJson } from "./http";
 import { nameToAbbr } from "../sports/mlb/teams";
-import { TRUSTED_BOOKS } from "../core/odds";
+import { TRUSTED_BOOKS, americanToProb } from "../core/odds";
 import { pickToDkLink } from "../lib/dkLinks";
 
 const BASE = "https://api.the-odds-api.com/v4/sports";
+
+// v6.14.0 — sanity-validate a two-way h2h quote before it enters consensus.
+// Rejects the DFS/placeholder garbage (−1 juice, +3300 mid-market ML, coin-flip
+// pairs that aren't actually coin flips) that manufactures phantom edges.
+//   • both prices present
+//   • |price| ≤ 2500 (nothing longer than +2500 / shorter than −2500)
+//   • a price strictly inside (−100, +100) is only legal when BOTH sides are
+//     (a genuine coin-flip pair); a lone sub-100 price is a broken quote
+//   • two-way implied vig in [1.00, 1.15] (0–15% juice)
+// Logs the reason with an [odds-validator] prefix and returns false on any fail.
+export function isValidH2HQuote(
+  homePrice: number | null | undefined,
+  awayPrice: number | null | undefined,
+): boolean {
+  const reject = (why: string): false => {
+    console.warn(`[odds-validator] reject h2h ${homePrice}/${awayPrice}: ${why}`);
+    return false;
+  };
+  if (homePrice === null || homePrice === undefined || awayPrice === null || awayPrice === undefined) {
+    return reject("missing side");
+  }
+  if (Math.abs(homePrice) > 2500 || Math.abs(awayPrice) > 2500) {
+    return reject("|price| > 2500");
+  }
+  const homeInside = Math.abs(homePrice) < 100;
+  const awayInside = Math.abs(awayPrice) < 100;
+  if (homeInside !== awayInside) {
+    return reject("lone sub-100 price (not a coin-flip pair)");
+  }
+  const ph = americanToProb(homePrice);
+  const pa = americanToProb(awayPrice);
+  if (ph === null || pa === null) return reject("unpriceable");
+  const vig = ph + pa;
+  if (vig < 1.0 || vig > 1.15) {
+    return reject(`vig ${(vig - 1).toFixed(3)} outside [0, 0.15]`);
+  }
+  return true;
+}
 
 export interface BookPrice {
   book: string;
@@ -331,6 +369,8 @@ export async function fetchOddsForSport(
       if (!h2h) continue;
       const home = h2h.outcomes.find((o) => o.name === ev.home_team)?.price ?? null;
       const away = h2h.outcomes.find((o) => o.name === ev.away_team)?.price ?? null;
+      // v6.14.0: drop structurally-broken quotes before they reach consensus.
+      if (!isValidH2HQuote(home, away)) continue;
       books.push({ book: bm.key, homePrice: home, awayPrice: away });
     }
     const dk = extractDkData(ev);

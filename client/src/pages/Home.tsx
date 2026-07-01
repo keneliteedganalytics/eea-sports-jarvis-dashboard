@@ -146,6 +146,140 @@ function LiveBetsSection() {
   );
 }
 
+// v6.14.0 — the locked daily card. Shape mirrors /api/card/today.
+interface CardPickDisplay {
+  gameId: string;
+  gameTimeEt: string;
+  matchup: string;
+  market: string;
+  selection: string;
+  priceAmerican: number | null;
+  edgePp: number | null;
+  tier: Verdict;
+  units: number;
+  book: string | null;
+}
+interface CardParlayLeg {
+  matchup: string;
+  selection: string;
+  priceAmerican: number;
+}
+interface CardParlayDisplay {
+  legs: CardParlayLeg[];
+  bookAmerican: number | null;
+  parlayEdgePp: number;
+  units: number;
+  correlationNote: string | null;
+}
+interface TodaysCardPayload {
+  cardDate: string;
+  locked: boolean;
+  lockedAt?: string | null;
+  picks: CardPickDisplay[];
+  parlays: CardParlayDisplay[];
+  passReason: string | null;
+}
+
+// Locked card header + 3-5 pick chips + 1-2 parlay chips + locked-odds footer.
+function TodaysCardSection() {
+  const { data } = useQuery<TodaysCardPayload>({
+    queryKey: ["/api/card/today"],
+    queryFn: () => fetch("/api/card/today").then((r) => r.json()),
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  if (!data || !data.locked) return null;
+
+  return (
+    <div className="space-y-3 rounded-xl border border-gold/30 bg-navy-card p-4" data-testid="todays-card">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-sm font-bold uppercase tracking-[0.18em] text-gold-light">
+          Today's Card — Locked at 6:00 AM ET
+        </h2>
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          {data.cardDate}
+        </span>
+      </div>
+
+      {data.picks.length === 0 ? (
+        <div className="text-xs text-muted-foreground" data-testid="card-no-plays">
+          No qualifying plays today{data.passReason ? ` (${data.passReason})` : ""}.
+        </div>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {data.picks.map((p) => {
+            const hex = TIER_META[p.tier]?.hex ?? "#C9A227";
+            return (
+              <div
+                key={`${p.gameId}:${p.market}:${p.selection}`}
+                className="rounded-lg border border-card-border bg-background/30 p-3"
+                data-testid="card-pick"
+              >
+                <div className="flex items-center justify-between">
+                  <span
+                    className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+                    style={{ backgroundColor: `${hex}22`, color: hex }}
+                  >
+                    {p.tier}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">{p.gameTimeEt}</span>
+                </div>
+                <div className="mt-1 text-[11px] uppercase tracking-wider text-muted-foreground">
+                  {p.matchup}
+                </div>
+                <div className="mt-0.5 text-sm font-semibold text-silver">
+                  {p.selection}{" "}
+                  <span className="tabular-nums">{fmtLine(p.priceAmerican)}</span>
+                </div>
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  {`${p.market} · ${fmtUnits(p.units)} · edge ${
+                    p.edgePp != null ? `${p.edgePp >= 0 ? "+" : ""}${p.edgePp.toFixed(1)}pp` : "—"
+                  }`}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {data.parlays.length > 0 && (
+        <div className="space-y-2 border-t border-card-border pt-3" data-testid="card-parlays">
+          <h3 className="text-[11px] font-bold uppercase tracking-wider text-gold-dark">Parlays</h3>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {data.parlays.map((par, i) => (
+              <div
+                key={i}
+                className="rounded-lg border border-amber-800/30 bg-background/30 p-3"
+                data-testid="card-parlay"
+              >
+                <div className="text-sm font-semibold text-silver">
+                  {par.legs.length}-Leg Parlay{" "}
+                  <span className="tabular-nums">{fmtLine(par.bookAmerican)}</span>
+                </div>
+                <ul className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
+                  {par.legs.map((l, j) => (
+                    <li key={j}>
+                      → {l.selection} <span className="tabular-nums">{fmtLine(l.priceAmerican)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  {`${fmtUnits(par.units)} · edge +${par.parlayEdgePp.toFixed(1)}pp`}
+                  {par.correlationNote ? ` · ${par.correlationNote}` : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="border-t border-card-border pt-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+        Odds locked at card snapshot — 6:00 AM ET · frozen for the day
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   // Read ?date= from URL search params; fall back to today's ET date.
   const [date, setDate] = useState<string>(() => {
@@ -287,12 +421,13 @@ export default function Home() {
 
   return (
     <div className="space-y-5">
+      <TodaysCardSection />
       <LiveBetsSection />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Today's Board</h1>
           <p className="text-[11px] uppercase tracking-wider text-gold-dark" data-testid="engine-subtitle">
-            Engine v6.10.0 · Bankroll {data ? fmtMoney(data.bankroll) : "$25,000"}
+            Engine v6.14.0 · Bankroll {data ? fmtMoney(data.bankroll) : "$25,000"}
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {data
