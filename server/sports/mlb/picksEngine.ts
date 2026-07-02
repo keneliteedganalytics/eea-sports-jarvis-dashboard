@@ -567,12 +567,34 @@ function buildMlbMarkets(
 
   const margin = model.projHomeScore - model.projAwayScore; // home - away
 
-  // ── Spread (run-line ±1.5). Model prob the home side covers -1.5 / +1.5.
+  // ── Spread (run-line ±1.5). Model prob the home side covers.
+  //
+  // v6.14.1 — Runline probability coherence fix.
+  //   Prior versions derived homeCoverProb from a logistic on projected margin
+  //   INDEPENDENTLY of the ML win probability. That let the two markets drift
+  //   incoherent: a team could be modeled to cover -1.5 more often than it won
+  //   outright, or fail to cover +1.5 more often than it lost — both
+  //   probabilistically impossible. The bug leaked into the daily-card
+  //   diversify() step, over-weighting favorites' runlines and dogs' anti-run.
+  //
+  //   Fix: keep the logistic as the raw signal but clamp against the ML prob
+  //   using the coherence identities:
+  //       home -1.5 : P(cover) ≤ P(home wins ML)
+  //       home +1.5 : P(cover) ≥ P(home wins ML)  (dog covers ≥ dog wins)
+  //   Away side is the mirror by construction of buildTwoWayMarket.
   let spread: Market = emptyMarket();
   if (game.spreadHomePrice != null && game.spreadAwayPrice != null) {
     const homeLine = game.spreadHomeLine ?? -1.5;
-    // P(home margin > -homeLine). For home -1.5 → P(margin > 1.5).
-    const homeCoverProb = logistic((margin + homeLine) / RUN_MARGIN_SCALE);
+    // Raw logistic on projected margin. For home -1.5 the crossover is
+    // margin = 1.5 (soft P(margin > 1.5)); for home +1.5, crossover is -1.5.
+    const rawCoverProb = logistic((margin + homeLine) / RUN_MARGIN_SCALE);
+    const homeWin = model.homeWinProb;
+    const homeCoverProb =
+      homeLine < 0
+        ? // Favorite laying the run — cannot cover more often than it wins.
+          Math.min(rawCoverProb, homeWin)
+        : // Dog getting the run — cannot cover less often than it wins.
+          Math.max(rawCoverProb, homeWin);
     spread = buildTwoWayMarket(
       {
         aLabel: "home",
